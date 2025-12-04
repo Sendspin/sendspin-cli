@@ -1,0 +1,81 @@
+name: Publish release to PyPi
+
+on:
+  release:
+    types: [published]
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  build:
+    name: Builds and prepares for publishing releases to PyPI
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.vars.outputs.tag }}
+    permissions:
+      id-token: write # Required for PyPI publishing
+    steps:
+      - uses: actions/checkout@v5.0.1
+      - name: Get tag
+        id: vars
+        run: echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
+      - name: Validate version number
+        run: >-
+          if [[ "${{ github.event.release.prerelease }}" == "true" ]]; then
+            if ! [[ "${{ steps.vars.outputs.tag }}" =~ "b" ]]; then
+            echo "Pre-release: Tag is missing beta suffix (${{ steps.vars.outputs.tag }})"
+              exit 1
+            fi
+          else
+            if [[ "${{ steps.vars.outputs.tag }}" =~ "b" ]]; then
+              echo "Release: Tag must not have a beta suffix (${{ steps.vars.outputs.tag }})"
+              exit 1
+            fi
+          fi
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v6.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install build
+        run: >-
+          pip install build tomli tomli-w
+      - name: Set Python project version from tag
+        shell: python
+        run: |-
+          import tomli
+          import tomli_w
+
+          with open("pyproject.toml", "rb") as f:
+            pyproject = tomli.load(f)
+
+          pyproject["project"]["version"] = "${{ steps.vars.outputs.tag }}"
+
+          with open("pyproject.toml", "wb") as f:
+            tomli_w.dump(pyproject, f)
+      - name: Build python package
+        run: >-
+          python3 -m build
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: dist
+          path: ./dist
+
+  publish:
+    needs: ['build']
+    environment: 'publish'
+
+    name: upload release to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish release to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
