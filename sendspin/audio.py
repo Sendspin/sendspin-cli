@@ -13,14 +13,15 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Final, Protocol, cast
+from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import numpy as np
 import sounddevice
+from aiosendspin.client.time_sync import SendspinTimeFilter
 from sounddevice import CallbackFlags
 
-from aiosendspin.client import PCMFormat
-from aiosendspin.client.time_sync import SendspinTimeFilter
+if TYPE_CHECKING:
+    from aiosendspin.client import PCMFormat
 
 logger = logging.getLogger(__name__)
 
@@ -806,9 +807,8 @@ class AudioPlayer:
 
         # Create view of buffer as int16 samples (no copy)
         samples = np.frombuffer(output_buffer[:num_bytes], dtype=np.int16).copy()
-        # Convert perceived loudness (0-100) to amplitude using dB curve
-        db_reduction = 49.5 * (1 - volume / 100.0)
-        amplitude = 2 ** (-db_reduction / 6.014)
+        # Power curve for natural volume control (gentler at high volumes)
+        amplitude = (volume / 100.0) ** 1.5
         samples = (samples * amplitude).astype(np.int16)
         # Write back to buffer
         output_buffer[:num_bytes] = samples.tobytes()
