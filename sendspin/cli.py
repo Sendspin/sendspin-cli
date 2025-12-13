@@ -20,12 +20,8 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from zeroconf import ServiceListener
 
-import aioconsole
 import sounddevice
 from aiohttp import ClientError
-from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
-
-from sendspin.audio import AudioPlayer
 from aiosendspin.client import PCMFormat, SendspinClient
 from aiosendspin.models.core import (
     DeviceInfo,
@@ -49,6 +45,11 @@ from aiosendspin.models.types import (
     Roles,
     UndefinedField,
 )
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
+
+from sendspin.audio import AudioPlayer
+from sendspin.keyboard import keyboard_loop
+from sendspin.ui import SendspinUI
 
 logger = logging.getLogger(__name__)
 
@@ -466,6 +467,7 @@ async def _connection_loop(
     audio_handler: AudioStreamHandler,
     initial_url: str,
     keyboard_task: asyncio.Task[None],
+    ui: SendspinUI | None = None,
 ) -> None:
     """
     Run the connection loop with automatic reconnection on disconnect.
@@ -480,6 +482,7 @@ async def _connection_loop(
         audio_handler: Audio stream handler.
         initial_url: Initial server URL.
         keyboard_task: Keyboard input task to monitor.
+        ui: Optional UI instance.
     """
     manager = ConnectionManager(discovery, keyboard_task)
     url = initial_url
@@ -490,6 +493,8 @@ async def _connection_loop(
             await client.connect(url)
             logger.info("Connected to %s", url)
             _print_event(f"Connected to {url}")
+            if ui is not None:
+                ui.set_connected(url)
             manager.reset_backoff()
             manager.set_last_attempted_url(url)
 
@@ -508,6 +513,8 @@ async def _connection_loop(
             # Connection dropped
             logger.info("Connection lost")
             _print_event("Connection lost")
+            if ui is not None:
+                ui.set_disconnected("Connection lost")
 
             # Clean up audio state
             await audio_handler.cleanup()
@@ -517,6 +524,8 @@ async def _connection_loop(
 
             # Wait for server to reappear if it's gone
             if not new_url:
+                if ui is not None:
+                    ui.set_disconnected("Waiting for server...")
                 new_url = await manager.wait_for_server_reappear()
                 if keyboard_task.done():
                     break
@@ -525,6 +534,8 @@ async def _connection_loop(
             if new_url:
                 url = new_url
             _print_event(f"Reconnecting to {url}...")
+            if ui is not None:
+                ui.set_disconnected(f"Reconnecting to {url}...")
 
         except (TimeoutError, OSError, ClientError) as e:
             # Network-related errors - log cleanly
@@ -620,7 +631,13 @@ class AudioStreamHandler:
 async def main_async(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915
     """Entry point executing the asynchronous CLI workflow."""
     args = parse_args(list(argv) if argv is not None else None)
-    logging.basicConfig(level=getattr(logging, args.log_level))
+
+    # In interactive mode with UI, suppress logs to avoid interfering with display
+    # Only show WARNING and above unless explicitly set to DEBUG
+    if sys.stdin.isatty() and args.log_level != "DEBUG":
+        logging.basicConfig(level=logging.WARNING)
+    else:
+        logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Get hostname for defaults if needed
     if args.id is None or args.name is None:
@@ -692,49 +709,70 @@ async def main_async(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915
         # Create audio and stream handlers
         audio_handler = AudioStreamHandler(client, audio_device=audio_device)
 
-        client.set_metadata_listener(lambda payload: _handle_metadata_update(state, payload))
-        client.set_group_update_listener(lambda payload: _handle_group_update(state, payload))
-        client.set_controller_state_listener(lambda payload: _handle_server_state(state, payload))
-        client.set_stream_start_listener(audio_handler.on_stream_start)
-        client.set_stream_end_listener(audio_handler.on_stream_end)
-        client.set_stream_clear_listener(audio_handler.on_stream_clear)
-        client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
-        client.set_server_command_listener(
-            lambda payload: _handle_server_command(state, audio_handler, client, payload)
-        )
-
-        # Audio player will be created when first audio chunk arrives
-
-        _print_instructions()
-
-        # Create and start keyboard task
-        keyboard_task = asyncio.create_task(_keyboard_loop(client, state, audio_handler))
-
-        # Set up signal handler for graceful shutdown on Ctrl+C
-        loop = asyncio.get_running_loop()
-
-        def signal_handler() -> None:
-            logger.debug("Received interrupt signal, shutting down...")
-            keyboard_task.cancel()
-
-        # Signal handlers aren't supported on this platform (e.g., Windows)
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signal.SIGINT, signal_handler)
-            loop.add_signal_handler(signal.SIGTERM, signal_handler)
+        # Create UI for interactive mode
+        ui: SendspinUI | None = None
+        if sys.stdin.isatty():
+            ui = SendspinUI()
+            _set_ui(ui)
+            ui.start()
 
         try:
-            # Run connection loop with auto-reconnect
-            await _connection_loop(client, discovery, audio_handler, url, keyboard_task)
-        except asyncio.CancelledError:
-            logger.debug("Connection loop cancelled")
-        finally:
-            # Remove signal handlers
+            client.set_metadata_listener(
+                lambda payload: _handle_metadata_update(state, ui, payload)
+            )
+            client.set_group_update_listener(
+                lambda payload: _handle_group_update(state, ui, payload)
+            )
+            client.set_controller_state_listener(
+                lambda payload: _handle_server_state(state, ui, payload)
+            )
+            client.set_stream_start_listener(audio_handler.on_stream_start)
+            client.set_stream_end_listener(audio_handler.on_stream_end)
+            client.set_stream_clear_listener(audio_handler.on_stream_clear)
+            client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
+            client.set_server_command_listener(
+                lambda payload: _handle_server_command(state, audio_handler, client, ui, payload)
+            )
+
+            # Audio player will be created when first audio chunk arrives
+
+            # Create and start keyboard task
+            keyboard_task = asyncio.create_task(
+                keyboard_loop(client, state, audio_handler, ui, _print_event)
+            )
+
+            # Set up signal handler for graceful shutdown on Ctrl+C
+            loop = asyncio.get_running_loop()
+
+            def signal_handler() -> None:
+                logger.debug("Received interrupt signal, shutting down...")
+                keyboard_task.cancel()
+
             # Signal handlers aren't supported on this platform (e.g., Windows)
             with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            await audio_handler.cleanup()
-            await client.disconnect()
+                loop.add_signal_handler(signal.SIGINT, signal_handler)
+                loop.add_signal_handler(signal.SIGTERM, signal_handler)
+
+            try:
+                # Run connection loop with auto-reconnect
+                await _connection_loop(
+                    client, discovery, audio_handler, url, keyboard_task, ui
+                )
+            except asyncio.CancelledError:
+                logger.debug("Connection loop cancelled")
+            finally:
+                # Remove signal handlers
+                # Signal handlers aren't supported on this platform (e.g., Windows)
+                with contextlib.suppress(NotImplementedError):
+                    loop.remove_signal_handler(signal.SIGINT)
+                    loop.remove_signal_handler(signal.SIGTERM)
+                await audio_handler.cleanup()
+                await client.disconnect()
+        finally:
+            # Stop UI
+            if ui is not None:
+                ui.stop()
+                _set_ui(None)
 
     finally:
         # Stop discovery
@@ -743,14 +781,28 @@ async def main_async(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915
     return 0
 
 
-async def _handle_metadata_update(state: CLIState, payload: ServerStatePayload) -> None:
+async def _handle_metadata_update(
+    state: CLIState, ui: SendspinUI | None, payload: ServerStatePayload
+) -> None:
     """Handle server/state messages with metadata."""
     if payload.metadata is not None and state.update_metadata(payload.metadata):
+        if ui is not None:
+            ui.set_metadata(
+                title=state.title,
+                artist=state.artist,
+                album=state.album,
+            )
+            ui.set_progress(state.track_progress, state.track_duration)
         _print_event(state.describe())
 
 
-async def _handle_group_update(_state: CLIState, payload: GroupUpdateServerPayload) -> None:
+async def _handle_group_update(
+    state: CLIState, ui: SendspinUI | None, payload: GroupUpdateServerPayload
+) -> None:
     if payload.playback_state:
+        state.playback_state = payload.playback_state
+        if ui is not None:
+            ui.set_playback_state(payload.playback_state)
         _print_event(f"Playback state: {payload.playback_state.value}")
     if payload.group_id:
         _print_event(f"Group ID: {payload.group_id}")
@@ -758,24 +810,33 @@ async def _handle_group_update(_state: CLIState, payload: GroupUpdateServerPaylo
         _print_event(f"Group name: {payload.group_name}")
 
 
-async def _handle_server_state(state: CLIState, payload: ServerStatePayload) -> None:
+async def _handle_server_state(
+    state: CLIState, ui: SendspinUI | None, payload: ServerStatePayload
+) -> None:
     """Handle server/state messages with controller state."""
     if payload.controller:
         controller = payload.controller
         state.supported_commands = set(controller.supported_commands)
 
-        if controller.volume != state.volume:
+        volume_changed = controller.volume != state.volume
+        mute_changed = controller.muted != state.muted
+
+        if volume_changed:
             state.volume = controller.volume
             _print_event(f"Volume: {controller.volume}%")
-        if controller.muted != state.muted:
+        if mute_changed:
             state.muted = controller.muted
             _print_event("Muted" if controller.muted else "Unmuted")
+
+        if ui is not None and (volume_changed or mute_changed):
+            ui.set_volume(state.volume, muted=state.muted)
 
 
 async def _handle_server_command(
     state: CLIState,
     audio_handler: AudioStreamHandler,
     client: SendspinClient,
+    ui: SendspinUI | None,
     payload: ServerCommandPayload,
 ) -> None:
     """Handle server/command messages for player volume/mute control."""
@@ -788,11 +849,15 @@ async def _handle_server_command(
         state.player_volume = player_cmd.volume
         if audio_handler.audio_player is not None:
             audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
+        if ui is not None:
+            ui.set_player_volume(state.player_volume, muted=state.player_muted)
         _print_event(f"Server set player volume: {player_cmd.volume}%")
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
         state.player_muted = player_cmd.mute
         if audio_handler.audio_player is not None:
             audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
+        if ui is not None:
+            ui.set_player_volume(state.player_volume, muted=state.player_muted)
         _print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
@@ -803,210 +868,20 @@ async def _handle_server_command(
     )
 
 
-class CommandHandler:
-    """Parses and executes user commands from the keyboard."""
-
-    def __init__(
-        self,
-        client: SendspinClient,
-        state: CLIState,
-        audio_handler: AudioStreamHandler,
-    ) -> None:
-        """Initialize the command handler."""
-        self._client = client
-        self._state = state
-        self._audio_handler = audio_handler
-
-    async def execute(self, line: str) -> bool:
-        """
-        Parse and execute a command.
-
-        Returns True if the user wants to quit, False otherwise.
-        """
-        raw_line = line.strip()
-        if not raw_line:
-            return False
-
-        parts = raw_line.split()
-        command_lower = raw_line.lower()
-        keyword = parts[0].lower()
-
-        if command_lower in {"quit", "exit", "q"}:
-            return True
-        if command_lower in {"play", "p"}:
-            await self._send_media_command(MediaCommand.PLAY)
-        elif command_lower in {"pause", "space"}:
-            await self._send_media_command(MediaCommand.PAUSE)
-        elif command_lower in {"stop", "s"}:
-            await self._send_media_command(MediaCommand.STOP)
-        elif command_lower in {"next", "n"}:
-            await self._send_media_command(MediaCommand.NEXT)
-        elif command_lower in {"previous", "prev", "b"}:
-            await self._send_media_command(MediaCommand.PREVIOUS)
-        elif command_lower in {"vol+", "volume+", "+"}:
-            await self._change_volume(5)
-        elif command_lower in {"vol-", "volume-", "-"}:
-            await self._change_volume(-5)
-        elif command_lower in {"mute", "m"}:
-            await self._toggle_mute()
-        elif command_lower == "toggle":
-            await self._toggle_play_pause()
-        elif command_lower in {"repeat_off", "repeat-off", "ro"}:
-            await self._send_media_command(MediaCommand.REPEAT_OFF)
-        elif command_lower in {"repeat_one", "repeat-one", "r1"}:
-            await self._send_media_command(MediaCommand.REPEAT_ONE)
-        elif command_lower in {"repeat_all", "repeat-all", "ra"}:
-            await self._send_media_command(MediaCommand.REPEAT_ALL)
-        elif command_lower in {"shuffle", "sh"}:
-            await self._send_media_command(MediaCommand.SHUFFLE)
-        elif command_lower in {"unshuffle", "ush"}:
-            await self._send_media_command(MediaCommand.UNSHUFFLE)
-        elif command_lower in {"switch", "sw"}:
-            await self._send_media_command(MediaCommand.SWITCH)
-        elif command_lower in {"pvol+", "pvolume+"}:
-            await self._change_player_volume(5)
-        elif command_lower in {"pvol-", "pvolume-"}:
-            await self._change_player_volume(-5)
-        elif command_lower in {"pmute", "pm"}:
-            await self._toggle_player_mute()
-        elif keyword == "delay":
-            self._handle_delay_command(parts)
-        else:
-            _print_event("Unknown command")
-
-        return False
-
-    async def _send_media_command(self, command: MediaCommand) -> None:
-        """Send a media command with validation."""
-        if command not in self._state.supported_commands:
-            _print_event(f"Server does not support {command.value}")
-            return
-        await self._client.send_group_command(command)
-
-    async def _toggle_play_pause(self) -> None:
-        """Toggle between play and pause."""
-        if self._state.playback_state == PlaybackStateType.PLAYING:
-            await self._send_media_command(MediaCommand.PAUSE)
-        else:
-            await self._send_media_command(MediaCommand.PLAY)
-
-    async def _change_volume(self, delta: int) -> None:
-        """Adjust volume by delta."""
-        if MediaCommand.VOLUME not in self._state.supported_commands:
-            _print_event("Server does not support volume control")
-            return
-        current = self._state.volume if self._state.volume is not None else 50
-        target = max(0, min(100, current + delta))
-        await self._client.send_group_command(MediaCommand.VOLUME, volume=target)
-
-    async def _toggle_mute(self) -> None:
-        """Toggle mute state."""
-        if MediaCommand.MUTE not in self._state.supported_commands:
-            _print_event("Server does not support mute control")
-            return
-        target = not bool(self._state.muted)
-        await self._client.send_group_command(MediaCommand.MUTE, mute=target)
-
-    async def _change_player_volume(self, delta: int) -> None:
-        """Adjust player (system) volume by delta."""
-        target = max(0, min(100, self._state.player_volume + delta))
-        self._state.player_volume = target
-        # Apply volume to audio player
-        if self._audio_handler.audio_player is not None:
-            self._audio_handler.audio_player.set_volume(
-                self._state.player_volume, muted=self._state.player_muted
-            )
-        await self._client.send_player_state(
-            state=PlayerStateType.SYNCHRONIZED,
-            volume=self._state.player_volume,
-            muted=self._state.player_muted,
-        )
-        _print_event(f"Player volume: {target}%")
-
-    async def _toggle_player_mute(self) -> None:
-        """Toggle player (system) mute state."""
-        self._state.player_muted = not self._state.player_muted
-        # Apply mute to audio player
-        if self._audio_handler.audio_player is not None:
-            self._audio_handler.audio_player.set_volume(
-                self._state.player_volume, muted=self._state.player_muted
-            )
-        await self._client.send_player_state(
-            state=PlayerStateType.SYNCHRONIZED,
-            volume=self._state.player_volume,
-            muted=self._state.player_muted,
-        )
-        _print_event("Player muted" if self._state.player_muted else "Player unmuted")
-
-    def _handle_delay_command(self, parts: list[str]) -> None:
-        """Process delay commands."""
-        if len(parts) == 1:
-            _print_event(f"Static delay: {self._client.static_delay_ms:.1f} ms")
-            return
-        if len(parts) == 3 and parts[1] in {"+", "-"}:
-            try:
-                delta = float(parts[2])
-            except ValueError:
-                _print_event("Invalid delay value")
-                return
-            if parts[1] == "-":
-                delta = -delta
-            self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
-            _print_event(f"Static delay: {self._client.static_delay_ms:.1f} ms")
-            return
-        if len(parts) == 2:
-            try:
-                value = float(parts[1])
-            except ValueError:
-                _print_event("Invalid delay value")
-                return
-            self._client.set_static_delay_ms(value)
-            _print_event(f"Static delay: {self._client.static_delay_ms:.1f} ms")
-            return
-        _print_event("Usage: delay [<ms>|+ <ms>|- <ms>]")
+_ui_instance: SendspinUI | None = None
 
 
-async def _keyboard_loop(
-    client: SendspinClient,
-    state: CLIState,
-    audio_handler: AudioStreamHandler,
-) -> None:
-    handler = CommandHandler(client, state, audio_handler)
-    try:
-        if not sys.stdin.isatty():
-            logger.info("Running as daemon without interactive input")
-            await asyncio.Event().wait()
-            return
-
-        # Interactive mode: read commands from stdin
-        while True:
-            try:
-                line = await aioconsole.ainput()
-            except EOFError:
-                break
-            if await handler.execute(line):
-                break
-    except asyncio.CancelledError:
-        # Graceful shutdown on Ctrl+C or SIGTERM
-        logger.debug("Keyboard loop cancelled, exiting gracefully")
-        raise
+def _set_ui(ui: SendspinUI | None) -> None:
+    """Set the global UI instance."""
+    global _ui_instance  # noqa: PLW0603
+    _ui_instance = ui
 
 
 def _print_event(message: str) -> None:
-    print(message, flush=True)  # noqa: T201
-
-
-def _print_instructions() -> None:
-    print(  # noqa: T201
-        (
-            "Commands: play(p), pause, stop(s), next(n), prev(b), vol+/-, mute(m), toggle,\n"
-            "  repeat_off(ro), repeat_one(r1), repeat_all(ra), shuffle(sh), unshuffle(ush),\n"
-            "  switch(sw), pvol+/-, pmute(pm), delay, quit(q)\n"
-            "  vol+/- controls group volume, pvol+/- controls player volume\n"
-            "  delay [<ms>|+ <ms>|- <ms>] shows or adjusts the static delay"
-        ),
-        flush=True,
-    )
+    if _ui_instance is not None:
+        _ui_instance.add_event(message)
+    else:
+        print(message, flush=True)  # noqa: T201
 
 
 def main() -> int:
