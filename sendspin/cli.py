@@ -813,6 +813,8 @@ async def _handle_group_update(
         _print_event(f"Group ID: {payload.group_id}")
     if payload.group_name:
         _print_event(f"Group name: {payload.group_name}")
+    if ui is not None:
+        ui.set_group_name(payload.group_name)
     if payload.playback_state:
         state.playback_state = payload.playback_state
         if ui is not None:

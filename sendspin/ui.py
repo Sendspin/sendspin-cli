@@ -39,6 +39,7 @@ class UIState:
     server_url: str | None = None
     connected: bool = False
     status_message: str = "Initializing..."
+    group_name: str | None = None
 
     # Playback
     playback_state: PlaybackStateType | None = None
@@ -284,7 +285,10 @@ class SendspinUI:
             host = url.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
             # Remove brackets from IPv6
             host = host.strip("[]")
-            left.append(f"Connected to {host}", style="dim")
+            if self._state.group_name:
+                left.append(f"Connected to {self._state.group_name} at {host}", style="dim")
+            else:
+                left.append(f"Connected to {host}", style="dim")
         else:
             left.append(self._state.status_message, style="dim yellow")
 
@@ -314,6 +318,11 @@ class SendspinUI:
         self._state.connected = True
         self._state.server_url = url
         self._state.status_message = f"Connected to {url}"
+        self.refresh()
+
+    def set_group_name(self, name: str | None) -> None:
+        """Update the group name."""
+        self._state.group_name = name
         self.refresh()
 
     def set_disconnected(self, message: str = "Disconnected") -> None:
