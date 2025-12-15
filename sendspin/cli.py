@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from aiosendspin.models.metadata import SessionUpdateMetadata
     from zeroconf import ServiceListener
 
 import sounddevice
@@ -30,7 +31,6 @@ from aiosendspin.models.core import (
     ServerStatePayload,
     StreamStartMessage,
 )
-from aiosendspin.models.metadata import SessionUpdateMetadata
 from aiosendspin.models.player import (
     ClientHelloPlayerSupport,
     PlayerCommandPayload,
@@ -73,6 +73,7 @@ class CLIState:
     track_duration: int | None = None
     player_volume: int = 100
     player_muted: bool = False
+    group_id: str | None = None
 
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
@@ -755,9 +756,7 @@ async def main_async(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915
 
             try:
                 # Run connection loop with auto-reconnect
-                await _connection_loop(
-                    client, discovery, audio_handler, url, keyboard_task, ui
-                )
+                await _connection_loop(client, discovery, audio_handler, url, keyboard_task, ui)
             except asyncio.CancelledError:
                 logger.debug("Connection loop cancelled")
             finally:
@@ -799,18 +798,20 @@ async def _handle_metadata_update(
 async def _handle_group_update(
     state: CLIState, ui: SendspinUI | None, payload: GroupUpdateServerPayload
 ) -> None:
-    # Always clear metadata on group update - will be restored if new group has metadata
-    state.title = None
-    state.artist = None
-    state.album = None
-    state.track_progress = None
-    state.track_duration = None
-    if ui is not None:
-        ui.set_metadata(title=None, artist=None, album=None)
-        ui.clear_progress()
-
-    if payload.group_id:
+    # Only clear metadata when actually switching to a different group
+    group_changed = payload.group_id is not None and payload.group_id != state.group_id
+    if group_changed:
+        state.group_id = payload.group_id
+        state.title = None
+        state.artist = None
+        state.album = None
+        state.track_progress = None
+        state.track_duration = None
+        if ui is not None:
+            ui.set_metadata(title=None, artist=None, album=None)
+            ui.clear_progress()
         _print_event(f"Group ID: {payload.group_id}")
+
     if payload.group_name:
         _print_event(f"Group name: {payload.group_name}")
     if ui is not None:
