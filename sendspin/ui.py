@@ -552,3 +552,360 @@ class SendspinUI:
     def __exit__(self, *_: object) -> None:
         """Context manager exit."""
         self.stop()
+
+
+class _CalibrationRefreshableLayout:
+    """A renderable that rebuilds on each render cycle for calibration UI."""
+
+    def __init__(self, ui: "CalibrationUI") -> None:
+        self._ui = ui
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Rebuild and yield the layout on each render."""
+        yield self._ui._build_layout()  # noqa: SLF001
+
+
+class CalibrationUI:
+    """Rich-based terminal UI for sync calibration with histogram display."""
+
+    # Histogram display parameters
+    HISTOGRAM_WIDTH = 50  # Width of histogram bars in characters
+    HISTOGRAM_RANGE_MS = 200  # Show offsets from -RANGE to +RANGE ms
+    CLUSTER_GAP_MS = 10  # Start new cluster if gap exceeds this
+    CLUSTER_MAX_SPAN_MS = 30  # Maximum span of a single cluster (prevents chaining)
+    MAX_CLUSTERS = 15  # Maximum number of clusters to display
+
+    def __init__(self) -> None:
+        """Initialize the calibration UI."""
+        self._console = Console()
+        self._live: Live | None = None
+        self._running = False
+
+        # Calibration data
+        self._confidence_data: dict[int, float] = {}
+        self._best_offset_ms: int | None = None
+        self._elapsed_seconds: float = 0.0
+
+        # Best cluster detail (for zoomed view)
+        self._best_cluster_offsets: list[tuple[int, float]] = []
+        self._best_cluster_centroid: int | None = None
+
+        # Connection status
+        self._connected = False
+        self._status_message = "Initializing..."
+
+    def update_histogram(
+        self,
+        confidence_data: dict[int, float],
+        best_offset_ms: int | None,
+        elapsed_seconds: float,
+    ) -> None:
+        """Update the histogram data."""
+        self._confidence_data = confidence_data
+        self._best_offset_ms = best_offset_ms
+        self._elapsed_seconds = elapsed_seconds
+        self.refresh()
+
+    def set_connected(self, url: str) -> None:
+        """Update connection status to connected."""
+        self._connected = True
+        self._status_message = f"Connected to {url}"
+        self.refresh()
+
+    def set_disconnected(self, message: str = "Disconnected") -> None:
+        """Update connection status to disconnected."""
+        self._connected = False
+        self._status_message = message
+        self.refresh()
+
+    def _cluster_offsets(
+        self, offsets: list[tuple[int, float]]
+    ) -> list[tuple[int, float, bool, list[tuple[int, float]]]]:
+        """Cluster nearby offsets into single entries.
+
+        Args:
+            offsets: List of (offset_ms, confidence) tuples, sorted by offset.
+
+        Returns:
+            List of (centroid_offset_ms, total_confidence, contains_best, members) tuples.
+            members is the list of (offset, confidence) in the cluster.
+        """
+        if not offsets:
+            return []
+
+        clusters: list[tuple[int, float, bool, list[tuple[int, float]]]] = []
+        current_cluster: list[tuple[int, float]] = [offsets[0]]
+
+        for offset, conf in offsets[1:]:
+            # Check if this offset is close enough to the current cluster
+            cluster_min = min(o for o, _ in current_cluster)
+            cluster_max = max(o for o, _ in current_cluster)
+
+            # Two conditions to continue cluster:
+            # 1. Gap from previous offset is small enough
+            # 2. Total span wouldn't exceed max
+            gap_ok = offset - cluster_max <= self.CLUSTER_GAP_MS
+            span_ok = offset - cluster_min <= self.CLUSTER_MAX_SPAN_MS
+
+            if gap_ok and span_ok:
+                current_cluster.append((offset, conf))
+            else:
+                # Finalize current cluster and start a new one
+                clusters.append(self._finalize_cluster(current_cluster))
+                current_cluster = [(offset, conf)]
+
+        # Don't forget the last cluster
+        clusters.append(self._finalize_cluster(current_cluster))
+
+        return clusters
+
+    def _finalize_cluster(
+        self, cluster: list[tuple[int, float]]
+    ) -> tuple[int, float, bool, list[tuple[int, float]]]:
+        """Compute centroid and total confidence for a cluster.
+
+        Returns:
+            (centroid_offset_ms, total_confidence, contains_best, members)
+        """
+        total_conf = sum(conf for _, conf in cluster)
+        # Weighted centroid
+        centroid = sum(offset * conf for offset, conf in cluster) / total_conf
+        # Check if cluster contains the best offset
+        contains_best = any(offset == self._best_offset_ms for offset, _ in cluster)
+        return round(centroid), total_conf, contains_best, cluster
+
+    def _build_histogram_panel(self) -> Panel:
+        """Build the histogram panel showing offset confidence distribution."""
+        content = Table.grid()
+        content.add_column(justify="right", width=6)  # Offset label
+        content.add_column(width=1)  # Separator
+        content.add_column(width=self.HISTOGRAM_WIDTH)  # Bar
+        content.add_column(width=1)  # Separator
+        content.add_column(justify="left", width=8)  # Confidence value
+
+        if not self._confidence_data:
+            content.add_row("", "", Text("Waiting for calibration data...", style="dim"), "", "")
+            self._best_cluster_offsets = []
+            self._best_cluster_centroid = None
+            return Panel(
+                content,
+                title="Offset Histogram",
+                subtitle="Accumulating measurements...",
+                border_style="cyan",
+            )
+
+        # Get offsets in range and sort them
+        offsets_in_range = [
+            (offset, conf)
+            for offset, conf in self._confidence_data.items()
+            if -self.HISTOGRAM_RANGE_MS <= offset <= self.HISTOGRAM_RANGE_MS
+        ]
+        offsets_in_range.sort(key=lambda x: x[0])
+
+        # Cluster nearby offsets
+        clusters = self._cluster_offsets(offsets_in_range)
+
+        # Sort by confidence and take top N, then re-sort by offset for display
+        clusters.sort(key=lambda x: x[1], reverse=True)
+
+        # Track the best cluster (highest confidence) for detail view
+        if clusters:
+            best_cluster = clusters[0]
+            self._best_cluster_centroid = best_cluster[0]
+            self._best_cluster_offsets = sorted(best_cluster[3], key=lambda x: x[0])
+        else:
+            self._best_cluster_offsets = []
+            self._best_cluster_centroid = None
+
+        clusters = clusters[: self.MAX_CLUSTERS]
+        clusters.sort(key=lambda x: x[0])
+
+        # Find max confidence for scaling (after clustering)
+        max_confidence = max(c[1] for c in clusters) if clusters else 1.0
+
+        # If we have data but nothing in range, show a message
+        if not clusters:
+            content.add_row(
+                "", "", Text("All offsets outside display range", style="dim yellow"), "", ""
+            )
+        else:
+            for centroid, confidence, contains_best, _members in clusters:
+                # Calculate bar length
+                bar_length = int((confidence / max_confidence) * self.HISTOGRAM_WIDTH)
+                bar_length = max(1, bar_length)  # At least 1 char
+
+                # Determine bar style - highlight if this is the best cluster
+                is_best_cluster = centroid == self._best_cluster_centroid
+                if is_best_cluster:
+                    bar_char = "█"
+                    bar_style = "bold green"
+                    label_style = "bold green"
+                else:
+                    bar_char = "▓"
+                    bar_style = "cyan"
+                    label_style = "white"
+
+                # Build the bar
+                bar = Text(bar_char * bar_length, style=bar_style)
+
+                # Offset label
+                label = Text(f"{centroid:+4d}ms", style=label_style)
+
+                # Confidence value
+                conf_text = Text(f"{confidence:.1f}", style="dim")
+
+                content.add_row(label, " ", bar, " ", conf_text)
+
+        # Best offset subtitle
+        if self._best_offset_ms is not None:
+            subtitle = f"Best: {self._best_offset_ms:+d}ms | Elapsed: {self._elapsed_seconds:.0f}s"
+        else:
+            subtitle = f"Elapsed: {self._elapsed_seconds:.0f}s"
+
+        return Panel(
+            content,
+            title="Offset Histogram (clustered)",
+            subtitle=subtitle,
+            border_style="cyan",
+        )
+
+    def _build_detail_panel(self) -> Panel:
+        """Build detail panel showing individual offsets in the best cluster."""
+        content = Table.grid()
+        content.add_column(justify="right", width=6)  # Offset label
+        content.add_column(width=1)  # Separator
+        content.add_column(width=self.HISTOGRAM_WIDTH)  # Bar
+        content.add_column(width=1)  # Separator
+        content.add_column(justify="left", width=8)  # Confidence value
+
+        if not self._best_cluster_offsets:
+            content.add_row("", "", Text("No cluster selected", style="dim"), "", "")
+            return Panel(
+                content,
+                title="Peak Cluster Detail",
+                border_style="dim",
+            )
+
+        # Find max confidence for scaling within the cluster
+        max_confidence = max(conf for _, conf in self._best_cluster_offsets)
+        if max_confidence == 0:
+            max_confidence = 1.0
+
+        for offset, confidence in self._best_cluster_offsets:
+            # Calculate bar length
+            bar_length = int((confidence / max_confidence) * self.HISTOGRAM_WIDTH)
+            bar_length = max(1, bar_length)  # At least 1 char
+
+            # Highlight the raw best offset
+            is_best = offset == self._best_offset_ms
+            if is_best:
+                bar_char = "█"
+                bar_style = "bold yellow"
+                label_style = "bold yellow"
+            else:
+                bar_char = "▒"
+                bar_style = "green"
+                label_style = "white"
+
+            # Build the bar
+            bar = Text(bar_char * bar_length, style=bar_style)
+
+            # Offset label
+            label = Text(f"{offset:+4d}ms", style=label_style)
+
+            # Confidence value
+            conf_text = Text(f"{confidence:.1f}", style="dim")
+
+            content.add_row(label, " ", bar, " ", conf_text)
+
+        # Subtitle with cluster info
+        if self._best_cluster_centroid is not None:
+            total_conf = sum(conf for _, conf in self._best_cluster_offsets)
+            subtitle = f"Centroid: {self._best_cluster_centroid:+d}ms | Total: {total_conf:.1f}"
+        else:
+            subtitle = ""
+
+        return Panel(
+            content,
+            title="Peak Cluster Detail",
+            subtitle=subtitle,
+            border_style="green",
+        )
+
+    def _build_status_line(self) -> Text:
+        """Build the status line at the bottom."""
+        line = Text()
+        line.append("  ")
+
+        if self._connected:
+            line.append("● ", style="green")
+            line.append(self._status_message, style="dim")
+        else:
+            line.append("○ ", style="yellow")
+            line.append(self._status_message, style="dim yellow")
+
+        line.append("  |  ", style="dim")
+        line.append("q", style="bold")
+        line.append(" quit", style="dim")
+
+        return line
+
+    def _build_layout(self) -> Table:
+        """Build the complete UI layout."""
+        width = self._console.width - 1
+
+        layout = Table.grid(expand=False)
+        layout.add_column(width=width)
+
+        # Header
+        header = Text()
+        header.append("  Sync Calibration Mode", style="bold cyan")
+        header.append(" - ", style="dim")
+        header.append("Measuring audio offset via microphone", style="dim")
+        layout.add_row(header)
+        layout.add_row("")
+
+        # Histogram panel (this also updates best cluster data)
+        layout.add_row(self._build_histogram_panel())
+
+        # Detail panel for peak cluster
+        layout.add_row(self._build_detail_panel())
+
+        # Status line
+        layout.add_row("")
+        layout.add_row(self._build_status_line())
+
+        return layout
+
+    def refresh(self) -> None:
+        """Request a UI refresh."""
+        if self._live is not None:
+            self._live.refresh()
+
+    def start(self) -> None:
+        """Start the live display."""
+        self._console.clear()
+        self._live = Live(
+            _CalibrationRefreshableLayout(self),
+            console=self._console,
+            refresh_per_second=2,  # Slower refresh for calibration
+            screen=True,
+        )
+        self._live.start()
+        self._running = True
+
+    def stop(self) -> None:
+        """Stop the live display."""
+        self._running = False
+        if self._live is not None:
+            self._live.stop()
+            self._live = None
+
+    def __enter__(self) -> Self:
+        """Context manager entry."""
+        self.start()
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        """Context manager exit."""
+        self.stop()

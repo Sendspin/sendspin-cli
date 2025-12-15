@@ -43,10 +43,10 @@ from aiosendspin.models.types import (
     UndefinedField,
 )
 
-from sendspin.audio import AudioDevice, AudioPlayer
+from sendspin.audio import AudioPlayer, SyncCalibrator
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
-from sendspin.ui import SendspinUI
+from sendspin.ui import CalibrationUI, SendspinUI
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ async def connection_loop(  # noqa: PLR0915
     keyboard_task: asyncio.Task[None],
     print_event: Callable[[str], None],
     connection_manager: ConnectionManager,
-    ui: SendspinUI | None = None,
+    ui: SendspinUI | CalibrationUI | None = None,
 ) -> None:
     """
     Run the connection loop with automatic reconnection on disconnect.
@@ -382,15 +382,26 @@ async def connection_loop(  # noqa: PLR0915
 class AudioStreamHandler:
     """Manages audio playback state and stream lifecycle."""
 
-    def __init__(self, client: SendspinClient, audio_device: AudioDevice) -> None:
+    def __init__(
+        self,
+        client: SendspinClient,
+        audio_device: int | None = None,
+        calibrator: SyncCalibrator | None = None,
+        *,
+        mute_output: bool = False,
+    ) -> None:
         """Initialize the audio stream handler.
 
         Args:
             client: The Sendspin client instance.
-            audio_device: Audio device to use.
+            audio_device: Audio device ID to use. None for default device.
+            calibrator: Optional sync calibrator for measuring timing offset.
+            mute_output: If True, mute the audio output (for calibration mode).
         """
         self._client = client
         self._audio_device = audio_device
+        self._calibrator = calibrator
+        self._mute_output = mute_output
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
 
@@ -407,6 +418,14 @@ class AudioStreamHandler:
             )
             self.audio_player.set_format(fmt, device=self._audio_device)
             self._current_format = fmt
+
+            # Apply mute if in calibration mode
+            if self._mute_output:
+                self.audio_player.set_volume(0, muted=True)
+
+        # Feed audio to calibrator if present
+        if self._calibrator is not None:
+            self._calibrator.submit_reference_audio(server_timestamp_us, audio_data, fmt.channels)
 
         # Submit audio chunk - AudioPlayer handles timing
         if self.audio_player is not None:
@@ -446,6 +465,8 @@ class AudioStreamHandler:
         if self.audio_player is not None:
             await self.audio_player.stop()
             self.audio_player = None
+        if self._calibrator is not None:
+            self._calibrator.stop()
 
 
 @dataclass
@@ -458,6 +479,8 @@ class AppConfig:
     client_name: str | None = None
     static_delay_ms: float = 0.0
     headless: bool = False
+    calibrate_sync: bool = False
+    mic_device: int | None = None
 
 
 class SendspinApp:
@@ -467,6 +490,7 @@ class SendspinApp:
         """Initialize the application."""
         self._config = config
         self._ui: SendspinUI | None = None
+        self._calibration_ui: CalibrationUI | None = None
         self._state = AppState()
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
@@ -512,10 +536,10 @@ class SendspinApp:
             player_support=ClientHelloPlayerSupport(
                 supported_formats=[
                     SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
+                        codec=AudioCodec.PCM, channels=2, sample_rate=48_000, bit_depth=16
                     ),
                     SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
+                        codec=AudioCodec.PCM, channels=1, sample_rate=48_000, bit_depth=16
                     ),
                 ],
                 buffer_capacity=32_000_000,
@@ -545,22 +569,55 @@ class SendspinApp:
                     logger.exception("Failed to discover server")
                     return 1
 
-            # Log audio device being used
-            logger.info(
-                "Using audio device %d: %s",
-                config.audio_device.index,
-                config.audio_device.name,
-            )
-            self._print_event(f"Using audio device: {config.audio_device.name}")
+            # Resolve audio device if specified
+            audio_device = None
+            if config.audio_device is not None:
+                try:
+                    audio_device = resolve_audio_device(config.audio_device)
+                    if audio_device is not None:
+                        device_name = sounddevice.query_devices(audio_device)["name"]
+                        logger.info("Using audio device %d: %s", audio_device, device_name)
+                        self._print_event(f"Using audio device: {device_name}")
+                except ValueError as e:
+                    logger.error("Audio device error: %s", e)
+                    return 1
+            else:
+                # Print default device
+                default_device = sounddevice.default.device[1]
+                device_name = sounddevice.query_devices(default_device)["name"]
+                self._print_event(f"Using audio device: {device_name}")
+
+            # Create sync calibrator if in calibration mode
+            calibrator: SyncCalibrator | None = None
+            if config.calibrate_sync:
+                calibrator = SyncCalibrator(
+                    sample_rate=48000,
+                    channels=2,
+                    mic_device=config.mic_device,
+                    compute_server_time=self._client.compute_server_time,
+                )
+                calibrator.start()
+                self._print_event("Sync calibration mode enabled - output muted, listening on mic")
 
             # Create audio and stream handlers
-            self._audio_handler = AudioStreamHandler(self._client, audio_device=config.audio_device)
+            self._audio_handler = AudioStreamHandler(
+                self._client,
+                audio_device=audio_device,
+                calibrator=calibrator,
+                mute_output=config.calibrate_sync,
+            )
 
             # Create UI for interactive mode (unless headless)
             if sys.stdin.isatty() and not config.headless:
-                self._ui = SendspinUI()
-                self._ui.start()
-                self._ui.set_delay(self._client.static_delay_ms)
+                if config.calibrate_sync:
+                    # Use calibration UI with histogram
+                    self._calibration_ui = CalibrationUI()
+                    self._calibration_ui.start()
+                else:
+                    # Use normal playback UI
+                    self._ui = SendspinUI()
+                    self._ui.start()
+                    self._ui.set_delay(self._client.static_delay_ms)
 
             try:
                 self._setup_listeners()
@@ -608,9 +665,25 @@ class SendspinApp:
 
                 connection_manager = ConnectionManager(self._discovery, keyboard_task)
 
+                # Create histogram update task for calibration mode
+                histogram_task: asyncio.Task[None] | None = None
+                if config.calibrate_sync and self._calibration_ui is not None and calibrator is not None:
+
+                    async def update_histogram_loop() -> None:
+                        """Periodically update the calibration histogram."""
+                        while True:
+                            await asyncio.sleep(0.5)  # Update every 500ms
+                            if calibrator is not None and self._calibration_ui is not None:
+                                data, best, elapsed = calibrator.get_histogram_data()
+                                self._calibration_ui.update_histogram(data, best, elapsed)
+
+                    histogram_task = asyncio.create_task(update_histogram_loop())
+
                 def signal_handler() -> None:
                     logger.debug("Received interrupt signal, shutting down...")
                     keyboard_task.cancel()
+                    if histogram_task is not None:
+                        histogram_task.cancel()
 
                 # Signal handlers aren't supported on this platform (e.g., Windows)
                 with contextlib.suppress(NotImplementedError):
@@ -619,6 +692,8 @@ class SendspinApp:
 
                 try:
                     # Run connection loop with auto-reconnect
+                    # Pass calibration UI if in calibration mode, otherwise normal UI
+                    ui_for_connection = self._calibration_ui if config.calibrate_sync else self._ui
                     await connection_loop(
                         self._client,
                         self._discovery,
@@ -627,11 +702,16 @@ class SendspinApp:
                         keyboard_task,
                         self._print_event,
                         connection_manager,
-                        self._ui,
+                        ui_for_connection,
                     )
                 except asyncio.CancelledError:
                     logger.debug("Connection loop cancelled")
                 finally:
+                    # Cancel histogram update task
+                    if histogram_task is not None:
+                        histogram_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await histogram_task
                     # Remove signal handlers
                     # Signal handlers aren't supported on this platform (e.g., Windows)
                     with contextlib.suppress(NotImplementedError):
@@ -640,9 +720,11 @@ class SendspinApp:
                     await self._audio_handler.cleanup()
                     await self._client.disconnect()
             finally:
-                # Stop UI
+                # Stop UIs
                 if self._ui is not None:
                     self._ui.stop()
+                if self._calibration_ui is not None:
+                    self._calibration_ui.stop()
 
                 # Show hint if delay was changed during session
                 current_delay = self._client.static_delay_ms

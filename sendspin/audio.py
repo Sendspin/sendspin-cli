@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import logging
+import time as time_module
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
@@ -25,6 +26,14 @@ from sounddevice import CallbackFlags
 
 if TYPE_CHECKING:
     from aiosendspin.client import PCMFormat
+
+    class CDataTimeInfo:
+        """Type stub for sounddevice CFFI time info."""
+
+        inputBufferAdcTime: float  # noqa: N815
+        currentTime: float  # noqa: N815
+        outputBufferDacTime: float  # noqa: N815
+
 
 logger = logging.getLogger(__name__)
 
@@ -1163,3 +1172,646 @@ class AudioPlayer:
             except Exception:
                 logger.exception("Failed to close audio output stream")
         self._stream = None
+
+
+class SyncCalibrator:
+    """Experimental sync calibrator using cross-correlation.
+
+    Captures audio from a microphone and compares it against the expected audio
+    (received from the server) using cross-correlation to determine timing offset.
+    This can be used to calibrate other devices playing the audio.
+    """
+
+    _WINDOW_SECONDS: Final[float] = 1.0
+    """Cross-correlation window size in seconds (should be >= chirp duration)."""
+    _REPORT_INTERVAL_SECONDS: Final[float] = 1.0
+    """How often to report the measured offset."""
+    _MAX_LAG_MS: Final[float] = 250.0
+    """How far back to look in reference buffer (accounts for audio arriving early)."""
+    _GCC_PHAT_EPS: Final[float] = 1e-10
+    """Small epsilon to avoid division by zero in GCC-PHAT."""
+
+    def __init__(
+        self,
+        sample_rate: int = 48000,
+        channels: int = 2,
+        mic_device: int | None = None,
+        compute_server_time: Callable[[int], int] | None = None,
+    ) -> None:
+        """Initialize the sync calibrator.
+
+        Args:
+            sample_rate: Audio sample rate (must match stream).
+            channels: Number of audio channels.
+            mic_device: Microphone device ID. None for default.
+            compute_server_time: Function to convert loop time (us) to server time (us).
+        """
+        self._sample_rate = sample_rate
+        self._channels = channels
+        self._mic_device = mic_device
+        self._compute_server_time = compute_server_time
+
+        # Buffer sizes - 10 seconds should be plenty
+        self._buffer_duration_seconds = 10.0
+        self._window_samples = int(self._WINDOW_SECONDS * sample_rate)
+        self._buffer_samples = int(self._buffer_duration_seconds * sample_rate)
+
+        # Ring buffer for reference (expected) audio with timestamp tracking
+        # We track timestamp at position 0 and update it as we overwrite
+        self._reference_buffer = np.zeros(self._buffer_samples, dtype=np.float32)
+        self._reference_write_pos = 0
+        self._reference_pos0_timestamp_us: int | None = (
+            None  # Server playback timestamp at buffer position 0
+        )
+
+        # Ring buffer for captured (mic) audio with timestamp tracking
+        self._capture_buffer = np.zeros(self._buffer_samples, dtype=np.float32)
+        self._capture_write_pos = 0
+        self._capture_pos0_time_us: int | None = None  # Loop time at buffer position 0
+
+        # Mic input stream
+        self._mic_stream: sounddevice.InputStream | None = None
+        self._started = False
+
+        # Timing for reports
+        self._last_report_time = 0.0
+
+        # Smoothed offset tracking
+        self._smoothed_offset_ms: float | None = None
+
+        # Accumulated confidence per offset (rounded to nearest ms)
+        # Maps offset_ms (int) -> accumulated confidence
+        self._accumulated_confidence: dict[int, float] = {}
+        self._confidence_decay: float = 0.9  # Decay factor per measurement
+
+        # Start time for elapsed time logging
+        self._start_time: float = 0.0
+
+        # Drift tracking - store (elapsed_s, best_offset_ms) for linear regression
+        self._drift_history: list[tuple[float, float]] = []
+        self._max_drift_history: int = 50  # Keep last N measurements
+
+        # Mic sample rate diagnostic - track actual vs expected sample rate
+        self._total_mic_samples: int = 0
+        self._mic_start_time: float | None = None
+
+        # Warmup baseline for accurate rate calculation (skip startup noise)
+        self._warmup_complete: bool = False
+        self._warmup_baseline_time: float | None = None
+        self._warmup_baseline_samples: int = 0
+        self._WARMUP_SECONDS: float = 30.0  # Wait this long before establishing baseline
+
+        # Sliding window for empirical capture rate (more accurate than cumulative average)
+        # Store (monotonic_time, sample_count) pairs
+        self._capture_rate_history: collections.deque[tuple[float, int]] = collections.deque(
+            maxlen=100  # ~20 seconds of history at 5 samples/sec
+        )
+
+    def get_histogram_data(self) -> tuple[dict[int, float], int | None, float]:
+        """Get histogram data for UI display.
+
+        Returns:
+            Tuple of (confidence_dict, best_offset_ms, elapsed_seconds):
+            - confidence_dict: Maps offset_ms (int) to accumulated confidence (float)
+            - best_offset_ms: The offset with highest confidence, or None if no data
+            - elapsed_seconds: Time since calibration started
+        """
+        elapsed = time_module.monotonic() - self._start_time if self._start_time > 0 else 0.0
+
+        if not self._accumulated_confidence:
+            return {}, None, elapsed
+
+        # Find best offset
+        best_offset = max(self._accumulated_confidence.items(), key=lambda x: x[1])[0]
+
+        return dict(self._accumulated_confidence), best_offset, elapsed
+
+    def start(self) -> None:
+        """Start the microphone capture stream."""
+        if self._started:
+            return
+
+        self._mic_stream = sounddevice.InputStream(
+            samplerate=self._sample_rate,
+            channels=1,  # Capture mono for simplicity
+            dtype="float32",
+            blocksize=2048,
+            callback=self._mic_callback,
+            device=self._mic_device,
+        )
+        self._mic_stream.start()
+        self._started = True
+        self._start_time = time_module.monotonic()  # Track start time for timestamps
+        actual_mic_rate = self._mic_stream.samplerate
+        print(  # noqa: T201
+            f"[Calibrator] Requested sample_rate={self._sample_rate}, "
+            f"actual mic sample_rate={actual_mic_rate}"
+        )
+        logger.info(
+            "Sync calibrator started: mic_device=%s, sample_rate=%d, actual_mic_rate=%s",
+            self._mic_device,
+            self._sample_rate,
+            actual_mic_rate,
+        )
+
+    def stop(self) -> None:
+        """Stop the microphone capture stream."""
+        if self._mic_stream is not None:
+            try:
+                self._mic_stream.stop()
+                self._mic_stream.close()
+            except Exception:
+                logger.exception("Failed to close mic stream")
+            self._mic_stream = None
+        self._started = False
+
+    def reset_buffers(self) -> None:
+        """Reset ring buffers and accumulated state (call on song/stream change)."""
+        # Clear reference buffer state
+        self._reference_buffer.fill(0)
+        self._reference_write_pos = 0
+        self._reference_pos0_timestamp_us = None
+        self._ref_newest_server_timestamp_us: int | None = None
+        self._ref_total_samples = 0
+        self._buffer_ahead_samples: int | None = None
+
+        # Clear capture buffer state
+        self._capture_buffer.fill(0)
+        self._capture_write_pos = 0
+        self._capture_pos0_time_us = None
+        self._cap_total_samples = 0
+        self._cap_newest_loop_time_us: int | None = None
+
+        # Clear accumulated confidence
+        self._accumulated_confidence.clear()
+
+        # Reset timing
+        self._last_report_time = 0.0
+        self._start_time = time_module.monotonic()
+        self._chunk_count = 0
+
+        # Reset mic sample rate tracking
+        self._total_mic_samples = 0
+        self._mic_start_time = None
+        self._capture_rate_history.clear()
+
+        # Reset warmup state
+        self._warmup_complete = False
+        self._warmup_baseline_time = None
+        self._warmup_baseline_samples = 0
+
+        print("[Calibrator] Buffers reset (stream change)")  # noqa: T201
+
+    def _mic_callback(
+        self,
+        indata: np.ndarray,
+        _frames: int,
+        time_info: CDataTimeInfo,
+        status: CallbackFlags,
+    ) -> None:
+        """Handle microphone input data."""
+        if status:
+            logger.debug("Mic callback status: %s", status)
+
+        # Track actual mic sample rate vs monotonic clock
+        now = time_module.monotonic()
+        if self._mic_start_time is None:
+            self._mic_start_time = now
+        self._total_mic_samples += len(indata)
+
+        # Record sample count for sliding window rate calculation (~5 times/sec)
+        if self._total_mic_samples % (self._sample_rate // 5) < len(indata):
+            self._capture_rate_history.append((now, self._total_mic_samples))
+
+        elapsed = now - self._mic_start_time
+
+        # Establish baseline after warmup period (skip startup noise)
+        if not self._warmup_complete and elapsed >= self._WARMUP_SECONDS:
+            self._warmup_complete = True
+            self._warmup_baseline_time = now
+            self._warmup_baseline_samples = self._total_mic_samples
+            print(f"[Calibrator] Warmup complete, baseline established at {elapsed:.1f}s")  # noqa: T201
+
+        # Calculate empirical rate from baseline (if available) or cumulative
+        if self._warmup_complete and self._warmup_baseline_time is not None:
+            time_since_baseline = now - self._warmup_baseline_time
+            samples_since_baseline = self._total_mic_samples - self._warmup_baseline_samples
+            if time_since_baseline > 1.0:
+                empirical_rate = samples_since_baseline / time_since_baseline
+            else:
+                empirical_rate = self._sample_rate
+        elif elapsed > 1.0:
+            empirical_rate = self._total_mic_samples / elapsed
+        else:
+            empirical_rate = self._sample_rate
+
+        if elapsed > 0:
+            actual_rate = self._total_mic_samples / elapsed
+            # Print every ~10 seconds
+            if self._total_mic_samples % (self._sample_rate * 10) < len(indata):
+                if self._warmup_complete:
+                    print(  # noqa: T201
+                        f"[Calibrator] Mic rate: cumulative={actual_rate:.2f} Hz, "
+                        f"post-warmup={empirical_rate:.2f} Hz (diff: {empirical_rate - self._sample_rate:+.2f})"
+                    )
+                else:
+                    print(  # noqa: T201
+                        f"[Calibrator] Mic rate: {actual_rate:.2f} Hz "
+                        f"(warmup {elapsed:.0f}/{self._WARMUP_SECONDS:.0f}s)"
+                    )
+
+        # Get loop time for this chunk
+        loop_time_us = round(now * 1_000_000.0)
+        # Use empirical sample rate for chunk duration
+        chunk_duration_us = round(len(indata) * 1_000_000.0 / empirical_rate)
+
+        # Compute capture time using ADC time if available
+        # ADC time = when samples were captured (stream time)
+        # currentTime = when callback fired (stream time)
+        # The difference is the input latency
+        try:
+            adc_time = time_info.inputBufferAdcTime
+            current_time = time_info.currentTime
+            if adc_time > 0 and current_time > 0:
+                latency_us = round((current_time - adc_time) * 1_000_000.0)
+                capture_time_us = loop_time_us - latency_us
+            else:
+                # Fallback: callback time minus chunk duration
+                capture_time_us = loop_time_us - chunk_duration_us
+        except (AttributeError, TypeError, ValueError):
+            # No timing info available
+            capture_time_us = loop_time_us - chunk_duration_us
+
+        # Convert to mono float32 if needed (should already be mono float32)
+        mono = indata[:, 0] if indata.ndim > 1 else indata.flatten()
+
+        # Initialize timestamp at position 0 on first chunk
+        if self._capture_pos0_time_us is None:
+            self._capture_pos0_time_us = capture_time_us
+
+        # Write to ring buffer, tracking when we overwrite position 0
+        samples_to_write = len(mono)
+        space_at_end = self._buffer_samples - self._capture_write_pos
+
+        if samples_to_write <= space_at_end:
+            self._capture_buffer[
+                self._capture_write_pos : self._capture_write_pos + samples_to_write
+            ] = mono
+        else:
+            # Wrap around - we're overwriting position 0
+            self._capture_buffer[self._capture_write_pos :] = mono[:space_at_end]
+            self._capture_buffer[: samples_to_write - space_at_end] = mono[space_at_end:]
+            # Calculate new pos0 time based on where in the new cycle we are
+            # capture_time_us is start of THIS chunk, which wrote samples_into_new_cycle
+            # samples at the start of the buffer
+            samples_into_new_cycle = samples_to_write - space_at_end
+            # Use empirical rate for consistency with chunk_duration_us
+            time_into_new_cycle_us = (
+                round(samples_into_new_cycle * 1_000_000.0 / empirical_rate)
+                if elapsed > 1.0
+                else round(samples_into_new_cycle * 1_000_000.0 / self._sample_rate)
+            )
+            self._capture_pos0_time_us = (
+                capture_time_us + chunk_duration_us - time_into_new_cycle_us
+            )
+
+        self._capture_write_pos = (
+            self._capture_write_pos + samples_to_write
+        ) % self._buffer_samples
+
+        # Track total samples for buffer fullness check
+        if not hasattr(self, "_cap_total_samples"):
+            self._cap_total_samples = 0
+        self._cap_total_samples += samples_to_write
+
+        # Track loop_time of newest sample (for time-based extraction)
+        self._cap_newest_loop_time_us = capture_time_us + chunk_duration_us
+
+    def submit_reference_audio(
+        self, server_timestamp_us: int, audio_data: bytes, channels: int
+    ) -> None:
+        """Submit reference audio (what we expect to hear).
+
+        Args:
+            server_timestamp_us: Server timestamp when this audio should play.
+            audio_data: Raw PCM int16 audio bytes.
+            channels: Number of channels in the audio data.
+        """
+        if not self._started:
+            return
+
+        # Convert int16 PCM to float32 mono
+        samples = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+        # Convert to mono using left channel only
+        if channels > 1:
+            samples = samples.reshape(-1, channels)[:, 0]
+
+        chunk_duration_us = round(len(samples) * 1_000_000.0 / self._sample_rate)
+
+        # Use current loop time converted to server time as the timestamp basis
+        # This ensures the reference buffer uses the same time reference as capture buffer
+        # (both track when audio ARRIVES, not when it should PLAY)
+        if self._compute_server_time is None:
+            return
+
+        loop_time_now = round(time_module.monotonic() * 1_000_000.0)
+        # The chunk we're receiving now corresponds to audio that arrived at loop_time_now
+        # We use compute_server_time to get the equivalent server time
+        arrival_server_time_us = self._compute_server_time(loop_time_now)
+
+        # Track buffer_ahead for debugging (how far ahead server_timestamp is vs arrival time)
+        buffer_ahead_ms = (server_timestamp_us - arrival_server_time_us) / 1000.0
+        if not hasattr(self, "_chunk_count"):
+            self._chunk_count = 0
+        self._chunk_count += 1
+        if self._chunk_count % 500 == 1:  # ~every 10 seconds at 2048 samples/chunk
+            print(f"[Calibrator] buffer_ahead={buffer_ahead_ms:+.1f}ms")  # noqa: T201
+
+        # Initialize timestamp at position 0 on first chunk (use playback time)
+        if self._reference_pos0_timestamp_us is None:
+            self._reference_pos0_timestamp_us = server_timestamp_us
+
+        # Write to ring buffer, tracking when we overwrite position 0
+        samples_to_write = len(samples)
+        space_at_end = self._buffer_samples - self._reference_write_pos
+
+        if samples_to_write <= space_at_end:
+            self._reference_buffer[
+                self._reference_write_pos : self._reference_write_pos + samples_to_write
+            ] = samples
+        else:
+            # Wrap around - we're overwriting position 0
+            self._reference_buffer[self._reference_write_pos :] = samples[:space_at_end]
+            self._reference_buffer[: samples_to_write - space_at_end] = samples[space_at_end:]
+            # Calculate new pos0 time based on playback time
+            samples_into_new_cycle = samples_to_write - space_at_end
+            time_into_new_cycle_us = round(samples_into_new_cycle * 1_000_000.0 / self._sample_rate)
+            self._reference_pos0_timestamp_us = (
+                server_timestamp_us + chunk_duration_us - time_into_new_cycle_us
+            )
+
+        self._reference_write_pos = (
+            self._reference_write_pos + samples_to_write
+        ) % self._buffer_samples
+
+        # Track total samples for buffer fullness check
+        if not hasattr(self, "_ref_total_samples"):
+            self._ref_total_samples = 0
+        self._ref_total_samples += samples_to_write
+
+        # Track playback time of newest sample (right before write_pos)
+        # server_timestamp_us = when first sample of chunk plays
+        # + chunk_duration_us = when last sample of chunk plays
+        self._ref_newest_server_timestamp_us = server_timestamp_us + chunk_duration_us
+
+        # Periodically compute and report offset
+        self._maybe_report_offset()
+
+    def _maybe_report_offset(self) -> None:
+        """Compute and print offset if enough time has passed."""
+        now = time_module.monotonic()
+        if now - self._last_report_time < self._REPORT_INTERVAL_SECONDS:
+            return
+
+        # Need compute_server_time for timestamp conversion
+        if self._compute_server_time is None:
+            return
+
+        # Need enough data in both buffers
+        safety_samples = int(0.1 * self._sample_rate)  # 100ms safety margin
+        min_samples_needed = self._window_samples + safety_samples
+
+        if not hasattr(self, "_ref_total_samples"):
+            self._ref_total_samples = 0
+        if not hasattr(self, "_cap_total_samples"):
+            self._cap_total_samples = 0
+
+        if self._ref_total_samples < min_samples_needed:
+            return
+        if self._cap_total_samples < min_samples_needed:
+            return
+
+        # Need capture buffer timestamp to determine target time
+        if not hasattr(self, "_cap_newest_loop_time_us") or self._cap_newest_loop_time_us is None:
+            return
+
+        self._last_report_time = now
+
+        # Extract based on TIME, not write_pos directly.
+        # The two buffers advance at different rates (different clocks), so we
+        # calculate positions based on timestamps and work backwards from write_pos.
+        #
+        # We track:
+        # - _ref_newest_server_timestamp_us: playback time of newest sample (at write_pos - 1)
+        # - _cap_newest_loop_time_us: loop_time of newest sample in capture buffer
+        #
+        # For extraction:
+        # - Pick a target server_time T (what audio should have been playing)
+        # - Find reference position: samples_ago = (newest_timestamp - T) * sample_rate
+        # - Find capture position: samples_ago = (newest_loop_time - target_loop_time) * sample_rate
+
+        # Target time: what audio should have been playing at (now - safety)?
+        # We use capture buffer's newest_loop_time as the reference for "now"
+        # Safety margin must be > window/2 since we extract centered on the target
+        safety_time_us = round((self._WINDOW_SECONDS / 2 + 0.5) * 1_000_000.0)  # window/2 + 0.5s
+        target_loop_time_us = self._cap_newest_loop_time_us - safety_time_us
+        target_server_time_us = self._compute_server_time(target_loop_time_us)
+
+        # REFERENCE BUFFER: Find position by calculating backwards from write_pos
+        if not hasattr(self, "_ref_newest_server_timestamp_us"):
+            return
+
+        if self._ref_newest_server_timestamp_us is None:
+            return
+
+        # How many samples back from newest sample?
+        ref_time_ago_us = self._ref_newest_server_timestamp_us - target_server_time_us
+        ref_samples_ago = round(ref_time_ago_us * self._sample_rate / 1_000_000.0)
+
+        # Check bounds - ensure target is within valid buffer region
+        if ref_samples_ago < self._window_samples // 2:
+            return  # Too recent - not enough samples after target
+        if ref_samples_ago > self._buffer_samples - self._window_samples // 2:
+            return  # Too old - data has been overwritten
+
+        ref_center = (self._reference_write_pos - ref_samples_ago) % self._buffer_samples
+        ref_start = (ref_center - self._window_samples // 2) % self._buffer_samples
+        ref_end = (ref_start + self._window_samples) % self._buffer_samples
+
+        if ref_start < ref_end:
+            reference = self._reference_buffer[ref_start:ref_end].copy()
+        else:
+            reference = np.concatenate(
+                [self._reference_buffer[ref_start:], self._reference_buffer[:ref_end]]
+            )
+
+        # CAPTURE BUFFER: Find position for target_loop_time
+        # Use empirical sample rate to compensate for audio hardware clock drift
+        cap_time_ago_us = self._cap_newest_loop_time_us - target_loop_time_us
+
+        # Calculate empirical rate from post-warmup baseline (more accurate than cumulative)
+        empirical_capture_rate: float = self._sample_rate  # Default fallback
+        if self._warmup_complete and self._warmup_baseline_time is not None:
+            now = time_module.monotonic()
+            time_since_baseline = now - self._warmup_baseline_time
+            samples_since_baseline = self._total_mic_samples - self._warmup_baseline_samples
+            if time_since_baseline > 1.0:
+                empirical_capture_rate = samples_since_baseline / time_since_baseline
+        elif self._mic_start_time is not None and self._total_mic_samples > 0:
+            elapsed = time_module.monotonic() - self._mic_start_time
+            if elapsed > 1.0:
+                empirical_capture_rate = self._total_mic_samples / elapsed
+
+        cap_samples_ago = round(cap_time_ago_us * empirical_capture_rate / 1_000_000.0)
+
+        # Check bounds
+        if cap_samples_ago < self._window_samples // 2:
+            return  # Too recent
+        if cap_samples_ago > self._buffer_samples - self._window_samples // 2:
+            return  # Too old
+
+        cap_center = (self._capture_write_pos - cap_samples_ago) % self._buffer_samples
+        cap_start = (cap_center - self._window_samples // 2) % self._buffer_samples
+        cap_end = (cap_start + self._window_samples) % self._buffer_samples
+
+        if cap_start < cap_end:
+            captured = self._capture_buffer[cap_start:cap_end].copy()
+        else:
+            captured = np.concatenate(
+                [self._capture_buffer[cap_start:], self._capture_buffer[:cap_end]]
+            )
+
+        # Check for sufficient signal level
+        ref_std = np.std(reference)
+        cap_std = np.std(captured)
+        if ref_std < 1e-6 or cap_std < 1e-6:
+            print("[Calibrator] Insufficient signal level for correlation")  # noqa: T201
+            return
+
+        # Remove DC bias (GCC-PHAT handles amplitude normalization via phase transform)
+        reference = reference - np.mean(reference)
+        captured = captured - np.mean(captured)
+
+        # GCC-PHAT (Generalized Cross-Correlation with Phase Transform)
+        # More robust to reverberation/noise than basic cross-correlation
+        # Pad to next power of 2 for FFT efficiency and to avoid circular wrap-around
+        n_samples = len(reference)
+        fft_size = 2 ** int(np.ceil(np.log2(2 * n_samples - 1)))
+
+        # FFT both signals with zero-padding
+        ref_fft = np.fft.rfft(reference, n=fft_size)
+        cap_fft = np.fft.rfft(captured, n=fft_size)
+
+        # Cross-power spectrum
+        cross_spectrum = cap_fft * np.conj(ref_fft)
+
+        # PHAT weighting: normalize by magnitude (whitening)
+        magnitude = np.abs(cross_spectrum)
+        # Add small epsilon to avoid division by zero
+        phat_spectrum = cross_spectrum / (magnitude + self._GCC_PHAT_EPS)
+
+        # IFFT to get correlation in time domain
+        correlation_full = np.fft.irfft(phat_spectrum)
+
+        # Extract the valid correlation range (equivalent to "full" mode)
+        # irfft gives us circular correlation, we need linear correlation
+        correlation = np.concatenate(
+            [correlation_full[-(n_samples - 1) :], correlation_full[:n_samples]]
+        )
+
+        # Limit search range to ±_MAX_LAG_MS
+        max_lag_samples = int(self._MAX_LAG_MS * self._sample_rate / 1000.0)
+        center_idx = n_samples - 1  # Zero-lag index in correlation array
+        search_start = max(0, center_idx - max_lag_samples)
+        search_end = min(len(correlation), center_idx + max_lag_samples + 1)
+
+        # Find peak within limited range
+        search_region = np.abs(correlation[search_start:search_end])
+        mean_val = np.mean(search_region)
+
+        # Find top N peaks using local maxima detection
+        # A local maximum is where the value is greater than both neighbors
+        num_peaks_to_show = 5
+        peaks: list[tuple[float, float, float]] = []  # (lag_ms, value, confidence)
+
+        for i in range(1, len(search_region) - 1):
+            if search_region[i] > search_region[i - 1] and search_region[i] > search_region[i + 1]:
+                peak_idx = search_start + i
+                lag_samples = center_idx - peak_idx
+                lag_ms_candidate = lag_samples * 1000.0 / self._sample_rate
+                peak_confidence = search_region[i] / mean_val if mean_val > 0 else 0
+                peaks.append((lag_ms_candidate, search_region[i], peak_confidence))
+
+        # Sort by value (descending) and take top N
+        peaks.sort(key=lambda x: x[1], reverse=True)
+        top_peaks = peaks[:num_peaks_to_show]
+
+        if not top_peaks:
+            print("[Calibrator] No peaks found in correlation")  # noqa: T201
+            return
+
+        # Apply decay to all accumulated confidences
+        for offset_ms in self._accumulated_confidence:
+            self._accumulated_confidence[offset_ms] *= self._confidence_decay
+
+        # Add new peaks to accumulator (rounded to nearest ms)
+        for lag_ms_peak, _, conf in top_peaks:
+            offset_key = round(lag_ms_peak)
+            self._accumulated_confidence[offset_key] = (
+                self._accumulated_confidence.get(offset_key, 0.0) + conf
+            )
+
+        # Remove entries with negligible confidence
+        self._accumulated_confidence = {
+            k: v for k, v in self._accumulated_confidence.items() if v > 0.1
+        }
+
+        # Get top accumulated offsets
+        sorted_accumulated = sorted(
+            self._accumulated_confidence.items(), key=lambda x: x[1], reverse=True
+        )[:10]
+
+        # Calculate elapsed time since start
+        elapsed_s = time_module.monotonic() - self._start_time
+
+        # Get top accumulated offset for easy drift tracking
+        top_offset = sorted_accumulated[0][0] if sorted_accumulated else 0
+
+        # Track drift over time (only after warmup for stable measurements)
+        if self._warmup_complete:
+            self._drift_history.append((elapsed_s, float(top_offset)))
+            if len(self._drift_history) > self._max_drift_history:
+                self._drift_history.pop(0)
+
+        # Calculate drift rate using linear regression if we have enough data
+        drift_rate_str = ""
+        if len(self._drift_history) >= 10:
+            times = [t for t, _ in self._drift_history]
+            offsets = [o for _, o in self._drift_history]
+            n = len(times)
+            sum_t = sum(times)
+            sum_o = sum(offsets)
+            sum_tt = sum(t * t for t in times)
+            sum_to = sum(t * o for t, o in zip(times, offsets))
+
+            # Linear regression: offset = slope * time + intercept
+            denom = n * sum_tt - sum_t * sum_t
+            if abs(denom) > 1e-10:
+                slope = (n * sum_to - sum_t * sum_o) / denom  # ms per second
+                drift_per_min = slope * 60  # ms per minute
+                drift_rate_str = f" | drift={drift_per_min:+.2f}ms/min"
+
+        # Format this measurement's top peaks
+        peaks_str = ", ".join(f"{p[0]:+.1f}ms({p[2]:.1f})" for p in top_peaks)
+
+        # Format accumulated winners
+        accumulated_str = ", ".join(
+            f"{offset:+d}ms({conf:.1f})" for offset, conf in sorted_accumulated[:5]
+        )
+
+        print(  # noqa: T201
+            f"[Calibrator] t={elapsed_s:6.1f}s | best={top_offset:+4d}ms{drift_rate_str}\n"
+            f"             this=[{peaks_str}]\n"
+            f"             accumulated=[{accumulated_str}]"
+        )
