@@ -232,7 +232,6 @@ async def keyboard_loop(
 
     # Interactive mode with single keypress input using readchar
     loop = asyncio.get_running_loop()
-    input_buffer = ""
 
     while True:
         try:
@@ -253,39 +252,20 @@ async def keyboard_loop(
             await handler.execute(cmd)
             continue
 
-        # Ignore any other escape sequences
+        # Ignore escape sequences
         if key.startswith("\x1b"):
             continue
 
-        # Handle Enter - execute buffered command
-        if key in ("\r", "\n", readchar.key.ENTER):
-            if input_buffer:
-                if await handler.execute(input_buffer):
-                    break
-                input_buffer = ""
-            continue
-
-        # Handle backspace
-        if key in ("\x7f", "\x08", readchar.key.BACKSPACE):
-            input_buffer = input_buffer[:-1]
-            continue
-
-        # Handle quit immediately
-        if not input_buffer and key in "qQ":
+        # Handle quit
+        if key in "qQ":
             if ui:
                 ui.highlight_shortcut("quit")
             break
 
         # Handle shortcut keys via dispatch table (case-insensitive)
-        if not input_buffer:
-            shortcut = _SHORTCUT_KEYS.get(key.lower())
-            if shortcut is not None:
-                shortcut_highlight, cmd = shortcut
-                if shortcut_highlight and ui:
-                    ui.highlight_shortcut(shortcut_highlight)
-                await handler.execute(cmd)
-                continue
-
-        # Accumulate other characters
-        if len(key) == 1 and key.isprintable():
-            input_buffer += key
+        shortcut = _SHORTCUT_KEYS.get(key.lower())
+        if shortcut is not None:
+            shortcut_highlight, cmd = shortcut
+            if shortcut_highlight and ui:
+                ui.highlight_shortcut(shortcut_highlight)
+            await handler.execute(cmd)
