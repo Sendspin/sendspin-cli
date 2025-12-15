@@ -153,7 +153,7 @@ async def keyboard_loop(
             break
 
         # Handle quit
-        if key in "qQ":
+        if key in "q":
             if ui:
                 ui.highlight_shortcut("quit")
             break
