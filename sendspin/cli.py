@@ -15,11 +15,10 @@ from dataclasses import dataclass, field
 from functools import partial
 from importlib.metadata import version
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
-    from zeroconf import ServiceListener
 
 import sounddevice
 from aiohttp import ClientError
@@ -45,17 +44,13 @@ from aiosendspin.models.types import (
     Roles,
     UndefinedField,
 )
-from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
 from sendspin.audio import AudioPlayer
+from sendspin.discovery import ServiceDiscovery, discover_servers
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
 
 logger = logging.getLogger(__name__)
-
-
-SERVICE_TYPE = "_sendspin-server._tcp.local."
-DEFAULT_PATH = "/sendspin"
 
 
 @dataclass
@@ -172,19 +167,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="List available audio output devices and exit",
     )
+    parser.add_argument(
+        "--list-servers",
+        action="store_true",
+        help="Discover and list available Sendspin servers on the network",
+    )
     return parser.parse_args(argv)
-
-
-def _build_service_url(host: str, port: int, properties: dict[bytes, bytes | None]) -> str:
-    """Construct WebSocket URL from mDNS service info."""
-    path_raw = properties.get(b"path")
-    path = path_raw.decode("utf-8", "ignore") if isinstance(path_raw, bytes) else DEFAULT_PATH
-    if not path:
-        path = DEFAULT_PATH
-    if not path.startswith("/"):
-        path = "/" + path
-    host_fmt = f"[{host}]" if ":" in host else host
-    return f"ws://{host_fmt}:{port}{path}"
 
 
 def _get_device_info() -> DeviceInfo:
@@ -254,6 +242,28 @@ def list_audio_devices() -> None:
         sys.exit(1)
 
 
+async def list_servers() -> None:
+    """Discover and list all Sendspin servers on the network."""
+    print("Searching for Sendspin servers...")  # noqa: T201
+    try:
+        servers = await discover_servers(discovery_time=3.0)
+        if not servers:
+            print("No Sendspin servers found.")  # noqa: T201
+            return
+
+        print(f"\nFound {len(servers)} server(s):")  # noqa: T201
+        print("-" * 80)  # noqa: T201
+        for server in servers:
+            print(f"  {server.name}")  # noqa: T201
+            print(f"    URL:  {server.url}")  # noqa: T201
+            print(f"    Host: {server.host}:{server.port}")  # noqa: T201
+        if servers:
+            print(f"\nTo connect to a server:\n  sendspin --url {servers[0].url}")  # noqa: T201
+    except Exception as e:  # noqa: BLE001
+        print(f"Error discovering servers: {e}")  # noqa: T201
+        sys.exit(1)
+
+
 def resolve_audio_device(device_id: int | None) -> int | None:
     """Validate audio device ID.
 
@@ -275,104 +285,6 @@ def resolve_audio_device(device_id: int | None) -> int | None:
             return device_id
         raise ValueError(f"Device {device_id} has no output channels")
     raise ValueError(f"Device ID {device_id} out of range (0-{len(devices) - 1})")
-
-
-class _ServiceDiscoveryListener:
-    """Listens for Sendspin server advertisements via mDNS."""
-
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
-        self._current_url: str | None = None
-        self._first_result: asyncio.Future[str] = loop.create_future()
-        self.tasks: set[asyncio.Task[None]] = set()
-
-    @property
-    def current_url(self) -> str | None:
-        """Get the current discovered server URL, or None if no servers."""
-        return self._current_url
-
-    async def wait_for_first(self) -> str:
-        """Wait for the first server to be discovered."""
-        return await self._first_result
-
-    async def _process_service_info(
-        self, zeroconf: AsyncZeroconf, service_type: str, name: str
-    ) -> None:
-        """Extract and construct WebSocket URL from service info."""
-        info = await zeroconf.async_get_service_info(service_type, name)
-        if info is None or info.port is None:
-            return
-        addresses = info.parsed_addresses()
-        if not addresses:
-            return
-        host = addresses[0]
-        url = _build_service_url(host, info.port, info.properties)
-        self._current_url = url
-
-        # Signal first server discovery
-        if not self._first_result.done():
-            self._first_result.set_result(url)
-
-    def _schedule(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        task = self._loop.create_task(self._process_service_info(zeroconf, service_type, name))
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
-
-    def add_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        self._schedule(zeroconf, service_type, name)
-
-    def update_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        self._schedule(zeroconf, service_type, name)
-
-    def remove_service(self, _zeroconf: AsyncZeroconf, _service_type: str, _name: str) -> None:
-        """Handle service removal (server offline)."""
-        self._current_url = None
-
-
-class ServiceDiscovery:
-    """Manages continuous discovery of Sendspin servers via mDNS."""
-
-    def __init__(self) -> None:
-        """Initialize the service discovery manager."""
-        self._listener: _ServiceDiscoveryListener | None = None
-        self._browser: AsyncServiceBrowser | None = None
-        self._zeroconf: AsyncZeroconf | None = None
-
-    async def start(self) -> None:
-        """Start continuous discovery (keeps running until stop() is called)."""
-        loop = asyncio.get_running_loop()
-        self._listener = _ServiceDiscoveryListener(loop)
-        self._zeroconf = AsyncZeroconf()
-        await self._zeroconf.__aenter__()
-
-        try:
-            self._browser = AsyncServiceBrowser(
-                self._zeroconf.zeroconf, SERVICE_TYPE, cast("ServiceListener", self._listener)
-            )
-        except Exception:
-            await self.stop()
-            raise
-
-    async def wait_for_first_server(self) -> str:
-        """Wait indefinitely for the first server to be discovered."""
-        if self._listener is None:
-            raise RuntimeError("Discovery not started. Call start() first.")
-        return await self._listener.wait_for_first()
-
-    def current_url(self) -> str | None:
-        """Get the current discovered server URL, or None if no servers."""
-        return self._listener.current_url if self._listener else None
-
-    async def stop(self) -> None:
-        """Stop discovery and clean up resources."""
-        if self._browser:
-            await self._browser.async_cancel()
-            self._browser = None
-        if self._zeroconf:
-            await self._zeroconf.__aexit__(None, None, None)
-            self._zeroconf = None
-        self._listener = None
 
 
 class ConnectionManager:
@@ -912,6 +824,10 @@ def main() -> int:
     args = parse_args(sys.argv[1:])
     if args.list_audio_devices:
         list_audio_devices()
+        return 0
+
+    if args.list_servers:
+        asyncio.run(list_servers())
         return 0
 
     return asyncio.run(main_async(sys.argv[1:]))
