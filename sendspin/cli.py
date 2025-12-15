@@ -774,6 +774,14 @@ async def main_async(argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915
                 ui.stop()
                 _set_ui(None)
 
+            # Show hint if delay was changed during session
+            current_delay = client.static_delay_ms
+            if current_delay != args.static_delay_ms:
+                print(  # noqa: T201
+                    f"\nDelay changed to {current_delay:.0f}ms. "
+                    f"Use '--static-delay-ms {current_delay:.0f}' next time to persist."
+                )
+
     finally:
         # Stop discovery
         await discovery.stop()
