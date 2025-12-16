@@ -71,40 +71,42 @@ def list_audio_devices() -> None:
         devices = sounddevice.query_devices()
         default_device = sounddevice.default.device[1]  # Output device index
 
-        print("Available audio output devices:")  # noqa: T201
-        print("-" * 80)  # noqa: T201
+        print("Available audio output devices:")
+        print()
         for i, device in enumerate(devices):
             if device["max_output_channels"] > 0:
                 default_marker = " (default)" if i == default_device else ""
-                print(  # noqa: T201
+                print(
                     f"  [{i}] {device['name']}{default_marker}\n"
                     f"       Channels: {device['max_output_channels']}, "
                     f"Sample rate: {device['default_samplerate']} Hz"
                 )
+        if devices:
+            print("\nTo select an audio device:\n  sendspin --audio-device 0")
+
     except Exception as e:  # noqa: BLE001
-        print(f"Error listing audio devices: {e}")  # noqa: T201
+        print(f"Error listing audio devices: {e}")
         sys.exit(1)
 
 
 async def list_servers() -> None:
     """Discover and list all Sendspin servers on the network."""
-    print("Searching for Sendspin servers...")  # noqa: T201
     try:
         servers = await discover_servers(discovery_time=3.0)
         if not servers:
-            print("No Sendspin servers found.")  # noqa: T201
+            print("No Sendspin servers found.")
             return
 
-        print(f"\nFound {len(servers)} server(s):")  # noqa: T201
-        print("-" * 80)  # noqa: T201
+        print(f"\nFound {len(servers)} server(s):")
+        print()
         for server in servers:
-            print(f"  {server.name}")  # noqa: T201
-            print(f"    URL:  {server.url}")  # noqa: T201
-            print(f"    Host: {server.host}:{server.port}")  # noqa: T201
+            print(f"  {server.name}")
+            print(f"    URL:  {server.url}")
+            print(f"    Host: {server.host}:{server.port}")
         if servers:
-            print(f"\nTo connect to a server:\n  sendspin --url {servers[0].url}")  # noqa: T201
+            print(f"\nTo connect to a server:\n  sendspin --url {servers[0].url}")
     except Exception as e:  # noqa: BLE001
-        print(f"Error discovering servers: {e}")  # noqa: T201
+        print(f"Error discovering servers: {e}")
         sys.exit(1)
 
 
