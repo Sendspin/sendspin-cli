@@ -168,27 +168,38 @@ def get_device_info() -> DeviceInfo:
     )
 
 
-def resolve_audio_device(device_id: int | None) -> int | None:
-    """Validate audio device ID.
+def resolve_audio_device(device: str | None) -> int | None:
+    """Resolve audio device by index or name prefix.
 
     Args:
-        device_id: Device ID to validate.
+        device: Device index (numeric string) or name prefix to match.
 
     Returns:
-        Device ID if valid, None for default device.
+        Device index if valid, None for default device.
 
     Raises:
-        ValueError: If device_id is invalid.
+        ValueError: If device is invalid or not found.
     """
-    if device_id is None:
+    if device is None:
         return None
 
     devices = sounddevice.query_devices()
-    if 0 <= device_id < len(devices):
-        if devices[device_id]["max_output_channels"] > 0:
-            return device_id
-        raise ValueError(f"Device {device_id} has no output channels")
-    raise ValueError(f"Device ID {device_id} out of range (0-{len(devices) - 1})")
+
+    # If numeric, treat as device index
+    if device.isnumeric():
+        device_id = int(device)
+        if 0 <= device_id < len(devices):
+            if devices[device_id]["max_output_channels"] > 0:
+                return device_id
+            raise ValueError(f"Device {device_id} has no output channels")
+        raise ValueError(f"Device index {device_id} out of range (0-{len(devices) - 1})")
+
+    # Otherwise, find first output device whose name starts with the prefix
+    for i, dev in enumerate(devices):
+        if dev["max_output_channels"] > 0 and dev["name"].startswith(device):
+            return i
+
+    raise ValueError(f"No audio output device found matching '{device}'")
 
 
 class ConnectionManager:
@@ -480,7 +491,7 @@ class AppConfig:
     client_id: str | None = None
     client_name: str | None = None
     static_delay_ms: float = 0.0
-    audio_device: int | None = None
+    audio_device: str | None = None
     log_level: str = "INFO"
     headless: bool = False
 
@@ -580,9 +591,15 @@ class SendspinApp:
                     if audio_device is not None:
                         device_name = sounddevice.query_devices(audio_device)["name"]
                         logger.info("Using audio device %d: %s", audio_device, device_name)
+                        self._print_event(f"Using audio device: {device_name}")
                 except ValueError as e:
                     logger.error("Audio device error: %s", e)
                     return 1
+            else:
+                # Print default device
+                default_device = sounddevice.default.device[1]
+                device_name = sounddevice.query_devices(default_device)["name"]
+                self._print_event(f"Using audio device: {device_name}")
 
             # Create audio and stream handlers
             self._audio_handler = AudioStreamHandler(self._client, audio_device=audio_device)

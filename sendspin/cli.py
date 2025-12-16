@@ -45,10 +45,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--audio-device",
-        type=int,
+        type=str,
         default=None,
         help=(
-            "Audio output device ID (e.g., 0, 1, 2). "
+            "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
             "Use --list-audio-devices to see available devices."
         ),
     )

@@ -37,6 +37,9 @@ Sendspin CLI is a synchronized audio player client for the [Sendspin Protocol](h
 
 ## File Responsibilities
 
+### `README.md`
+Project documentation, installation instructions, usage guide (including command line arguments), configuration options.
+
 ### `sendspin/cli.py`
 Main entry point and orchestrator. Responsibilities:
 - **Argument parsing**: `--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`, etc.

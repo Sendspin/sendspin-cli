@@ -81,9 +81,14 @@ sendspin --list-audio-devices
 
 This displays all audio output devices with their IDs, channel configurations, and sample rates. The default device is marked.
 
-**Select a specific audio device:**
+**Select a specific audio device by index:**
 ```bash
 sendspin --audio-device 2
+```
+
+**Or by name prefix:**
+```bash
+sendspin --audio-device "MacBook"
 ```
 
 This is particularly useful for headless devices or when you want to route audio to a specific output.
