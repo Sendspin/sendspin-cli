@@ -62,6 +62,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Discover and list available Sendspin servers on the network",
     )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run without the interactive terminal UI",
+    )
     return parser.parse_args(argv)
 
 
@@ -130,6 +135,7 @@ def main() -> int:
         static_delay_ms=args.static_delay_ms,
         audio_device=args.audio_device,
         log_level=args.log_level,
+        headless=args.headless,
     )
 
     # Run the application

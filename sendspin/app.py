@@ -9,7 +9,7 @@ import platform
 import signal
 import socket
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from importlib.metadata import version
@@ -482,6 +482,7 @@ class AppConfig:
     static_delay_ms: float = 0.0
     audio_device: int | None = None
     log_level: str = "INFO"
+    headless: bool = False
 
 
 class SendspinApp:
@@ -503,7 +504,7 @@ class SendspinApp:
         else:
             print(message, flush=True)  # noqa: T201
 
-    async def run(self, argv: Sequence[str] | None = None) -> int:  # noqa: PLR0915, ARG002
+    async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
         config = self._config
 
@@ -586,8 +587,8 @@ class SendspinApp:
             # Create audio and stream handlers
             self._audio_handler = AudioStreamHandler(self._client, audio_device=audio_device)
 
-            # Create UI for interactive mode
-            if sys.stdin.isatty():
+            # Create UI for interactive mode (unless headless)
+            if sys.stdin.isatty() and not config.headless:
                 self._ui = SendspinUI()
                 self._ui.start()
                 self._ui.set_delay(self._client.static_delay_ms)
@@ -617,17 +618,24 @@ class SendspinApp:
                     # Force disconnect to trigger reconnect with new URL
                     await self._client.disconnect()
 
-                keyboard_task = asyncio.create_task(
-                    keyboard_loop(
-                        self._client,
-                        self._state,
-                        self._audio_handler,
-                        self._ui,
-                        self._print_event,
-                        get_servers,
-                        on_server_selected,
+                async def wait_forever() -> None:
+                    await asyncio.Event().wait()
+
+                if config.headless:
+                    # In headless mode, just wait for cancellation
+                    keyboard_task = asyncio.create_task(wait_forever())
+                else:
+                    keyboard_task = asyncio.create_task(
+                        keyboard_loop(
+                            self._client,
+                            self._state,
+                            self._audio_handler,
+                            self._ui,
+                            self._print_event,
+                            get_servers,
+                            on_server_selected,
+                        )
                     )
-                )
 
                 connection_manager = ConnectionManager(self._discovery, keyboard_task)
 
