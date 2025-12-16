@@ -98,6 +98,16 @@ sendspin --static-delay-ms -100
 
 > **Note:** Based on limited testing, the delay value is typically a negative number (e.g., `-100` or `-150`) to compensate for audio hardware buffering.
 
+### Headless Mode
+
+To run the player without the interactive terminal UI (useful for background services or scripts):
+
+```bash
+sendspin --headless
+```
+
+In headless mode, status messages are printed to stdout instead of the TUI.
+
 ### Debugging & Troubleshooting
 
 If you experience synchronization issues or audio glitches, you can enable detailed logging to help diagnose the problem:
