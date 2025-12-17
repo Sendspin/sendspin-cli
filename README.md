@@ -129,7 +129,5 @@ This provides detailed information about time synchronization. The output can be
 
 This player is highly experimental and has several known limitations:
 
-- **Platform Support**: Only tested on Linux; macOS and Windows support untested
 - **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
-- **User Experience**: The interface is pretty bare bones for now
 - **Configuration Persistence**: Settings are not persistently stored; delay must be reconfigured on each restart using the `--static-delay-ms` option
