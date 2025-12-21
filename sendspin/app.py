@@ -42,6 +42,7 @@ from aiosendspin.models.types import (
     Roles,
     UndefinedField,
 )
+from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 
 from sendspin.audio import AudioDevice, AudioPlayer
 from sendspin.discovery import ServiceDiscovery
@@ -458,6 +459,7 @@ class AppConfig:
     client_name: str | None = None
     static_delay_ms: float = 0.0
     headless: bool = False
+    enable_mpris: bool = True
 
 
 class SendspinApp:
@@ -471,6 +473,7 @@ class SendspinApp:
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._discovery: ServiceDiscovery | None = None
+        self._mpris: SendspinMpris | None = None
 
     def _print_event(self, message: str) -> None:
         """Print an event message."""
@@ -570,6 +573,12 @@ class SendspinApp:
                 # Set up signal handler for graceful shutdown on Ctrl+C
                 loop = asyncio.get_running_loop()
 
+                # Start MPRIS interface (Linux only, optional)
+                # MPRIS works in both interactive and headless modes
+                if MPRIS_AVAILABLE and config.enable_mpris:
+                    self._mpris = SendspinMpris(self._client)
+                    self._mpris.start()
+
                 # Forward declaration for on_server_selected closure
                 connection_manager: ConnectionManager | None = None
 
@@ -640,6 +649,10 @@ class SendspinApp:
                     await self._audio_handler.cleanup()
                     await self._client.disconnect()
             finally:
+                # Stop MPRIS interface
+                if self._mpris is not None:
+                    self._mpris.stop()
+
                 # Stop UI
                 if self._ui is not None:
                     self._ui.stop()
@@ -669,14 +682,18 @@ class SendspinApp:
 
         client.set_metadata_listener(
             lambda payload: _handle_metadata_update(
-                self._state, self._ui, self._print_event, payload
+                self._state, self._ui, self._mpris, self._print_event, payload
             )
         )
         client.set_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_group_update(
+                self._state, self._ui, self._mpris, self._print_event, payload
+            )
         )
         client.set_controller_state_listener(
-            lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_server_state(
+                self._state, self._ui, self._mpris, self._print_event, payload
+            )
         )
         client.set_stream_start_listener(
             lambda msg: audio_handler.on_stream_start(msg, self._print_event)
@@ -688,7 +705,12 @@ class SendspinApp:
         client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
         client.set_server_command_listener(
             lambda payload: _handle_server_command(
-                self._state, audio_handler, client, self._ui, self._print_event, payload
+                self._state,
+                audio_handler,
+                client,
+                self._ui,
+                self._print_event,
+                payload,
             )
         )
 
@@ -696,6 +718,7 @@ class SendspinApp:
 async def _handle_metadata_update(
     state: AppState,
     ui: SendspinUI | None,
+    mpris: SendspinMpris | None,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
 ) -> None:
@@ -708,12 +731,21 @@ async def _handle_metadata_update(
                 album=state.album,
             )
             ui.set_progress(state.track_progress, state.track_duration)
+        if mpris is not None:
+            mpris.set_metadata(
+                title=state.title,
+                artist=state.artist,
+                album=state.album,
+                duration_ms=state.track_duration,
+            )
+            mpris.set_progress(state.track_progress)
         print_event(state.describe())
 
 
 async def _handle_group_update(
     state: AppState,
     ui: SendspinUI | None,
+    mpris: SendspinMpris | None,
     print_event: Callable[[str], None],
     payload: GroupUpdateServerPayload,
 ) -> None:
@@ -729,6 +761,8 @@ async def _handle_group_update(
         if ui is not None:
             ui.set_metadata(title=None, artist=None, album=None)
             ui.clear_progress()
+        if mpris is not None:
+            mpris.set_metadata(title=None, artist=None, album=None, duration_ms=None)
         print_event(f"Group ID: {payload.group_id}")
 
     if payload.group_name:
@@ -739,12 +773,15 @@ async def _handle_group_update(
         state.playback_state = payload.playback_state
         if ui is not None:
             ui.set_playback_state(payload.playback_state)
+        if mpris is not None:
+            mpris.set_playback_state(payload.playback_state)
         print_event(f"Playback state: {payload.playback_state.value}")
 
 
 async def _handle_server_state(
     state: AppState,
     ui: SendspinUI | None,
+    mpris: SendspinMpris | None,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
 ) -> None:
@@ -752,6 +789,9 @@ async def _handle_server_state(
     if payload.controller:
         controller = payload.controller
         state.supported_commands = set(controller.supported_commands)
+
+        if mpris is not None:
+            mpris.set_supported_commands(state.supported_commands)
 
         volume_changed = controller.volume != state.volume
         mute_changed = controller.muted != state.muted
@@ -765,6 +805,9 @@ async def _handle_server_state(
 
         if ui is not None and (volume_changed or mute_changed):
             ui.set_volume(state.volume, muted=state.muted)
+
+        if mpris is not None and (volume_changed or mute_changed):
+            mpris.set_volume(state.volume or 0, muted=state.muted or False)
 
 
 async def _handle_server_command(
