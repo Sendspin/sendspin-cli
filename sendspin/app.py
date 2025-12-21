@@ -851,8 +851,8 @@ async def _handle_server_command(
     player_cmd: PlayerCommandPayload = payload.player
 
     if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
+        state.player_volume = player_cmd.volume
         if not config.ignore_volume_control:
-            state.player_volume = player_cmd.volume
             if audio_handler.audio_player is not None:
                 audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
             if ui is not None:
@@ -866,8 +866,8 @@ async def _handle_server_command(
                 str(player_cmd.volume),
             )
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+        state.player_muted = player_cmd.mute
         if not config.ignore_volume_control:
-            state.player_muted = player_cmd.mute
             if audio_handler.audio_player is not None:
                 audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
             if ui is not None:
