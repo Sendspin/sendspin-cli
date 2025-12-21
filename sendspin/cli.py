@@ -67,6 +67,31 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run without the interactive terminal UI",
     )
+
+    parser.add_argument(
+        "--run-this-when-volume-is-set",
+        type=str,
+        default=None,
+        help=(
+            "Script to run when server sets volume. Volume is passed as integer from 1-100 as first argument. Gives possibility to have script to set volume on amplifier."
+        ),
+    )
+
+    parser.add_argument(
+        "--ignore-volume-control",
+        action="store_true",
+        help="Don't change volume of current player (run_this_when_volume_is_set is still executed).",
+    )
+
+    parser.add_argument(
+        "--run-this-before-play-begins",
+        type=str,
+        default=None,
+        help=(
+            "Script to run before player begins playing. Gives possibility to have script to wake up amplifier"
+        ),
+    )
+
     return parser.parse_args(argv)
 
 
@@ -136,6 +161,9 @@ def main() -> int:
         audio_device=args.audio_device,
         log_level=args.log_level,
         headless=args.headless,
+        ignore_volume_control=args.ignore_volume_control,
+        run_this_when_volume_is_set=args.run_this_when_volume_is_set,
+        run_this_before_play_begins=args.run_this_before_play_begins,
     )
 
     # Run the application

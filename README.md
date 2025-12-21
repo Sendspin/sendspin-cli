@@ -115,6 +115,30 @@ sendspin --headless
 
 In headless mode, status messages are printed to stdout instead of the TUI.
 
+### Run script when server updates volume
+
+Script to run when server sets volume. Volume is passed as integer from 1-100 as first argument. Gives possibility to have script to set volume on amplifier.
+
+```bash
+sendspin --run-this-when-volume-is-set /usr/local/bin/volume_is_set
+```
+
+### Ignore volume control
+
+Don't change volume of current player (--run-this-when-volume-is-set script will be still executed).
+```bash
+sendspin --ignore-volume-control
+```
+
+### Run script when server updates volume
+
+Script to run before player begins playing. Gives possibility to have script to wake up amplifier
+
+```bash
+sendspin --run-this-before-play-begins  /usr/local/bin/run_this_before_entering_active_state
+```
+
+
 ### Debugging & Troubleshooting
 
 If you experience synchronization issues or audio glitches, you can enable detailed logging to help diagnose the problem:

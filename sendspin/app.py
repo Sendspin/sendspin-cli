@@ -9,6 +9,7 @@ import platform
 import signal
 import socket
 import sys
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -494,6 +495,9 @@ class AppConfig:
     audio_device: str | None = None
     log_level: str = "INFO"
     headless: bool = False
+    run_this_when_volume_is_set: str | None = None
+    ignore_volume_control: bool = False
+    run_this_before_play_begins: str | None = None
 
 
 class SendspinApp:
@@ -721,7 +725,9 @@ class SendspinApp:
             )
         )
         client.set_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_group_update(
+                self._state, self._ui, self._print_event, payload, self._config
+            )
         )
         client.set_controller_state_listener(
             lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
@@ -736,7 +742,13 @@ class SendspinApp:
         client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
         client.set_server_command_listener(
             lambda payload: _handle_server_command(
-                self._state, audio_handler, client, self._ui, self._print_event, payload
+                self._state,
+                audio_handler,
+                client,
+                self._ui,
+                self._print_event,
+                payload,
+                self._config,
             )
         )
 
@@ -764,6 +776,7 @@ async def _handle_group_update(
     ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: GroupUpdateServerPayload,
+    config: AppConfig,
 ) -> None:
     # Only clear metadata when actually switching to a different group
     group_changed = payload.group_id is not None and payload.group_id != state.group_id
@@ -785,6 +798,13 @@ async def _handle_group_update(
         ui.set_group_name(payload.group_name)
     if payload.playback_state:
         state.playback_state = payload.playback_state
+        if (
+            payload.playback_state == PlaybackStateType.PLAYING
+            and config.run_this_before_play_begins is not None
+        ):
+            execute_hook_command(
+                "run_this_before_play_begins", config.run_this_before_play_begins, print_event
+            )
         if ui is not None:
             ui.set_playback_state(payload.playback_state)
         print_event(f"Playback state: {payload.playback_state.value}")
@@ -822,6 +842,7 @@ async def _handle_server_command(
     ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: ServerCommandPayload,
+    config: AppConfig,
 ) -> None:
     """Handle server/command messages for player volume/mute control."""
     if payload.player is None:
@@ -830,19 +851,32 @@ async def _handle_server_command(
     player_cmd: PlayerCommandPayload = payload.player
 
     if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
-        state.player_volume = player_cmd.volume
-        if audio_handler.audio_player is not None:
-            audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
-        if ui is not None:
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        if not config.ignore_volume_control:
+            state.player_volume = player_cmd.volume
+            if audio_handler.audio_player is not None:
+                audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
+            if ui is not None:
+                ui.set_player_volume(state.player_volume, muted=state.player_muted)
         print_event(f"Server set player volume: {player_cmd.volume}%")
+        if config.run_this_when_volume_is_set is not None:
+            execute_hook_command(
+                "run_this_when_volume_is_set",
+                config.run_this_when_volume_is_set,
+                print_event,
+                str(player_cmd.volume),
+            )
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
-        state.player_muted = player_cmd.mute
-        if audio_handler.audio_player is not None:
-            audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
-        if ui is not None:
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        if not config.ignore_volume_control:
+            state.player_muted = player_cmd.mute
+            if audio_handler.audio_player is not None:
+                audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
+            if ui is not None:
+                ui.set_player_volume(state.player_volume, muted=state.player_muted)
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
+        if config.run_this_when_volume_is_set is not None:
+            execute_hook_command(
+                "run_this_when_volume_is_set", config.run_this_when_volume_is_set, print_event, "0"
+            )
 
     # Send state update back to server per spec
     await client.send_player_state(
@@ -850,3 +884,16 @@ async def _handle_server_command(
         volume=state.player_volume,
         muted=state.player_muted,
     )
+
+
+def execute_hook_command(
+    hook_name: str, script_path: str, print_event: Callable[[str], None], *args: str
+) -> None:
+    if not script_path:
+        return
+    hook_command = [script_path] + list(args)
+    try:
+        print_event(f"Running {hook_name} hook: {script_path}")
+        subprocess.run(hook_command, check=True)
+    except Exception as err:
+        print("{hook_name} hook failed:", err)
