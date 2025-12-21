@@ -47,6 +47,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioPlayer
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
+from sendspin.mpris import MPRIS_AVAILABLE, MprisInterface
 from sendspin.ui import SendspinUI
 
 logger = logging.getLogger(__name__)
@@ -494,6 +495,7 @@ class AppConfig:
     audio_device: str | None = None
     log_level: str = "INFO"
     headless: bool = False
+    enable_mpris: bool = True
 
 
 class SendspinApp:
@@ -507,6 +509,7 @@ class SendspinApp:
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._discovery: ServiceDiscovery | None = None
+        self._mpris: MprisInterface | None = None
 
     def _print_event(self, message: str) -> None:
         """Print an event message."""
@@ -514,6 +517,70 @@ class SendspinApp:
             self._ui.add_event(message)
         else:
             print(message, flush=True)  # noqa: T201
+
+    async def _handle_mpris_command(self, cmd: str) -> None:
+        """Handle commands from MPRIS interface.
+
+        Args:
+            cmd: Command string like "play", "pause", "toggle", "next", "previous",
+                 "stop", "pvol:50" (set volume), or "pmute" (toggle mute).
+        """
+        if self._client is None or self._audio_handler is None:
+            return
+
+        if cmd == "play":
+            await self._client.send_group_command(MediaCommand.PLAY)
+        elif cmd == "pause":
+            await self._client.send_group_command(MediaCommand.PAUSE)
+        elif cmd == "toggle":
+            if self._state.playback_state == PlaybackStateType.PLAYING:
+                await self._client.send_group_command(MediaCommand.PAUSE)
+            else:
+                await self._client.send_group_command(MediaCommand.PLAY)
+        elif cmd == "next":
+            await self._client.send_group_command(MediaCommand.NEXT)
+        elif cmd == "previous":
+            await self._client.send_group_command(MediaCommand.PREVIOUS)
+        elif cmd == "stop":
+            await self._client.send_group_command(MediaCommand.STOP)
+        elif cmd.startswith("pvol:"):
+            # Set player volume
+            try:
+                volume = int(cmd.split(":")[1])
+                self._state.player_volume = volume
+                if self._audio_handler.audio_player is not None:
+                    self._audio_handler.audio_player.set_volume(
+                        self._state.player_volume, muted=self._state.player_muted
+                    )
+                if self._ui is not None:
+                    self._ui.set_player_volume(
+                        self._state.player_volume, muted=self._state.player_muted
+                    )
+                await self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._state.player_volume,
+                    muted=self._state.player_muted,
+                )
+                self._print_event(f"Player volume: {volume}%")
+            except (ValueError, IndexError):
+                logger.warning("Invalid MPRIS volume command: %s", cmd)
+        elif cmd == "pmute":
+            # Toggle player mute
+            self._state.player_muted = not self._state.player_muted
+            if self._audio_handler.audio_player is not None:
+                self._audio_handler.audio_player.set_volume(
+                    self._state.player_volume, muted=self._state.player_muted
+                )
+            if self._ui is not None:
+                self._ui.set_player_volume(
+                    self._state.player_volume, muted=self._state.player_muted
+                )
+            await self._client.send_player_state(
+                state=PlayerStateType.SYNCHRONIZED,
+                volume=self._state.player_volume,
+                muted=self._state.player_muted,
+            )
+            self._print_event("Player muted" if self._state.player_muted else "Player unmuted")
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -618,6 +685,13 @@ class SendspinApp:
                 # Set up signal handler for graceful shutdown on Ctrl+C
                 loop = asyncio.get_running_loop()
 
+                # Start MPRIS interface (Linux only, optional)
+                # MPRIS works in both interactive and headless modes
+                if MPRIS_AVAILABLE and config.enable_mpris:
+                    self._mpris = MprisInterface(self._state, loop)
+                    self._mpris.set_command_callback(self._handle_mpris_command)
+                    self._mpris.start()
+
                 # Forward declaration for on_server_selected closure
                 connection_manager: ConnectionManager | None = None
 
@@ -688,6 +762,10 @@ class SendspinApp:
                     await self._audio_handler.cleanup()
                     await self._client.disconnect()
             finally:
+                # Stop MPRIS interface
+                if self._mpris is not None:
+                    self._mpris.stop()
+
                 # Stop UI
                 if self._ui is not None:
                     self._ui.stop()
@@ -717,11 +795,13 @@ class SendspinApp:
 
         client.set_metadata_listener(
             lambda payload: _handle_metadata_update(
-                self._state, self._ui, self._print_event, payload
+                self._state, self._ui, self._mpris, self._print_event, payload
             )
         )
         client.set_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_group_update(
+                self._state, self._ui, self._mpris, self._print_event, payload
+            )
         )
         client.set_controller_state_listener(
             lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
@@ -736,7 +816,13 @@ class SendspinApp:
         client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
         client.set_server_command_listener(
             lambda payload: _handle_server_command(
-                self._state, audio_handler, client, self._ui, self._print_event, payload
+                self._state,
+                audio_handler,
+                client,
+                self._ui,
+                self._mpris,
+                self._print_event,
+                payload,
             )
         )
 
@@ -744,6 +830,7 @@ class SendspinApp:
 async def _handle_metadata_update(
     state: AppState,
     ui: SendspinUI | None,
+    mpris: MprisInterface | None,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
 ) -> None:
@@ -756,12 +843,15 @@ async def _handle_metadata_update(
                 album=state.album,
             )
             ui.set_progress(state.track_progress, state.track_duration)
+        if mpris is not None:
+            mpris.update_metadata()
         print_event(state.describe())
 
 
 async def _handle_group_update(
     state: AppState,
     ui: SendspinUI | None,
+    mpris: MprisInterface | None,
     print_event: Callable[[str], None],
     payload: GroupUpdateServerPayload,
 ) -> None:
@@ -777,6 +867,8 @@ async def _handle_group_update(
         if ui is not None:
             ui.set_metadata(title=None, artist=None, album=None)
             ui.clear_progress()
+        if mpris is not None:
+            mpris.update_metadata()
         print_event(f"Group ID: {payload.group_id}")
 
     if payload.group_name:
@@ -787,6 +879,8 @@ async def _handle_group_update(
         state.playback_state = payload.playback_state
         if ui is not None:
             ui.set_playback_state(payload.playback_state)
+        if mpris is not None:
+            mpris.update_playback_state()
         print_event(f"Playback state: {payload.playback_state.value}")
 
 
@@ -820,6 +914,7 @@ async def _handle_server_command(
     audio_handler: AudioStreamHandler,
     client: SendspinClient,
     ui: SendspinUI | None,
+    mpris: MprisInterface | None,
     print_event: Callable[[str], None],
     payload: ServerCommandPayload,
 ) -> None:
@@ -835,6 +930,8 @@ async def _handle_server_command(
             audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
         if ui is not None:
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        if mpris is not None:
+            mpris.update_volume()
         print_event(f"Server set player volume: {player_cmd.volume}%")
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
         state.player_muted = player_cmd.mute
@@ -842,6 +939,8 @@ async def _handle_server_command(
             audio_handler.audio_player.set_volume(state.player_volume, muted=state.player_muted)
         if ui is not None:
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        if mpris is not None:
+            mpris.update_volume()
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec

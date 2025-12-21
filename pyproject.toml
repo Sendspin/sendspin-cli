@@ -35,6 +35,9 @@ version = "0.0.0"
 sendspin = "sendspin.cli:main"
 
 [project.optional-dependencies]
+mpris = [
+  "mpris_server>=0.9.0",
+]
 test = [
   "codespell==2.4.1",
   "mypy==1.18.2",

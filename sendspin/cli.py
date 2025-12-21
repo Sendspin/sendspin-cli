@@ -67,6 +67,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Run without the interactive terminal UI",
     )
+    parser.add_argument(
+        "--no-mpris",
+        action="store_true",
+        help="Disable MPRIS D-Bus interface for desktop media controls (Linux only)",
+    )
     return parser.parse_args(argv)
 
 
@@ -136,6 +141,7 @@ def main() -> int:
         audio_device=args.audio_device,
         log_level=args.log_level,
         headless=args.headless,
+        enable_mpris=not args.no_mpris,
     )
 
     # Run the application
