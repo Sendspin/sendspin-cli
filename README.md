@@ -38,6 +38,49 @@ pip install .
 
 </details>
 
+<details>
+<summary>Installing on Raspbian</summary>
+If you're installing Sendspin on a Raspberry Pi running Raspbian without any user-interface, you'll need to run the following commands before you run `pip`:
+
+```
+sudo apt update # Updates the apt repositories to the latest version
+sudo apt install python3-pip # Makes sure that you can install via Pip
+sudo apt install libffi-dev libportaudio2 # Ensure that libffi and portaudio are available
+```
+
+Once you've done this, you can create a virual environment and install Sendspin as a dedicated user:
+
+```
+useradd -m -G audio sendspin
+su - sendspin
+python3 -m venv .venv
+source .venv/bin/activate
+pip install sendspin
+```
+
+To run Sendspin, either switch to the user via SSH and run `source .venv/bin/activate && sendspin` or copy the following serivce file to `/etc/systemd/system/sendspin.service`:
+
+```
+[Unit]
+Description=Sendspin Media Player
+After=network.target
+StartLimitIntervalSec=0
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=player
+ExecStart=/home/sendspin/.venv/bin/sendspin --headless
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Once you've done that, run `systemctl daemon-reload && systemctl enable sendspin`, this will install the service and start it at boot.
+
+If you need to change any of the command line arguments, just edit the file and re-run the `systemctl daemon-reload` command.
+</details>
+
 **After installation, run:**
 ```bash
 sendspin
