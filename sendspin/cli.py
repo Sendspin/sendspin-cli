@@ -15,7 +15,33 @@ from sendspin.discovery import discover_servers
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the Sendspin client."""
-    parser = argparse.ArgumentParser(description="Run a Sendspin CLI client")
+    parser = argparse.ArgumentParser(description="Sendspin CLI")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # Serve subcommand
+    serve_parser = subparsers.add_parser("serve", help="Start a Sendspin server")
+    serve_parser.add_argument(
+        "source",
+        help="Audio source: local file path or URL (http/https)",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8927,
+        help="Port to listen on (default: 8927)",
+    )
+    serve_parser.add_argument(
+        "--name",
+        default="Sendspin Server",
+        help="Server name for mDNS discovery",
+    )
+    serve_parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Loop the audio source continuously",
+    )
+
+    # Default behavior (client mode) - existing arguments
     parser.add_argument(
         "--url",
         default=None,
@@ -117,8 +143,30 @@ async def list_servers() -> None:
 
 def main() -> int:
     """Run the CLI client."""
-    # Handle --list-audio-devices before starting async runtime
     args = parse_args(sys.argv[1:])
+
+    # Handle serve subcommand
+    if args.command == "serve":
+        from sendspin.serve import ServeConfig, run_server
+
+        config = ServeConfig(
+            source=args.source,
+            port=args.port,
+            name=args.name,
+            loop=args.loop,
+        )
+        try:
+            return asyncio.run(run_server(config))
+        except KeyboardInterrupt:
+            return 0
+        except Exception as e:
+            print(f"Server error: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return 1
+
+    # Handle --list-audio-devices before starting async runtime
     if args.list_audio_devices:
         list_audio_devices()
         return 0

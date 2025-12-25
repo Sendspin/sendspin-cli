@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sendspin Party</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Sendspin Party</h1>
+      </header>
+
+      <!-- Start button -->
+      <div id="start-card" class="card start">
+        <button id="start-btn" class="btn btn-primary btn-xlarge">
+          Start Listening
+        </button>
+      </div>
+
+      <!-- Player controls (hidden until started) -->
+      <div id="player-card" class="card player hidden">
+        <div class="player-volume">
+          <button id="mute-btn" class="btn btn-icon" title="Toggle Mute">
+            <span id="mute-icon">&#128266;</span>
+          </button>
+          <input type="range" id="volume-slider" min="0" max="100" value="80" />
+          <span id="volume-value">80%</span>
+        </div>
+        <div class="player-status">
+          <span id="sync-status" class="sync-badge">-</span>
+          <button id="disconnect-btn" class="btn btn-small btn-danger">
+            Disconnect
+          </button>
+        </div>
+      </div>
+
+      <!-- Share / Multi-room -->
+      <div id="share-card" class="card share">
+        <h2>Experience Multi-Room Audio</h2>
+        <p>
+          Open this URL on other devices or browsers to hear perfectly
+          synchronized audio across all of them.
+        </p>
+        <div id="qr-code"></div>
+        <div class="share-buttons">
+          <button id="share-btn" class="btn btn-primary">Copy URL</button>
+          <a
+            id="cast-link"
+            class="btn"
+            target="_blank"
+            href="https://sendspin.github.io/cast/"
+            >Cast to Speaker</a
+          >
+        </div>
+        <span id="share-feedback" class="share-feedback hidden">Copied!</span>
+      </div>
+
+      <!-- About Sendspin -->
+      <div class="card about">
+        <h2>About Sendspin</h2>
+        <p>
+          Listen, control and see your music with Sendspin, the open audio
+          protocol by the Open Home Foundation.
+          <a href="https://www.sendspin-audio.com" target="_blank"
+            >Learn more about Sendspin.</a
+          >
+        </p>
+        <p>
+          Want to take control of music in your house and play on any speaker
+          that you own? Check out
+          <a href="https://www.music-assistant.io" target="_blank"
+            >Music Assistant,</a
+          >
+          open-source and free.
+        </p>
+      </div>
+
+      <!-- Footer -->
+      <footer>
+        <a href="https://www.sendspin-audio.com" target="_blank">Sendspin</a>
+        <span class="separator">·</span>
+        <a href="https://www.openhomefoundation.org" target="_blank"
+          >Open Home Foundation</a
+        >
+        <span class="separator">·</span>
+        <a
+          href="https://www.github.com/sendspin/sendspin-cli#sendspin-party"
+          target="_blank"
+          >Host your own party</a
+        >
+      </footer>
+    </div>
+
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

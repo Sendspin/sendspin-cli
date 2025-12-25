@@ -15,7 +15,9 @@ classifiers = [
 ]
 dependencies = [
   "aiosendspin",
+  "av>=14.0.0",
   "numpy>=1.24.0",
+  "qrcode>=8.0",
   "readchar>=4.0.0",
   "rich>=13.0.0",
   "sounddevice>=0.4.6",
@@ -42,6 +44,9 @@ test = [
   "pre-commit-hooks==6.0.0",
   "ruff==0.14.5",
 ]
+
+[tool.setuptools.package-data]
+"sendspin.serve" = ["web/*"]
 
 [tool.codespell]
 # ignore-words-list = ""
@@ -130,6 +135,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "sendspin/cli.py" = ["T201"]
+"sendspin/serve/__init__.py" = ["T201"]
 
 select = ["ALL"]
 

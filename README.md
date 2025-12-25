@@ -11,8 +11,17 @@ Connect to any [Sendspin](https://www.sendspin-audio.com) server and instantly t
 ## Quick Start
 
 **Run directly with [uv](https://docs.astral.sh/uv/getting-started/installation/):**
+
+Start client
+
 ```bash
 uvx sendspin
+```
+
+Host a Sendspin party
+
+```bash
+uvx sendspin serve /path/to/media.mp3
 ```
 
 ## Installation
@@ -131,3 +140,16 @@ This player is highly experimental and has several known limitations:
 
 - **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
 - **Configuration Persistence**: Settings are not persistently stored; delay must be reconfigured on each restart using the `--static-delay-ms` option
+
+## Sendspin Party
+
+The Sendspin client includes a mode to enable hosting a Sendspin Party. This will start a Sendspin server playing a specified audio file or URL in a loop, allowing nearby Sendspin clients to connect and listen together. It also hosts a web interface for easy playing and sharing. Fire up that home or office 🔥
+
+```bash
+# Local file
+sendspin serve /path/to/media.mp3
+# Remote URL
+sendspin serve https://retro.dancewave.online/retrodance.mp3
+# Without pre-installing Sendspin
+uvx sendspin serve /path/to/media.mp3
+```
