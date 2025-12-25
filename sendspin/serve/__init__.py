@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import signal
 import socket
 import uuid
 from contextlib import suppress
@@ -68,6 +69,18 @@ async def run_server(config: ServeConfig) -> int:
 
     client_connected = asyncio.Event()
     active_group: SendspinGroup | None = None
+    shutdown_requested = False
+
+    def handle_sigint() -> None:
+        nonlocal shutdown_requested
+        shutdown_requested = True
+        print("\nShutting down...")
+        # Cancel any active playback to trigger shutdown
+        for task in asyncio.all_tasks():
+            if task is not asyncio.current_task():
+                task.cancel()
+
+    event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
     async def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
         nonlocal active_group
@@ -112,7 +125,7 @@ async def run_server(config: ServeConfig) -> int:
     print("Press Ctrl+C to quit\n")
 
     try:
-        while True:
+        while not shutdown_requested:
             # Wait for a client to connect
             if not active_group:
                 client_connected.clear()
@@ -129,18 +142,17 @@ async def run_server(config: ServeConfig) -> int:
                 )
                 await active_group.play_media(media_stream)
             except asyncio.CancelledError:
-                # A client disconnected
+                if shutdown_requested:
+                    break
+                # A client disconnected - only reset if no active clients remain
                 if all(client.closing for client in active_group.clients):
                     active_group = None
-                else:  # Ctrl+C pressed
-                    return
             except Exception as e:
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)
 
-    except KeyboardInterrupt:
-        print("\nShutting down...")
     finally:
+        event_loop.remove_signal_handler(signal.SIGINT)
         with suppress(Exception):
             # Temp workaround until https://github.com/Sendspin/aiosendspin/pull/108
             for client in server.clients:
