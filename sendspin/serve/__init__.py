@@ -129,7 +129,12 @@ async def run_server(config: ServeConfig) -> int:
             # Wait for a client to connect
             if not active_group:
                 client_connected.clear()
-                await client_connected.wait()
+                try:
+                    await client_connected.wait()
+                except asyncio.CancelledError:
+                    if shutdown_requested:
+                        break
+                    raise
 
             assert active_group is not None
 
