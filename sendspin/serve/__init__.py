@@ -158,6 +158,7 @@ async def run_server(config: ServeConfig) -> int:
 
             # Decode and stream audio
             try:
+                print("Starting playback...")
                 audio_source = await decode_audio(config.source)
                 media_stream = MediaStream(
                     main_channel_source=audio_source.generator,

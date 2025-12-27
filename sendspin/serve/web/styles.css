@@ -25,6 +25,10 @@ body {
   padding: 20px;
 }
 
+a {
+  color: var(--text-secondary);
+}
+
 .container {
   max-width: 400px;
   margin: 0 auto;
@@ -75,7 +79,7 @@ header h1 {
   transition: all 0.2s;
 }
 
-.btn:hover:not(:disabled):not(:.disabled) {
+.btn:hover:not(:disabled):not(.disabled) {
   background: var(--border-color);
 }
 
@@ -217,25 +221,12 @@ header h1 {
   text-decoration: none;
 }
 
-.share-feedback {
-  display: inline-block;
-  margin-top: 8px;
-  font-size: 14px;
-  color: var(--success);
-}
-
-
-
 /* About card */
 .about h2 {
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 8px;
   color: var(--text-primary);
-}
-
-.about a {
-  color: var(--text-secondary);
 }
 
 .about p {

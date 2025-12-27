@@ -17,7 +17,7 @@ const elements = {
   shareCard: document.getElementById("share-card"),
   qrCode: document.getElementById("qr-code"),
   shareBtn: document.getElementById("share-btn"),
-  shareFeedback: document.getElementById("share-feedback"),
+  shareServerUrl: document.getElementById("share-server-url"),
   castLink: document.getElementById("cast-link"),
 };
 
@@ -27,6 +27,8 @@ let syncUpdateInterval = null;
 
 // Auto-derive server URL from current page location
 const serverUrl = `${location.protocol}//${location.host}`;
+elements.shareServerUrl.textContent = serverUrl;
+elements.shareServerUrl.href = serverUrl;
 
 /**
  * Initialize the Sendspin player (called after user interaction)
@@ -35,6 +37,8 @@ async function initPlayer() {
   // Import sendspin-js from unpkg CDN
   const { SendspinPlayer } = await sdkImport;
 
+  // Remove player ID generation + useOutputLatencyCompensation: true
+  // when merged https://github.com/Sendspin/sendspin-js/pull/29
   const playerId = `sendspin-web-${Math.random()
     .toString(36)
     .substring(2, 10)}`;
@@ -42,9 +46,8 @@ async function initPlayer() {
   player = new SendspinPlayer({
     playerId,
     baseUrl: serverUrl,
-    clientName: "Sendspin Web Player",
-    audioOutputMode: "direct",
     onStateChange: handleStateChange,
+    useOutputLatencyCompensation: true,
   });
 
   try {
@@ -110,11 +113,8 @@ elements.castLink.href = `https://sendspin.github.io/cast/?host=${encodeURICompo
   location.hostname,
 )}`;
 
-// Hide share card and disable cast on localhost
 if (["localhost", "127.0.0.1"].includes(location.hostname)) {
-  elements.shareCard.classList.add("hidden");
-  elements.castLink.classList.add("disabled");
-  elements.castLink.textContent = "Casting disabled on localhost";
+  elements.shareCard.textContent = "Sharing disabled when visiting localhost";
 }
 
 // Start button - required for AudioContext to work
@@ -168,8 +168,9 @@ elements.shareBtn.addEventListener("click", async () => {
     document.execCommand("copy");
     document.body.removeChild(textArea);
   }
-  elements.shareFeedback.classList.remove("hidden");
+  const origText = elements.shareBtn.textContent;
+  elements.shareBtn.textContent = "Copied!";
   setTimeout(() => {
-    elements.shareFeedback.classList.add("hidden");
+    elements.shareBtn.textContent = origText;
   }, 2000);
 });
