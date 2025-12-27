@@ -159,6 +159,7 @@ def main() -> int:
         # Determine audio source
         if args.demo:
             source = "http://retro.dancewave.online/retrodance.mp3"
+            print(f"Demo mode enabled, serving URL {source}")
         elif args.source:
             source = args.source
         else:
