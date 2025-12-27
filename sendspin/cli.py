@@ -22,7 +22,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     serve_parser = subparsers.add_parser("serve", help="Start a Sendspin server")
     serve_parser.add_argument(
         "source",
+        nargs="?",
+        default=None,
         help="Audio source: local file path or URL (http/https)",
+    )
+    serve_parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Use a demo audio stream (retro dance music)",
     )
     serve_parser.add_argument(
         "--port",
@@ -149,8 +156,17 @@ def main() -> int:
     if args.command == "serve":
         from sendspin.serve import ServeConfig, run_server
 
+        # Determine audio source
+        if args.demo:
+            source = "http://retro.dancewave.online/retrodance.mp3"
+        elif args.source:
+            source = args.source
+        else:
+            print("Error: either provide a source or use --demo")
+            return 1
+
         config = ServeConfig(
-            source=args.source,
+            source=source,
             port=args.port,
             name=args.name,
             loop=args.loop,

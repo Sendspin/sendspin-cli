@@ -22,6 +22,7 @@ Host a Sendspin party
 
 ```bash
 uvx sendspin serve /path/to/media.mp3
+uvx sendspin serve --demo
 ```
 
 ## Installation
