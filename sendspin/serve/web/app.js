@@ -66,6 +66,13 @@ async function initPlayer() {
 function updateSyncStatus() {
   if (!player) return;
 
+  // SDK has no way to control reconnect logic or inform us of disconnects yet
+  // But since we check this ever 500ms, it's good enough for now
+  if (!player.isConnected) {
+    disconnect();
+    return;
+  }
+
   const syncInfo = player.syncInfo;
   if (syncInfo?.syncErrorMs !== undefined) {
     const syncMs = syncInfo.syncErrorMs;
