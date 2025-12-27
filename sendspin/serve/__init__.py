@@ -126,7 +126,7 @@ async def run_server(config: ServeConfig) -> int:
     else:
         raise OSError(f"Could not find available port after {max_attempts} attempts")
 
-    await server.start_server(port=port)
+    await server.start_server(port=port, discover_clients=False)
 
     local_ip = get_local_ip()
     url = f"http://{local_ip}:{port}/"
