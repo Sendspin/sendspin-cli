@@ -42,11 +42,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="Sendspin Server",
         help="Server name for mDNS discovery",
     )
-    serve_parser.add_argument(
-        "--loop",
-        action="store_true",
-        help="Loop the audio source continuously",
-    )
 
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
@@ -170,7 +165,6 @@ def main() -> int:
             source=source,
             port=args.port,
             name=args.name,
-            loop=args.loop,
         )
         try:
             return asyncio.run(run_server(config))

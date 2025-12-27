@@ -54,7 +54,6 @@ class ServeConfig:
     source: str
     port: int = 8927
     name: str = "Sendspin Server"
-    loop: bool = False
 
 
 async def run_server(config: ServeConfig) -> int:
