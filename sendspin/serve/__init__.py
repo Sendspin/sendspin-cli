@@ -1,6 +1,7 @@
 """Sendspin server application."""
 
 import asyncio
+import errno
 import logging
 import signal
 import socket
@@ -109,9 +110,26 @@ async def run_server(config: ServeConfig) -> int:
 
     server.add_event_listener(on_server_event)
 
-    await server.start_server(port=config.port)
+    # Find an available port
+    port = config.port
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", port))
+                break
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE and attempt < max_attempts - 1:
+                port += 1
+            else:
+                raise
+    else:
+        raise OSError(f"Could not find available port after {max_attempts} attempts")
+
+    await server.start_server(port=port)
+
     local_ip = get_local_ip()
-    url = f"http://{local_ip}:{config.port}/"
+    url = f"http://{local_ip}:{port}/"
     print(f"\nServer running at {url}")
     if local_ip == "localhost":
         print("Unable to print QR code because no LAN IP available\n")
