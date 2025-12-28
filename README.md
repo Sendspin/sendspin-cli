@@ -51,11 +51,12 @@ sudo apt install libffi-dev libportaudio2 # Ensure that libffi and portaudio are
 Once you've done this, you can create a virual environment and install Sendspin as a dedicated user:
 
 ```
-useradd -m -G audio sendspin
-su - sendspin
-python3 -m venv .venv
-source .venv/bin/activate
-pip install sendspin
+sudo su - # Switch to the root user
+useradd -m -G audio sendspin # Create our new sendspin user
+su - sendspin # Change to the new user
+python3 -m venv .venv # Create the virtual environment
+source .venv/bin/activate # Activate the virtual environment
+pip install sendspin # Install Sendspin
 ```
 
 To run Sendspin, either switch to the user via SSH and run `source .venv/bin/activate && sendspin` or copy the following serivce file to `/etc/systemd/system/sendspin.service`:
