@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
 
-import sounddevice
 from aiohttp import ClientError
 from aiosendspin.client import PCMFormat, SendspinClient
 from aiosendspin.models.core import (
@@ -44,7 +43,7 @@ from aiosendspin.models.types import (
     UndefinedField,
 )
 
-from sendspin.audio import AudioPlayer
+from sendspin.audio import AudioDevice, AudioPlayer
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
@@ -166,40 +165,6 @@ def get_device_info() -> DeviceInfo:
         manufacturer=None,  # Could add manufacturer detection if needed
         software_version=software_version,
     )
-
-
-def resolve_audio_device(device: str | None) -> int | None:
-    """Resolve audio device by index or name prefix.
-
-    Args:
-        device: Device index (numeric string) or name prefix to match.
-
-    Returns:
-        Device index if valid, None for default device.
-
-    Raises:
-        ValueError: If device is invalid or not found.
-    """
-    if device is None:
-        return None
-
-    devices = sounddevice.query_devices()
-
-    # If numeric, treat as device index
-    if device.isnumeric():
-        device_id = int(device)
-        if 0 <= device_id < len(devices):
-            if devices[device_id]["max_output_channels"] > 0:
-                return device_id
-            raise ValueError(f"Device {device_id} has no output channels")
-        raise ValueError(f"Device index {device_id} out of range (0-{len(devices) - 1})")
-
-    # Otherwise, find first output device whose name starts with the prefix
-    for i, dev in enumerate(devices):
-        if dev["max_output_channels"] > 0 and dev["name"].startswith(device):
-            return i
-
-    raise ValueError(f"No audio output device found matching '{device}'")
 
 
 class ConnectionManager:
@@ -417,12 +382,12 @@ async def connection_loop(  # noqa: PLR0915
 class AudioStreamHandler:
     """Manages audio playback state and stream lifecycle."""
 
-    def __init__(self, client: SendspinClient, audio_device: int | None = None) -> None:
+    def __init__(self, client: SendspinClient, audio_device: AudioDevice) -> None:
         """Initialize the audio stream handler.
 
         Args:
             client: The Sendspin client instance.
-            audio_device: Audio device ID to use. None for default device.
+            audio_device: Audio device to use.
         """
         self._client = client
         self._audio_device = audio_device
@@ -487,11 +452,11 @@ class AudioStreamHandler:
 class AppConfig:
     """Configuration for the Sendspin application."""
 
+    audio_device: AudioDevice
     url: str | None = None
     client_id: str | None = None
     client_name: str | None = None
     static_delay_ms: float = 0.0
-    audio_device: str | None = None
     log_level: str = "INFO"
     headless: bool = False
 
@@ -583,26 +548,16 @@ class SendspinApp:
                     logger.exception("Failed to discover server")
                     return 1
 
-            # Resolve audio device if specified
-            audio_device = None
-            if config.audio_device is not None:
-                try:
-                    audio_device = resolve_audio_device(config.audio_device)
-                    if audio_device is not None:
-                        device_name = sounddevice.query_devices(audio_device)["name"]
-                        logger.info("Using audio device %d: %s", audio_device, device_name)
-                        self._print_event(f"Using audio device: {device_name}")
-                except ValueError as e:
-                    logger.error("Audio device error: %s", e)
-                    return 1
-            else:
-                # Print default device
-                default_device = sounddevice.default.device[1]
-                device_name = sounddevice.query_devices(default_device)["name"]
-                self._print_event(f"Using audio device: {device_name}")
+            # Log audio device being used
+            logger.info(
+                "Using audio device %d: %s",
+                config.audio_device.index,
+                config.audio_device.name,
+            )
+            self._print_event(f"Using audio device: {config.audio_device.name}")
 
             # Create audio and stream handlers
-            self._audio_handler = AudioStreamHandler(self._client, audio_device=audio_device)
+            self._audio_handler = AudioStreamHandler(self._client, audio_device=config.audio_device)
 
             # Create UI for interactive mode (unless headless)
             if sys.stdin.isatty() and not config.headless:

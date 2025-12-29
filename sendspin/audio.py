@@ -3,6 +3,9 @@
 This module provides an AudioPlayer that handles time-synchronized audio playback
 with DAC-level timing precision. It manages buffering, scheduled start times,
 and sync error correction to maintain sync between server and client timelines.
+
+This module also provides device enumeration utilities for listing and resolving
+audio output devices.
 """
 
 from __future__ import annotations
@@ -24,6 +27,50 @@ if TYPE_CHECKING:
     from aiosendspin.client import PCMFormat
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class AudioDevice:
+    """Represents an audio output device.
+
+    Attributes:
+        index: Device index used for selection.
+        name: Human-readable device name.
+        output_channels: Number of output channels supported.
+        sample_rate: Default sample rate in Hz.
+        is_default: Whether this is the system default output device.
+    """
+
+    index: int
+    name: str
+    output_channels: int
+    sample_rate: float
+    is_default: bool
+
+
+def query_devices() -> list[AudioDevice]:
+    """Query all available audio output devices.
+
+    Returns:
+        List of AudioDevice objects for devices with output channels.
+    """
+    devices = sounddevice.query_devices()
+    default_output = int(sounddevice.default.device[1])
+
+    result: list[AudioDevice] = []
+    for i in range(len(devices)):
+        dev = devices[i]
+        if dev["max_output_channels"] > 0:
+            result.append(
+                AudioDevice(
+                    index=i,
+                    name=str(dev["name"]),
+                    output_channels=int(dev["max_output_channels"]),
+                    sample_rate=float(dev["default_samplerate"]),
+                    is_default=(i == default_output),
+                )
+            )
+    return result
 
 
 class AudioTimeInfo(Protocol):
@@ -217,12 +264,12 @@ class AudioPlayer:
         # Thread-safe flag for deferred operations (audio thread → main thread)
         self._clear_requested: bool = False
 
-    def set_format(self, pcm_format: PCMFormat, device: int | None = None) -> None:
+    def set_format(self, pcm_format: PCMFormat, device: AudioDevice) -> None:
         """Configure the audio output format.
 
         Args:
             pcm_format: PCM audio format specification.
-            device: Audio device ID to use. None for default device.
+            device: Audio device to use.
         """
         self._format = pcm_format
         self._close_stream()
@@ -239,11 +286,12 @@ class AudioPlayer:
             blocksize=self._BLOCKSIZE,
             callback=self._audio_callback,
             latency="high",
-            device=device,
+            device=device.index,
         )
-        device_info = f", device={device}" if device is not None else ""
         logger.info(
-            "Audio stream configured: blocksize=%d, latency=high%s", self._BLOCKSIZE, device_info
+            "Audio stream configured: blocksize=%d, latency=high, device=%s",
+            self._BLOCKSIZE,
+            device,
         )
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
