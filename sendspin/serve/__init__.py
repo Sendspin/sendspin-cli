@@ -81,7 +81,8 @@ async def run_server(config: ServeConfig) -> int:
         if not client_connected.is_set():
             client_connected.set()
 
-    event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
+    with suppress(NotImplementedError):
+        event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
     async def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
         nonlocal active_group
@@ -177,7 +178,6 @@ async def run_server(config: ServeConfig) -> int:
                 logger.debug("Playback error", exc_info=True)
 
     finally:
-        event_loop.remove_signal_handler(signal.SIGINT)
         with suppress(Exception):
             # Temp workaround until https://github.com/Sendspin/aiosendspin/pull/108
             for client in server.clients:
