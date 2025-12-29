@@ -69,16 +69,17 @@ async def run_server(config: ServeConfig) -> int:
 
     client_connected = asyncio.Event()
     active_group: SendspinGroup | None = None
+    play_media_task: asyncio.Task[None] | None = None
     shutdown_requested = False
 
     def handle_sigint() -> None:
         nonlocal shutdown_requested
         shutdown_requested = True
         print("\nShutting down...")
-        # Cancel any active playback to trigger shutdown
-        for task in asyncio.all_tasks():
-            if task is not asyncio.current_task():
-                task.cancel()
+        if play_media_task is not None:
+            play_media_task.cancel()
+        if not client_connected.is_set():
+            client_connected.set()
 
     event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
@@ -102,9 +103,12 @@ async def run_server(config: ServeConfig) -> int:
             if active_group is None:
                 return
 
-            print("Client disconnected", event.client_id)
-
-            if not active_group.clients:
+            if (
+                # Check no other clients left in the active group
+                not [c for c in active_group.clients if c.client_id != event.client_id]
+                and play_media_task is not None
+            ):
+                play_media_task.cancel()
                 active_group = None
 
     server.add_event_listener(on_server_event)
@@ -149,9 +153,10 @@ async def run_server(config: ServeConfig) -> int:
                 try:
                     await client_connected.wait()
                 except asyncio.CancelledError:
-                    if shutdown_requested:
-                        break
                     raise
+
+                if shutdown_requested:
+                    break
 
             assert active_group is not None
 
@@ -162,13 +167,11 @@ async def run_server(config: ServeConfig) -> int:
                     main_channel_source=audio_source.generator,
                     main_channel_format=audio_source.format,
                 )
-                await active_group.play_media(media_stream)
+                play_media_task = asyncio.create_task(active_group.play_media(media_stream))
+                await play_media_task
             except asyncio.CancelledError:
                 if shutdown_requested:
                     break
-                # A client disconnected - only reset if no active clients remain
-                if all(client.closing for client in active_group.clients):
-                    active_group = None
             except Exception as e:
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)
