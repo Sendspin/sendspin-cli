@@ -7,8 +7,6 @@ import asyncio
 import sys
 from collections.abc import Sequence
 
-import sounddevice
-
 from sendspin.app import AppConfig, SendspinApp
 from sendspin.discovery import discover_servers
 
@@ -100,6 +98,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 def list_audio_devices() -> None:
     """List all available audio output devices."""
+    import sounddevice  # Lazy import to avoid requiring PortAudio for other commands
+
     try:
         devices = sounddevice.query_devices()
         default_device = sounddevice.default.device[1]  # Output device index
