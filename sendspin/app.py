@@ -457,7 +457,6 @@ class AppConfig:
     client_id: str | None = None
     client_name: str | None = None
     static_delay_ms: float = 0.0
-    log_level: str = "INFO"
     headless: bool = False
 
 
@@ -486,10 +485,8 @@ class SendspinApp:
 
         # In interactive mode with UI, suppress logs to avoid interfering with display
         # Only show WARNING and above unless explicitly set to DEBUG
-        if sys.stdin.isatty() and config.log_level != "DEBUG":
-            logging.basicConfig(level=logging.WARNING)
-        else:
-            logging.basicConfig(level=getattr(logging, config.log_level))
+        if sys.stdin.isatty() and logging.getLogger().level != logging.DEBUG:
+            logging.getLogger().setLevel(logging.WARNING)
 
         # Get hostname for defaults if needed
         client_id = config.client_id
