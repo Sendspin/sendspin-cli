@@ -16,7 +16,8 @@ from sendspin.ui import DiscoveredServerInfo
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
 
-    from sendspin.app import AppState, AudioStreamHandler
+    from sendspin.app import AppState
+    from sendspin.audio_connector import AudioStreamHandler
     from sendspin.ui import SendspinUI
 
 logger = logging.getLogger(__name__)

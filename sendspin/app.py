@@ -20,13 +20,12 @@ if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
 
 from aiohttp import ClientError
-from aiosendspin.client import PCMFormat, SendspinClient
+from aiosendspin.client import SendspinClient
 from aiosendspin.models.core import (
     DeviceInfo,
     GroupUpdateServerPayload,
     ServerCommandPayload,
     ServerStatePayload,
-    StreamStartMessage,
 )
 from aiosendspin.models.player import (
     ClientHelloPlayerSupport,
@@ -43,7 +42,8 @@ from aiosendspin.models.types import (
     UndefinedField,
 )
 
-from sendspin.audio import AudioDevice, AudioPlayer
+from sendspin.audio import AudioDevice
+from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
@@ -308,13 +308,15 @@ async def connection_loop(  # noqa: PLR0915
 
             # Wait for disconnect or keyboard exit
             disconnect_event: asyncio.Event = asyncio.Event()
-            client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
+            unsubscribe_disconnect = client.add_disconnect_listener(
+                partial(asyncio.Event.set, disconnect_event)
+            )
             done, _ = await asyncio.wait(
                 {keyboard_task, asyncio.create_task(disconnect_event.wait())},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            client.set_disconnect_listener(None)
+            unsubscribe_disconnect()
             if keyboard_task in done:
                 break
 
@@ -377,75 +379,6 @@ async def connection_loop(  # noqa: PLR0915
             print_event("Unexpected error occurred")
             await asyncio.sleep(manager.get_error_backoff())
             manager.increase_backoff()
-
-
-class AudioStreamHandler:
-    """Manages audio playback state and stream lifecycle."""
-
-    def __init__(self, client: SendspinClient, audio_device: AudioDevice) -> None:
-        """Initialize the audio stream handler.
-
-        Args:
-            client: The Sendspin client instance.
-            audio_device: Audio device to use.
-        """
-        self._client = client
-        self._audio_device = audio_device
-        self.audio_player: AudioPlayer | None = None
-        self._current_format: PCMFormat | None = None
-
-    def on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
-        """Handle incoming audio chunks."""
-        # Initialize or reconfigure audio player if format changed
-        if self.audio_player is None or self._current_format != fmt:
-            if self.audio_player is not None:
-                self.audio_player.clear()
-
-            loop = asyncio.get_running_loop()
-            self.audio_player = AudioPlayer(
-                loop, self._client.compute_play_time, self._client.compute_server_time
-            )
-            self.audio_player.set_format(fmt, device=self._audio_device)
-            self._current_format = fmt
-
-        # Submit audio chunk - AudioPlayer handles timing
-        if self.audio_player is not None:
-            self.audio_player.submit(server_timestamp_us, audio_data)
-
-    def on_stream_start(
-        self, _message: StreamStartMessage, print_event: Callable[[str], None]
-    ) -> None:
-        """Handle stream start by clearing stale audio chunks."""
-        if self.audio_player is not None:
-            self.audio_player.clear()
-            logger.debug("Cleared audio queue on stream start")
-        print_event("Stream started")
-
-    def on_stream_end(self, roles: list[Roles] | None, print_event: Callable[[str], None]) -> None:
-        """Handle stream end by clearing audio queue to prevent desync on resume."""
-        # For the CLI player, we only care about the player role
-        if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
-            self.audio_player.clear()
-            logger.debug("Cleared audio queue on stream end")
-            print_event("Stream ended")
-
-    def on_stream_clear(self, roles: list[Roles] | None) -> None:
-        """Handle stream clear by clearing audio queue (e.g., for seek operations)."""
-        # For the CLI player, we only care about the player role
-        if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
-            self.audio_player.clear()
-            logger.debug("Cleared audio queue on stream clear")
-
-    def clear_queue(self) -> None:
-        """Clear the audio queue to prevent desync."""
-        if self.audio_player is not None:
-            self.audio_player.clear()
-
-    async def cleanup(self) -> None:
-        """Stop audio player and clear resources."""
-        if self.audio_player is not None:
-            await self.audio_player.stop()
-            self.audio_player = None
 
 
 @dataclass
@@ -553,8 +486,9 @@ class SendspinApp:
             )
             self._print_event(f"Using audio device: {config.audio_device.name}")
 
-            # Create audio and stream handlers
-            self._audio_handler = AudioStreamHandler(self._client, audio_device=config.audio_device)
+            # Create audio handler and attach to client
+            self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+            self._audio_handler.attach_client(self._client)
 
             # Create UI for interactive mode (unless headless)
             if sys.stdin.isatty() and not config.headless:
@@ -667,26 +601,24 @@ class SendspinApp:
         client = self._client
         audio_handler = self._audio_handler
 
-        client.set_metadata_listener(
+        client.add_metadata_listener(
             lambda payload: _handle_metadata_update(
                 self._state, self._ui, self._print_event, payload
             )
         )
-        client.set_group_update_listener(
+        client.add_group_update_listener(
             lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
         )
-        client.set_controller_state_listener(
+        client.add_controller_state_listener(
             lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
         )
-        client.set_stream_start_listener(
-            lambda msg: audio_handler.on_stream_start(msg, self._print_event)
+        client.add_stream_start_listener(lambda _msg: self._print_event("Stream started"))
+        client.add_stream_end_listener(
+            lambda roles: self._print_event("Stream ended")
+            if roles is None or Roles.PLAYER in roles
+            else None
         )
-        client.set_stream_end_listener(
-            lambda roles: audio_handler.on_stream_end(roles, self._print_event)
-        )
-        client.set_stream_clear_listener(audio_handler.on_stream_clear)
-        client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
-        client.set_server_command_listener(
+        client.add_server_command_listener(
             lambda payload: _handle_server_command(
                 self._state, audio_handler, client, self._ui, self._print_event, payload
             )
