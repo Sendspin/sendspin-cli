@@ -7,13 +7,11 @@ import asyncio
 import sys
 from collections.abc import Sequence
 
-from sendspin.app import AppConfig, SendspinApp
-from sendspin.audio import query_devices
-from sendspin.discovery import discover_servers
-
 
 def list_audio_devices() -> None:
     """List all available audio output devices."""
+    from sendspin.audio import query_devices
+
     try:
         devices = query_devices()
 
@@ -62,6 +60,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--name",
         default="Sendspin Server",
         help="Server name for mDNS discovery",
+    )
+    serve_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level to use",
     )
 
     # Default behavior (client mode) - existing arguments
@@ -121,6 +125,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 async def list_servers() -> None:
     """Discover and list all Sendspin servers on the network."""
+    from sendspin.discovery import discover_servers
+
     try:
         servers = await discover_servers(discovery_time=3.0)
         if not servers:
@@ -142,7 +148,11 @@ async def list_servers() -> None:
 
 def main() -> int:
     """Run the CLI client."""
+    import logging
+
     args = parse_args(sys.argv[1:])
+
+    logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Handle serve subcommand
     if args.command == "serve":
@@ -158,13 +168,13 @@ def main() -> int:
             print("Error: either provide a source or use --demo")
             return 1
 
-        config = ServeConfig(
+        serve_config = ServeConfig(
             source=source,
             port=args.port,
             name=args.name,
         )
         try:
-            return asyncio.run(run_server(config))
+            return asyncio.run(run_server(serve_config))
         except KeyboardInterrupt:
             return 0
         except Exception as e:
@@ -182,6 +192,9 @@ def main() -> int:
     if args.list_servers:
         asyncio.run(list_servers())
         return 0
+
+    from sendspin.audio import query_devices
+    from sendspin.app import AppConfig, SendspinApp
 
     # Resolve audio device if specified
     audio_device = None
@@ -207,18 +220,17 @@ def main() -> int:
         return 1
 
     # Create config from CLI arguments
-    config = AppConfig(
+    app_config = AppConfig(
         url=args.url,
         client_id=args.id,
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
         audio_device=audio_device,
-        log_level=args.log_level,
         headless=args.headless,
     )
 
     # Run the application
-    app = SendspinApp(config)
+    app = SendspinApp(app_config)
     return asyncio.run(app.run())
 
 
