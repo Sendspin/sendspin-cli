@@ -8,7 +8,30 @@ import sys
 from collections.abc import Sequence
 
 from sendspin.app import AppConfig, SendspinApp
+from sendspin.audio import query_devices
 from sendspin.discovery import discover_servers
+
+
+def list_audio_devices() -> None:
+    """List all available audio output devices."""
+    try:
+        devices = query_devices()
+
+        print("Available audio output devices:")
+        print()
+        for device in devices:
+            default_marker = " (default)" if device.is_default else ""
+            print(
+                f"  [{device.index}] {device.name}{default_marker}\n"
+                f"       Channels: {device.output_channels}, "
+                f"Sample rate: {device.sample_rate} Hz"
+            )
+        if devices:
+            print("\nTo select an audio device:\n  sendspin --audio-device 0")
+
+    except Exception as e:  # noqa: BLE001
+        print(f"Error listing audio devices: {e}")
+        sys.exit(1)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -96,32 +119,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def list_audio_devices() -> None:
-    """List all available audio output devices."""
-    import sounddevice  # Lazy import to avoid requiring PortAudio for other commands
-
-    try:
-        devices = sounddevice.query_devices()
-        default_device = sounddevice.default.device[1]  # Output device index
-
-        print("Available audio output devices:")
-        print()
-        for i, device in enumerate(devices):
-            if device["max_output_channels"] > 0:
-                default_marker = " (default)" if i == default_device else ""
-                print(
-                    f"  [{i}] {device['name']}{default_marker}\n"
-                    f"       Channels: {device['max_output_channels']}, "
-                    f"Sample rate: {device['default_samplerate']} Hz"
-                )
-        if devices:
-            print("\nTo select an audio device:\n  sendspin --audio-device 0")
-
-    except Exception as e:  # noqa: BLE001
-        print(f"Error listing audio devices: {e}")
-        sys.exit(1)
-
-
 async def list_servers() -> None:
     """Discover and list all Sendspin servers on the network."""
     try:
@@ -186,13 +183,36 @@ def main() -> int:
         asyncio.run(list_servers())
         return 0
 
+    # Resolve audio device if specified
+    audio_device = None
+    devices = query_devices()
+    if args.audio_device is None:
+        audio_device = next((d for d in devices if d.is_default), None)
+    elif args.audio_device.isnumeric():
+        device_id = int(args.audio_device)
+        for dev in devices:
+            if dev.index == device_id:
+                audio_device = dev
+                break
+    else:
+        # Otherwise, find first output device whose name starts with the prefix
+        for dev in devices:
+            if dev.name.startswith(args.audio_device):
+                audio_device = dev
+                break
+
+    if audio_device is None:
+        dev_type = "Default" if args.audio_device is None else "Specified"
+        print(f"Error: {dev_type} audio device not found.")
+        return 1
+
     # Create config from CLI arguments
     config = AppConfig(
         url=args.url,
         client_id=args.id,
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
-        audio_device=args.audio_device,
+        audio_device=audio_device,
         log_level=args.log_level,
         headless=args.headless,
     )
