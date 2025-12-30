@@ -116,11 +116,60 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Discover and list available Sendspin servers on the network",
     )
     parser.add_argument(
+        "--calibrate-sync",
+        action="store_true",
+        help="Enable sync calibration mode: mute output and use mic to measure timing offset",
+    )
+    parser.add_argument(
+        "--mic-device",
+        type=int,
+        default=None,
+        help="Microphone device ID for sync calibration (use --list-audio-devices to see devices)",
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
         help="Run without the interactive terminal UI",
     )
     return parser.parse_args(argv)
+
+
+def list_audio_devices() -> None:
+    """List all available audio devices (output and input)."""
+    import sounddevice  # Lazy import to avoid requiring PortAudio for other commands
+
+    try:
+        devices = sounddevice.query_devices()
+        default_output = sounddevice.default.device[1]  # Output device index
+        default_input = sounddevice.default.device[0]  # Input device index
+
+        print("Available audio OUTPUT devices:")
+        print("-" * 80)
+        for i, device in enumerate(devices):
+            if device["max_output_channels"] > 0:
+                default_marker = " (default)" if i == default_output else ""
+                print(
+                    f"  [{i}] {device['name']}{default_marker}\n"
+                    f"       Channels: {device['max_output_channels']}, "
+                    f"Sample rate: {device['default_samplerate']} Hz"
+                )
+
+        print("\nAvailable audio INPUT devices (for --mic-device):")
+        print("-" * 80)
+        for i, device in enumerate(devices):
+            if device["max_input_channels"] > 0:
+                default_marker = " (default)" if i == default_input else ""
+                print(
+                    f"  [{i}] {device['name']}{default_marker}\n"
+                    f"       Channels: {device['max_input_channels']}, "
+                    f"Sample rate: {device['default_samplerate']} Hz"
+                )
+
+        if devices:
+            print("\nTo select an audio device:\n  sendspin --audio-device 0")
+    except Exception as e:  # noqa: BLE001
+        print(f"Error listing audio devices: {e}")
+        sys.exit(1)
 
 
 async def list_servers() -> None:
@@ -227,6 +276,8 @@ def main() -> int:
         static_delay_ms=args.static_delay_ms,
         audio_device=audio_device,
         headless=args.headless,
+        calibrate_sync=args.calibrate_sync,
+        mic_device=args.mic_device,
     )
 
     # Run the application
