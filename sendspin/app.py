@@ -485,10 +485,8 @@ class SendspinApp:
             )
             self._print_event(f"Using audio device: {config.audio_device.name}")
 
-            # Create listener manager for multi-listener support
             listeners = ClientListenerManager()
 
-            # Create audio handler and attach to listener manager
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
             self._audio_handler.attach_client(self._client, listeners)
 
@@ -499,14 +497,11 @@ class SendspinApp:
                 self._ui.set_delay(self._client.static_delay_ms)
                 self._ui.attach_client(listeners)
 
-            # Register state + print_event handlers
             self._setup_listeners(listeners)
 
-            # Attach all listeners to the client
             listeners.attach(self._client)
 
             try:
-
                 # Audio player will be created when first audio chunk arrives
 
                 # Set up signal handler for graceful shutdown on Ctrl+C
