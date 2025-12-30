@@ -294,6 +294,16 @@ class AudioPlayer:
             device,
         )
 
+    @property
+    def volume(self) -> int:
+        """Get the current volume level (0-100)."""
+        return self._volume
+
+    @property
+    def muted(self) -> bool:
+        """Get the current mute state."""
+        return self._muted
+
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """
         Set the player volume and mute state.

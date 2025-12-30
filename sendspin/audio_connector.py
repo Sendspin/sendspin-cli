@@ -8,8 +8,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiosendspin.client import PCMFormat, SendspinClient
-from aiosendspin.models.core import StreamStartMessage
-from aiosendspin.models.types import Roles
+from aiosendspin.models.core import ServerCommandPayload, StreamStartMessage
+from aiosendspin.models.types import PlayerCommand, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 
@@ -59,6 +59,7 @@ class AudioStreamHandler:
             client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
+            client.add_server_command_listener(self._on_server_command),
         ]
 
     def detach_client(self) -> None:
@@ -107,6 +108,18 @@ class AudioStreamHandler:
         if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream clear")
+
+    async def _on_server_command(self, payload: ServerCommandPayload) -> None:
+        """Handle server commands for player volume/mute control."""
+        if payload.player is None or self.audio_player is None:
+            return
+
+        player_cmd = payload.player
+
+        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
+            self.audio_player.set_volume(player_cmd.volume, muted=self.audio_player.muted)
+        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+            self.audio_player.set_volume(self.audio_player.volume, muted=player_cmd.mute)
 
     def clear_queue(self) -> None:
         """Clear the audio queue to prevent desync."""
