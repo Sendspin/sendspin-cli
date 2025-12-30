@@ -5,6 +5,7 @@ import errno
 import logging
 import signal
 import socket
+import sys
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass
@@ -56,9 +57,29 @@ class ServeConfig:
     name: str = "Sendspin Server"
 
 
+def _windows_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Suppress ConnectionResetError on Windows during socket shutdown.
+
+    On Windows, the ProactorEventLoop raises ConnectionResetError (WinError 10054)
+    when a client disconnects and asyncio tries to shut down the socket. This is
+    harmless but produces noisy error messages.
+    """
+    exception = context.get("exception")
+    if isinstance(exception, ConnectionResetError):
+        # Silently ignore - this is expected when clients disconnect
+        return
+    # For all other exceptions, use the default handler
+    loop.default_exception_handler(context)
+
+
 async def run_server(config: ServeConfig) -> int:
     """Run the Sendspin server with the given audio source."""
     event_loop = asyncio.get_event_loop()
+
+    # On Windows, suppress ConnectionResetError during client disconnect
+    if sys.platform == "win32":
+        event_loop.set_exception_handler(_windows_exception_handler)
+
     server_id = f"sendspin-cli-{uuid.uuid4().hex[:8]}"
 
     server = SendspinPlayerServer(
