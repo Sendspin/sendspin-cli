@@ -44,6 +44,7 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
+from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
@@ -308,15 +309,13 @@ async def connection_loop(  # noqa: PLR0915
 
             # Wait for disconnect or keyboard exit
             disconnect_event: asyncio.Event = asyncio.Event()
-            unsubscribe_disconnect = client.add_disconnect_listener(
-                partial(asyncio.Event.set, disconnect_event)
-            )
+            client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
             done, _ = await asyncio.wait(
                 {keyboard_task, asyncio.create_task(disconnect_event.wait())},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            unsubscribe_disconnect()
+            client.set_disconnect_listener(None)
             if keyboard_task in done:
                 break
 
@@ -486,18 +485,27 @@ class SendspinApp:
             )
             self._print_event(f"Using audio device: {config.audio_device.name}")
 
-            # Create audio handler and attach to client
+            # Create listener manager for multi-listener support
+            listeners = ClientListenerManager()
+
+            # Create audio handler and attach to listener manager
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
-            self._audio_handler.attach_client(self._client)
+            self._audio_handler.attach_client(self._client, listeners)
 
             # Create UI for interactive mode (unless headless)
             if sys.stdin.isatty() and not config.headless:
                 self._ui = SendspinUI()
                 self._ui.start()
                 self._ui.set_delay(self._client.static_delay_ms)
+                self._ui.attach_client(listeners)
+
+            # Register state + print_event handlers
+            self._setup_listeners(listeners)
+
+            # Attach all listeners to the client
+            listeners.attach(self._client)
 
             try:
-                self._setup_listeners()
 
                 # Audio player will be created when first audio chunk arrives
 
@@ -592,29 +600,24 @@ class SendspinApp:
 
         return 0
 
-    def _setup_listeners(self) -> None:
-        """Set up client event listeners."""
+    def _setup_listeners(self, listeners: ClientListenerManager) -> None:
+        """Set up state and print_event handlers."""
         assert self._client is not None
-        assert self._audio_handler is not None
 
         # Capture reference for use in lambdas (type narrowing)
         client = self._client
 
-        # Register UI listeners (if UI is enabled)
-        if self._ui is not None:
-            self._ui.attach_client(client)
-
         # Register state + print_event handlers
-        client.add_metadata_listener(
+        listeners.add_metadata_listener(
             lambda payload: _handle_metadata_update(self._state, self._print_event, payload)
         )
-        client.add_group_update_listener(
+        listeners.add_group_update_listener(
             lambda payload: _handle_group_update(self._state, self._print_event, payload)
         )
-        client.add_controller_state_listener(
+        listeners.add_controller_state_listener(
             lambda payload: _handle_server_state(self._state, self._print_event, payload)
         )
-        client.add_server_command_listener(
+        listeners.add_server_command_listener(
             lambda payload: _handle_server_command(self._state, client, self._print_event, payload)
         )
 

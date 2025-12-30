@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiosendspin.client import PCMFormat, SendspinClient
 from aiosendspin.models.core import ServerCommandPayload, StreamStartMessage
 from aiosendspin.models.types import PlayerCommand, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 
 if TYPE_CHECKING:
-    pass
+    from aiosendspin.client import PCMFormat, SendspinClient
+
+    from sendspin.client_listeners import ClientListenerManager
 
 logger = logging.getLogger(__name__)
 
@@ -37,37 +37,22 @@ class AudioStreamHandler:
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
-        self._unsubscribe_fns: list[Callable[[], None]] = []
 
-    def attach_client(self, client: SendspinClient) -> None:
+    def attach_client(self, client: SendspinClient, listeners: ClientListenerManager) -> None:
         """Attach to a SendspinClient and register listeners.
 
-        If already attached, detaches from the previous client first.
-
         Args:
-            client: The Sendspin client to attach to.
+            client: The Sendspin client (for time sync functions).
+            listeners: The listener manager to register callbacks with.
         """
-        # Detach from any previous client first
-        if self._unsubscribe_fns:
-            raise RuntimeError("AudioStreamHandler is already attached to a client")
-
         self._client = client
 
-        # Register listeners and store unsubscribe functions
-        self._unsubscribe_fns = [
-            client.add_audio_chunk_listener(self._on_audio_chunk),
-            client.add_stream_start_listener(self._on_stream_start),
-            client.add_stream_end_listener(self._on_stream_end),
-            client.add_stream_clear_listener(self._on_stream_clear),
-            client.add_server_command_listener(self._on_server_command),
-        ]
-
-    def detach_client(self) -> None:
-        """Detach from the current client and remove listeners."""
-        for unsubscribe in self._unsubscribe_fns:
-            unsubscribe()
-        self._unsubscribe_fns.clear()
-        self._client = None
+        # Register listeners with the manager
+        listeners.add_audio_chunk_listener(self._on_audio_chunk)
+        listeners.add_stream_start_listener(self._on_stream_start)
+        listeners.add_stream_end_listener(self._on_stream_end)
+        listeners.add_stream_clear_listener(self._on_stream_clear)
+        listeners.add_server_command_listener(self._on_server_command)
 
     def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
         """Handle incoming audio chunks."""

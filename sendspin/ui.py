@@ -6,9 +6,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Self
 
-from aiosendspin.client import SendspinClient
 from aiosendspin.models.core import GroupUpdateServerPayload, ServerCommandPayload, ServerStatePayload
 from aiosendspin.models.types import PlaybackStateType, PlayerCommand
+
+from sendspin.client_listeners import ClientListenerManager
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -555,16 +556,16 @@ class SendspinUI:
         """Context manager exit."""
         self.stop()
 
-    def attach_client(self, client: SendspinClient) -> None:
-        """Attach to a SendspinClient and register listeners.
+    def attach_client(self, listeners: ClientListenerManager) -> None:
+        """Register UI listeners with the listener manager.
 
         Args:
-            client: The Sendspin client to attach to.
+            listeners: The listener manager to register callbacks with.
         """
-        client.add_metadata_listener(self._on_metadata_update)
-        client.add_group_update_listener(self._on_group_update)
-        client.add_controller_state_listener(self._on_server_state)
-        client.add_server_command_listener(self._on_server_command)
+        listeners.add_metadata_listener(self._on_metadata_update)
+        listeners.add_group_update_listener(self._on_group_update)
+        listeners.add_controller_state_listener(self._on_server_state)
+        listeners.add_server_command_listener(self._on_server_command)
 
     # Event listeners for server messages
 
