@@ -77,6 +77,7 @@ async def run_server(config: ServeConfig) -> int:
     event_loop = asyncio.get_event_loop()
 
     # On Windows, suppress ConnectionResetError during client disconnect
+    # Background: https://github.com/Sendspin/sendspin-cli/pull/26
     if sys.platform == "win32":
         event_loop.set_exception_handler(_windows_exception_handler)
 
