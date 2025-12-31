@@ -497,14 +497,11 @@ class SendspinApp:
                 self._ui.set_delay(self._client.static_delay_ms)
 
             self._setup_listeners(listeners)
-
             listeners.attach(self._client)
+            loop = asyncio.get_running_loop()
 
             try:
                 # Audio player will be created when first audio chunk arrives
-
-                # Set up signal handler for graceful shutdown on Ctrl+C
-                loop = asyncio.get_running_loop()
 
                 # Forward declaration for on_server_selected closure
                 connection_manager: ConnectionManager | None = None
@@ -597,9 +594,8 @@ class SendspinApp:
     def _setup_listeners(self, listeners: ClientListenerManager) -> None:
         """Set up client event listeners."""
         assert self._client is not None
-
-        # Capture reference for use in lambdas (type narrowing)
         client = self._client
+        loop = asyncio.get_running_loop()
 
         listeners.add_metadata_listener(
             lambda payload: _handle_metadata_update(
@@ -614,7 +610,7 @@ class SendspinApp:
         )
         listeners.add_server_command_listener(
             lambda payload: _handle_server_command(
-                self._state, client, self._ui, self._print_event, payload
+                self._state, client, self._ui, self._print_event, payload, loop
             )
         )
 
@@ -700,6 +696,7 @@ def _handle_server_command(
     ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: ServerCommandPayload,
+    loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Handle server/command messages for player volume/mute control."""
     if payload.player is None:
@@ -719,7 +716,7 @@ def _handle_server_command(
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
-    asyncio.get_running_loop().create_task(
+    loop.create_task(
         client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
             volume=state.player_volume,

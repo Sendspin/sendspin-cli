@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Self
 
 from aiosendspin.models.types import PlaybackStateType
-
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
