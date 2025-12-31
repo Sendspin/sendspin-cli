@@ -6,7 +6,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Self
 
-from aiosendspin.models.core import GroupUpdateServerPayload, ServerCommandPayload, ServerStatePayload
+from aiosendspin.models.core import (
+    GroupUpdateServerPayload,
+    ServerCommandPayload,
+    ServerStatePayload,
+)
 from aiosendspin.models.types import PlaybackStateType, PlayerCommand
 
 from sendspin.client_listeners import ClientListenerManager
@@ -569,7 +573,7 @@ class SendspinUI:
 
     # Event listeners for server messages
 
-    async def _on_metadata_update(self, payload: ServerStatePayload) -> None:
+    def _on_metadata_update(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with metadata."""
         if payload.metadata is None:
             return
@@ -582,7 +586,7 @@ class SendspinUI:
         )
         self.set_progress(metadata.progress_ms, metadata.duration_ms)
 
-    async def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
+    def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
         # Clear metadata when switching to a different group
         if payload.group_id is not None:
@@ -594,7 +598,7 @@ class SendspinUI:
         if payload.playback_state:
             self.set_playback_state(payload.playback_state)
 
-    async def _on_server_state(self, payload: ServerStatePayload) -> None:
+    def _on_server_state(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with controller state."""
         if payload.controller is None:
             return
@@ -602,7 +606,7 @@ class SendspinUI:
         controller = payload.controller
         self.set_volume(controller.volume, muted=controller.muted)
 
-    async def _on_server_command(self, payload: ServerCommandPayload) -> None:
+    def _on_server_command(self, payload: ServerCommandPayload) -> None:
         """Handle server/command messages for player volume/mute control."""
         if payload.player is None:
             return

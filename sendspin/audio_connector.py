@@ -94,7 +94,7 @@ class AudioStreamHandler:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream clear")
 
-    async def _on_server_command(self, payload: ServerCommandPayload) -> None:
+    def _on_server_command(self, payload: ServerCommandPayload) -> None:
         """Handle server commands for player volume/mute control."""
         if payload.player is None or self.audio_player is None:
             return

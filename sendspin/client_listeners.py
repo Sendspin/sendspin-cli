@@ -10,7 +10,7 @@ Temporary until https://github.com/Sendspin/aiosendspin/pull/112 is merged.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # Type aliases for listener signatures
-MetadataListener = Callable[["ServerStatePayload"], Awaitable[None]]
-GroupUpdateListener = Callable[["GroupUpdateServerPayload"], Awaitable[None]]
-ControllerStateListener = Callable[["ServerStatePayload"], Awaitable[None]]
-ServerCommandListener = Callable[["ServerCommandPayload"], Awaitable[None]]
+MetadataListener = Callable[["ServerStatePayload"], None]
+GroupUpdateListener = Callable[["GroupUpdateServerPayload"], None]
+ControllerStateListener = Callable[["ServerStatePayload"], None]
+ServerCommandListener = Callable[["ServerCommandPayload"], None]
 AudioChunkListener = Callable[[int, bytes, "PCMFormat"], None]
 StreamStartListener = Callable[["StreamStartMessage"], None]
 StreamEndListener = Callable[[list["Roles"] | None], None]
@@ -116,10 +116,10 @@ class ClientListenerManager:
         # Metadata listener (async)
         if self._metadata_listeners:
 
-            async def on_metadata(payload: ServerStatePayload) -> None:
+            def on_metadata(payload: ServerStatePayload) -> None:
                 for listener in self._metadata_listeners:
                     try:
-                        await listener(payload)
+                        listener(payload)
                     except Exception:
                         logger.exception("Error in metadata listener")
 
@@ -128,10 +128,10 @@ class ClientListenerManager:
         # Group update listener (async)
         if self._group_update_listeners:
 
-            async def on_group_update(payload: GroupUpdateServerPayload) -> None:
+            def on_group_update(payload: GroupUpdateServerPayload) -> None:
                 for listener in self._group_update_listeners:
                     try:
-                        await listener(payload)
+                        listener(payload)
                     except Exception:
                         logger.exception("Error in group update listener")
 
@@ -140,10 +140,10 @@ class ClientListenerManager:
         # Controller state listener (async)
         if self._controller_state_listeners:
 
-            async def on_controller_state(payload: ServerStatePayload) -> None:
+            def on_controller_state(payload: ServerStatePayload) -> None:
                 for listener in self._controller_state_listeners:
                     try:
-                        await listener(payload)
+                        listener(payload)
                     except Exception:
                         logger.exception("Error in controller state listener")
 
@@ -152,10 +152,10 @@ class ClientListenerManager:
         # Server command listener (async)
         if self._server_command_listeners:
 
-            async def on_server_command(payload: ServerCommandPayload) -> None:
+            def on_server_command(payload: ServerCommandPayload) -> None:
                 for listener in self._server_command_listeners:
                     try:
-                        await listener(payload)
+                        listener(payload)
                     except Exception:
                         logger.exception("Error in server command listener")
 

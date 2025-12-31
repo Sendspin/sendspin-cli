@@ -617,7 +617,7 @@ class SendspinApp:
         )
 
 
-async def _handle_metadata_update(
+def _handle_metadata_update(
     state: AppState,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
@@ -627,7 +627,7 @@ async def _handle_metadata_update(
         print_event(state.describe())
 
 
-async def _handle_group_update(
+def _handle_group_update(
     state: AppState,
     print_event: Callable[[str], None],
     payload: GroupUpdateServerPayload,
@@ -651,7 +651,7 @@ async def _handle_group_update(
         print_event(f"Playback state: {payload.playback_state.value}")
 
 
-async def _handle_server_state(
+def _handle_server_state(
     state: AppState,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
@@ -669,7 +669,7 @@ async def _handle_server_state(
             print_event("Muted" if controller.muted else "Unmuted")
 
 
-async def _handle_server_command(
+def _handle_server_command(
     state: AppState,
     client: SendspinClient,
     print_event: Callable[[str], None],
@@ -689,8 +689,10 @@ async def _handle_server_command(
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
-    await client.send_player_state(
-        state=PlayerStateType.SYNCHRONIZED,
-        volume=state.player_volume,
-        muted=state.player_muted,
+    asyncio.get_running_loop().create_task(
+        client.send_player_state(
+            state=PlayerStateType.SYNCHRONIZED,
+            volume=state.player_volume,
+            muted=state.player_muted,
+        )
     )
