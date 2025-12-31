@@ -311,7 +311,7 @@ async def connection_loop(  # noqa: PLR0915
             disconnect_event: asyncio.Event = asyncio.Event()
             client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
             done, _ = await asyncio.wait(
-                {keyboard_task, asyncio.create_task(disconnect_event.wait())},
+                {keyboard_task, asyncio.create_task(disconnect_event.wait(), eager_start=True)},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -525,7 +525,7 @@ class SendspinApp:
 
                 if config.headless:
                     # In headless mode, just wait for cancellation
-                    keyboard_task = asyncio.create_task(wait_forever())
+                    keyboard_task = asyncio.create_task(wait_forever(), eager_start=True)
                 else:
                     keyboard_task = asyncio.create_task(
                         keyboard_loop(
@@ -536,7 +536,8 @@ class SendspinApp:
                             self._print_event,
                             get_servers,
                             on_server_selected,
-                        )
+                        ),
+                        eager_start=True,
                     )
 
                 connection_manager = ConnectionManager(self._discovery, keyboard_task)
@@ -721,5 +722,6 @@ def _handle_server_command(
             state=PlayerStateType.SYNCHRONIZED,
             volume=state.player_volume,
             muted=state.player_muted,
-        )
+        ),
+        eager_start=True,
     )

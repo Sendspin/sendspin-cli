@@ -168,7 +168,7 @@ async def run_server(config: ServeConfig) -> int:
                     main_channel_source=audio_source.generator,
                     main_channel_format=audio_source.format,
                 )
-                play_media_task = asyncio.create_task(active_group.play_media(media_stream))
+                play_media_task = asyncio.create_task(active_group.play_media(media_stream), eager_start=True)
                 await play_media_task
             except asyncio.CancelledError:
                 if shutdown_requested:
