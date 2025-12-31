@@ -6,14 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Self
 
-from aiosendspin.models.core import (
-    GroupUpdateServerPayload,
-    ServerCommandPayload,
-    ServerStatePayload,
-)
-from aiosendspin.models.types import PlaybackStateType, PlayerCommand
+from aiosendspin.models.types import PlaybackStateType
 
-from sendspin.client_listeners import ClientListenerManager
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -559,61 +553,3 @@ class SendspinUI:
     def __exit__(self, *_: object) -> None:
         """Context manager exit."""
         self.stop()
-
-    def attach_client(self, listeners: ClientListenerManager) -> None:
-        """Register UI listeners with the listener manager.
-
-        Args:
-            listeners: The listener manager to register callbacks with.
-        """
-        listeners.add_metadata_listener(self._on_metadata_update)
-        listeners.add_group_update_listener(self._on_group_update)
-        listeners.add_controller_state_listener(self._on_server_state)
-        listeners.add_server_command_listener(self._on_server_command)
-
-    # Event listeners for server messages
-
-    def _on_metadata_update(self, payload: ServerStatePayload) -> None:
-        """Handle server/state messages with metadata."""
-        if payload.metadata is None:
-            return
-
-        metadata = payload.metadata
-        self.set_metadata(
-            title=metadata.title,
-            artist=metadata.artist,
-            album=metadata.album,
-        )
-        self.set_progress(metadata.progress_ms, metadata.duration_ms)
-
-    def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
-        """Handle group update messages."""
-        # Clear metadata when switching to a different group
-        if payload.group_id is not None:
-            self.set_metadata(title=None, artist=None, album=None)
-            self.clear_progress()
-
-        self.set_group_name(payload.group_name)
-
-        if payload.playback_state:
-            self.set_playback_state(payload.playback_state)
-
-    def _on_server_state(self, payload: ServerStatePayload) -> None:
-        """Handle server/state messages with controller state."""
-        if payload.controller is None:
-            return
-
-        controller = payload.controller
-        self.set_volume(controller.volume, muted=controller.muted)
-
-    def _on_server_command(self, payload: ServerCommandPayload) -> None:
-        """Handle server/command messages for player volume/mute control."""
-        if payload.player is None:
-            return
-
-        player_cmd = payload.player
-
-        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
-            self.set_player_volume(player_cmd.volume, muted=self._state.player_muted)
-        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
-            self.set_player_volume(self._state.player_volume, muted=player_cmd.mute)

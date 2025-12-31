@@ -495,7 +495,6 @@ class SendspinApp:
                 self._ui = SendspinUI()
                 self._ui.start()
                 self._ui.set_delay(self._client.static_delay_ms)
-                self._ui.attach_client(listeners)
 
             self._setup_listeners(listeners)
 
@@ -596,39 +595,51 @@ class SendspinApp:
         return 0
 
     def _setup_listeners(self, listeners: ClientListenerManager) -> None:
-        """Set up state and print_event handlers."""
+        """Set up client event listeners."""
         assert self._client is not None
 
         # Capture reference for use in lambdas (type narrowing)
         client = self._client
 
-        # Register state + print_event handlers
         listeners.add_metadata_listener(
-            lambda payload: _handle_metadata_update(self._state, self._print_event, payload)
+            lambda payload: _handle_metadata_update(
+                self._state, self._ui, self._print_event, payload
+            )
         )
         listeners.add_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._print_event, payload)
+            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
         )
         listeners.add_controller_state_listener(
-            lambda payload: _handle_server_state(self._state, self._print_event, payload)
+            lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
         )
         listeners.add_server_command_listener(
-            lambda payload: _handle_server_command(self._state, client, self._print_event, payload)
+            lambda payload: _handle_server_command(
+                self._state, client, self._ui, self._print_event, payload
+            )
         )
 
 
 def _handle_metadata_update(
     state: AppState,
+    ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
 ) -> None:
     """Handle server/state messages with metadata."""
     if payload.metadata is not None and state.update_metadata(payload.metadata):
+        if ui is not None:
+            ui.set_metadata(
+                title=state.title,
+                artist=state.artist,
+                album=state.album,
+            )
+            ui.set_progress(state.track_progress, state.track_duration)
         print_event(state.describe())
 
 
 def _handle_group_update(
     state: AppState,
+    ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: GroupUpdateServerPayload,
 ) -> None:
@@ -642,17 +653,25 @@ def _handle_group_update(
         state.album = None
         state.track_progress = None
         state.track_duration = None
+        if ui is not None:
+            ui.set_metadata(title=None, artist=None, album=None)
+            ui.clear_progress()
         print_event(f"Group ID: {payload.group_id}")
 
     if payload.group_name:
         print_event(f"Group name: {payload.group_name}")
+    if ui is not None:
+        ui.set_group_name(payload.group_name)
     if payload.playback_state:
         state.playback_state = payload.playback_state
+        if ui is not None:
+            ui.set_playback_state(payload.playback_state)
         print_event(f"Playback state: {payload.playback_state.value}")
 
 
 def _handle_server_state(
     state: AppState,
+    ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: ServerStatePayload,
 ) -> None:
@@ -661,17 +680,24 @@ def _handle_server_state(
         controller = payload.controller
         state.supported_commands = set(controller.supported_commands)
 
-        if controller.volume != state.volume:
+        volume_changed = controller.volume != state.volume
+        mute_changed = controller.muted != state.muted
+
+        if volume_changed:
             state.volume = controller.volume
             print_event(f"Volume: {controller.volume}%")
-        if controller.muted != state.muted:
+        if mute_changed:
             state.muted = controller.muted
             print_event("Muted" if controller.muted else "Unmuted")
+
+        if ui is not None and (volume_changed or mute_changed):
+            ui.set_volume(state.volume, muted=state.muted)
 
 
 def _handle_server_command(
     state: AppState,
     client: SendspinClient,
+    ui: SendspinUI | None,
     print_event: Callable[[str], None],
     payload: ServerCommandPayload,
 ) -> None:
@@ -683,9 +709,13 @@ def _handle_server_command(
 
     if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
         state.player_volume = player_cmd.volume
+        if ui is not None:
+            ui.set_player_volume(state.player_volume, muted=state.player_muted)
         print_event(f"Server set player volume: {player_cmd.volume}%")
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
         state.player_muted = player_cmd.mute
+        if ui is not None:
+            ui.set_player_volume(state.player_volume, muted=state.player_muted)
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
