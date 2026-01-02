@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 from zeroconf.asyncio import AsyncServiceBrowser, AsyncZeroconf
 
+from sendspin.utils import create_task
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,7 +94,7 @@ class _ServiceDiscoveryListener:
             self._first_result.set_result(url)
 
     def _schedule(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        task = self._loop.create_task(self._process_service_info(zeroconf, service_type, name), eager_start=True)
+        task = create_task(self._process_service_info(zeroconf, service_type, name), loop=self._loop)
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)

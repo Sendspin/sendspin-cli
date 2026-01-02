@@ -48,6 +48,7 @@ from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
+from sendspin.utils import create_task
 
 logger = logging.getLogger(__name__)
 
@@ -311,7 +312,7 @@ async def connection_loop(  # noqa: PLR0915
             disconnect_event: asyncio.Event = asyncio.Event()
             client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
             done, _ = await asyncio.wait(
-                {keyboard_task, asyncio.create_task(disconnect_event.wait(), eager_start=True)},
+                {keyboard_task, create_task(disconnect_event.wait())},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -525,9 +526,9 @@ class SendspinApp:
 
                 if config.headless:
                     # In headless mode, just wait for cancellation
-                    keyboard_task = asyncio.create_task(wait_forever(), eager_start=True)
+                    keyboard_task = create_task(wait_forever())
                 else:
-                    keyboard_task = asyncio.create_task(
+                    keyboard_task = create_task(
                         keyboard_loop(
                             self._client,
                             self._state,
@@ -536,8 +537,7 @@ class SendspinApp:
                             self._print_event,
                             get_servers,
                             on_server_selected,
-                        ),
-                        eager_start=True,
+                        )
                     )
 
                 connection_manager = ConnectionManager(self._discovery, keyboard_task)
@@ -717,11 +717,10 @@ def _handle_server_command(
         print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
-    loop.create_task(
+    create_task(
         client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
             volume=state.player_volume,
             muted=state.player_muted,
-        ),
-        eager_start=True,
+        )
     )

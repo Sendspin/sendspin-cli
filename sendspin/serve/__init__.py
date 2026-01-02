@@ -19,6 +19,8 @@ from aiosendspin.server import (
 )
 from aiosendspin.server.stream import MediaStream
 
+from sendspin.utils import create_task
+
 from .server import SendspinPlayerServer
 from .source import decode_audio
 
@@ -168,7 +170,7 @@ async def run_server(config: ServeConfig) -> int:
                     main_channel_source=audio_source.generator,
                     main_channel_format=audio_source.format,
                 )
-                play_media_task = asyncio.create_task(active_group.play_media(media_stream), eager_start=True)
+                play_media_task = create_task(active_group.play_media(media_stream))
                 await play_media_task
             except asyncio.CancelledError:
                 if shutdown_requested:
