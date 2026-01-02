@@ -11,9 +11,7 @@ from typing import TypeVar
 _T = TypeVar("_T")
 
 # Check if eager_start is supported (Python 3.12+)
-_SUPPORTS_EAGER_START = sys.version_info >= (3, 12) and "eager_start" in inspect.signature(
-    asyncio.create_task
-).parameters
+_SUPPORTS_EAGER_START = sys.version_info >= (3, 12)
 
 
 def create_task(
@@ -42,11 +40,11 @@ def create_task(
     Returns:
         The created asyncio Task.
     """
-    kwargs = {"name": name} if name is not None else {}
+    if loop is None:
+        loop = asyncio.get_running_loop()
 
-    if _SUPPORTS_EAGER_START:
-        kwargs["eager_start"] = eager_start
+    if _SUPPORTS_EAGER_START and eager_start:
+        # Use Task constructor directly - it supports eager_start and schedules automatically
+        return asyncio.Task(coro, loop=loop, name=name, eager_start=True)
 
-    if loop is not None:
-        return loop.create_task(coro, **kwargs)
-    return asyncio.create_task(coro, **kwargs)
+    return loop.create_task(coro, name=name)
