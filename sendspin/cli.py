@@ -7,10 +7,23 @@ import asyncio
 import sys
 from collections.abc import Sequence
 
+PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
+
+Please install PortAudio for your system:
+  • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2
+  • macOS: brew install portaudio
+  • Other systems: https://www.portaudio.com/"""
+
 
 def list_audio_devices() -> None:
     """List all available audio output devices."""
-    from sendspin.audio import query_devices
+    try:
+        from sendspin.audio import query_devices
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print(PORTAUDIO_NOT_FOUND_MESSAGE)
+            sys.exit(1)
+        raise
 
     try:
         devices = query_devices()
@@ -193,8 +206,14 @@ def main() -> int:
         asyncio.run(list_servers())
         return 0
 
-    from sendspin.audio import query_devices
-    from sendspin.app import AppConfig, SendspinApp
+    try:
+        from sendspin.audio import query_devices
+        from sendspin.app import AppConfig, SendspinApp
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print(PORTAUDIO_NOT_FOUND_MESSAGE)
+            return 1
+        raise
 
     # Resolve audio device if specified
     audio_device = None
