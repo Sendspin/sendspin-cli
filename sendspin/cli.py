@@ -10,7 +10,18 @@ from collections.abc import Sequence
 
 def list_audio_devices() -> None:
     """List all available audio output devices."""
-    from sendspin.audio import query_devices
+    try:
+        from sendspin.audio import query_devices
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print("Error: PortAudio library not found.")
+            print()
+            print("Please install PortAudio for your system:")
+            print("  • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2")
+            print("  • macOS: brew install portaudio")
+            print("  • Other systems: https://www.portaudio.com/")
+            sys.exit(1)
+        raise
 
     try:
         devices = query_devices()
@@ -193,8 +204,19 @@ def main() -> int:
         asyncio.run(list_servers())
         return 0
 
-    from sendspin.audio import query_devices
-    from sendspin.app import AppConfig, SendspinApp
+    try:
+        from sendspin.audio import query_devices
+        from sendspin.app import AppConfig, SendspinApp
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print("Error: PortAudio library not found.")
+            print()
+            print("Please install PortAudio for your system:")
+            print("  • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2")
+            print("  • macOS: brew install portaudio")
+            print("  • Other systems: https://www.portaudio.com/")
+            return 1
+        raise
 
     # Resolve audio device if specified
     audio_device = None
