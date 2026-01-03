@@ -131,7 +131,7 @@ class SendspinDaemon:
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
             try:
-                await self._connection_loop(url)
+                await self._connection_loop(url, use_discovery=config.url is None)
             finally:
                 # Remove signal handlers
                 with contextlib.suppress(NotImplementedError):
@@ -147,7 +147,7 @@ class SendspinDaemon:
 
         return 0
 
-    async def _connection_loop(self, initial_url: str) -> None:
+    async def _connection_loop(self, initial_url: str, use_discovery: bool) -> None:
         """Run the connection loop with automatic reconnection."""
         assert self._client is not None
         assert self._discovery is not None
@@ -191,23 +191,24 @@ class SendspinDaemon:
                 logger.info("Disconnected from server")
                 await self._audio_handler.cleanup()
 
-                # Try to get new URL from discovery, or use last known URL
-                new_url = self._discovery.current_url()
-                if new_url:
-                    url = new_url
+                if use_discovery:
+                    # Try to get new URL from discovery, or use last known URL
+                    new_url = self._discovery.current_url()
+                    if new_url:
+                        url = new_url
 
-                # Wait for server to reappear if discovery shows nothing
-                if not self._discovery.current_url():
-                    logger.info("Server offline, waiting for rediscovery...")
-                    while not self._shutdown_event.is_set():
-                        new_url = self._discovery.current_url()
-                        if new_url:
-                            url = new_url
-                            break
-                        await asyncio.sleep(1.0)
+                    # Wait for server to reappear if discovery shows nothing
+                    if not self._discovery.current_url():
+                        logger.info("Server offline, waiting for rediscovery...")
+                        while not self._shutdown_event.is_set():
+                            new_url = self._discovery.current_url()
+                            if new_url:
+                                url = new_url
+                                break
+                            await asyncio.sleep(1.0)
 
-                if self._shutdown_event.is_set():
-                    break
+                    if self._shutdown_event.is_set():
+                        break
 
                 logger.info("Reconnecting to %s", url)
 
@@ -225,14 +226,16 @@ class SendspinDaemon:
                 except TimeoutError:
                     pass  # Sleep completed, continue loop
 
-                # Check if URL changed while sleeping
-                new_url = self._discovery.current_url()
-                if new_url and new_url != url:
-                    logger.info("Server URL changed to %s", new_url)
-                    url = new_url
-                    error_backoff = 1.0
-                else:
-                    error_backoff = min(error_backoff * 2, max_backoff)
+                # Check if URL changed while sleeping (only when using discovery)
+                if use_discovery:
+                    new_url = self._discovery.current_url()
+                    if new_url and new_url != url:
+                        logger.info("Server URL changed to %s", new_url)
+                        url = new_url
+                        error_backoff = 1.0
+                        continue
+
+                error_backoff = min(error_backoff * 2, max_backoff)
 
             except Exception:
                 logger.exception("Unexpected error during connection")
