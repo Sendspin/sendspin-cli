@@ -81,6 +81,45 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Logging level to use",
     )
 
+    # Daemon subcommand
+    daemon_parser = subparsers.add_parser("daemon", help="Run Sendspin client in daemon mode (no UI)")
+    daemon_parser.add_argument(
+        "--url",
+        default=None,
+        help=("WebSocket URL of the Sendspin server. If omitted, discover via mDNS."),
+    )
+    daemon_parser.add_argument(
+        "--name",
+        default=None,
+        help="Friendly name for this client (defaults to hostname)",
+    )
+    daemon_parser.add_argument(
+        "--id",
+        default=None,
+        help="Unique identifier for this client (defaults to sendspin-cli-<hostname>)",
+    )
+    daemon_parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Logging level to use",
+    )
+    daemon_parser.add_argument(
+        "--static-delay-ms",
+        type=float,
+        default=0.0,
+        help="Extra playback delay in milliseconds applied after clock sync",
+    )
+    daemon_parser.add_argument(
+        "--audio-device",
+        type=str,
+        default=None,
+        help=(
+            "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
+            "Use --list-audio-devices to see available devices."
+        ),
+    )
+
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
         "--url",
@@ -131,7 +170,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--headless",
         action="store_true",
-        help="Run without the interactive terminal UI",
+        help="(DEPRECATED: use 'sendspin daemon' instead) Run without the interactive terminal UI",
     )
     return parser.parse_args(argv)
 
@@ -157,6 +196,54 @@ async def list_servers() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"Error discovering servers: {e}")
         sys.exit(1)
+
+
+def _run_daemon_mode(args: argparse.Namespace) -> int:
+    """Run the client in daemon mode (no UI)."""
+    try:
+        from sendspin.audio import query_devices
+        from sendspin.daemon import DaemonConfig, SendspinDaemon
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print(PORTAUDIO_NOT_FOUND_MESSAGE)
+            return 1
+        raise
+
+    # Resolve audio device if specified
+    audio_device = None
+    devices = query_devices()
+    if args.audio_device is None:
+        audio_device = next((d for d in devices if d.is_default), None)
+    elif args.audio_device.isnumeric():
+        device_id = int(args.audio_device)
+        for dev in devices:
+            if dev.index == device_id:
+                audio_device = dev
+                break
+    else:
+        # Otherwise, find first output device whose name starts with the prefix
+        for dev in devices:
+            if dev.name.startswith(args.audio_device):
+                audio_device = dev
+                break
+
+    if audio_device is None:
+        dev_type = "Default" if args.audio_device is None else "Specified"
+        print(f"Error: {dev_type} audio device not found.")
+        return 1
+
+    # Create config from CLI arguments
+    daemon_config = DaemonConfig(
+        url=args.url,
+        client_id=args.id,
+        client_name=args.name,
+        static_delay_ms=args.static_delay_ms,
+        audio_device=audio_device,
+    )
+
+    # Run the daemon
+    daemon = SendspinDaemon(daemon_config)
+    return asyncio.run(daemon.run())
 
 
 def main() -> int:
@@ -197,6 +284,10 @@ def main() -> int:
             traceback.print_exc()
             return 1
 
+    # Handle daemon subcommand
+    if args.command == "daemon":
+        return _run_daemon_mode(args)
+
     # Handle --list-audio-devices before starting async runtime
     if args.list_audio_devices:
         list_audio_devices()
@@ -205,6 +296,12 @@ def main() -> int:
     if args.list_servers:
         asyncio.run(list_servers())
         return 0
+
+    # Handle deprecated --headless flag
+    if args.headless:
+        print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
+        print("Routing to daemon mode...\n")
+        return _run_daemon_mode(args)
 
     try:
         from sendspin.audio import query_devices
@@ -245,7 +342,6 @@ def main() -> int:
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
         audio_device=audio_device,
-        headless=args.headless,
     )
 
     # Run the application

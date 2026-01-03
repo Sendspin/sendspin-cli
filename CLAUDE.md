@@ -7,34 +7,39 @@ Sendspin CLI is a synchronized audio player client for the [Sendspin Protocol](h
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                         cli.py (main)                           │
-│  - Entry point, argument parsing, async event loop              │
-│  - mDNS service discovery                                       │
-│  - Connection management with auto-reconnect                    │
-│  - State management (CLIState)                                  │
-│  - Coordinates all other modules                                │
-└─────────────────────────────────────────────────────────────────┘
-          │                    │                    │
-          ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│   keyboard.py   │  │     ui.py       │  │    audio.py     │
-│                 │  │                 │  │                 │
-│ - Key capture   │  │ - Rich TUI      │  │ - Audio output  │
-│ - Command parse │  │ - Now Playing   │  │ - Time sync     │
-│ - Media control │  │ - Volume panel  │  │ - Buffer mgmt   │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-          │                    │                    │
-          └────────────────────┼────────────────────┘
-                               ▼
-                    ┌─────────────────────┐
-                    │  aiosendspin        │
-                    │  (external library) │
-                    │                     │
-                    │ - WebSocket client  │
-                    │ - Protocol messages │
-                    │ - Time sync filter  │
-                    └─────────────────────┘
+                            cli.py (main entry)
+                                    │
+                    ┌───────────────┼───────────────┐
+                    │                               │
+                    ▼                               ▼
+        ┌─────────────────────┐         ┌─────────────────────┐
+        │     app.py (TUI)    │         │   daemon.py (no UI) │
+        │                     │         │                     │
+        │ - Interactive mode  │         │ - Headless mode     │
+        │ - Keyboard control  │         │ - Signal handlers   │
+        │ - Rich UI display   │         │ - Print events      │
+        └─────────────────────┘         └─────────────────────┘
+                    │                               │
+        ┌───────────┼───────────┐                   │
+        │           │           │                   │
+        ▼           ▼           ▼                   ▼
+┌────────────┐ ┌─────────┐ ┌─────────┐      ┌─────────┐
+│keyboard.py │ │  ui.py  │ │audio.py │      │audio.py │
+│            │ │         │ │         │      │         │
+│ - Keys     │ │ - TUI   │ │ - Sync  │      │ - Sync  │
+│ - Commands │ │ - Panel │ │ - Output│      │ - Output│
+└────────────┘ └─────────┘ └─────────┘      └─────────┘
+        │           │           │                   │
+        └───────────┼───────────┴───────────────────┘
+                    ▼
+        ┌─────────────────────┐
+        │  aiosendspin        │
+        │  (external library) │
+        │                     │
+        │ - WebSocket client  │
+        │ - Protocol messages │
+        │ - Time sync filter  │
+        └─────────────────────┘
 ```
 
 ## File Responsibilities
@@ -44,12 +49,28 @@ Project documentation, installation instructions, usage guide (including command
 
 ### `sendspin/cli.py`
 Main entry point and orchestrator. Responsibilities:
-- **Argument parsing**: `--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`, etc.
-- **Service discovery**: mDNS discovery of Sendspin servers via `ServiceDiscovery` class
+- **Argument parsing**: Commands (`serve`, `daemon`), flags (`--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`)
+- **Command routing**: Routes to appropriate mode (TUI app, daemon, or server)
+- **Device enumeration**: Lists audio devices and servers via `--list-audio-devices` and `--list-servers`
+- **Backward compatibility**: Handles deprecated `--headless` flag with warning
+
+### `sendspin/app.py`
+Interactive TUI mode (default). Responsibilities:
+- **Service discovery**: mDNS discovery of Sendspin servers
 - **Connection management**: `ConnectionManager` handles reconnection with exponential backoff
-- **State management**: `CLIState` dataclass mirrors server state (playback, metadata, volume)
+- **State management**: `AppState` dataclass mirrors server state (playback, metadata, volume)
 - **Audio stream handling**: `AudioStreamHandler` bridges between client and `AudioPlayer`
 - **Event callbacks**: Routes server messages to appropriate handlers (metadata, group updates, commands)
+- **UI coordination**: Manages `SendspinUI` and keyboard input loop
+
+### `sendspin/daemon.py`
+Daemon mode for headless operation (via `sendspin daemon` or deprecated `--headless`). Responsibilities:
+- **Headless operation**: Runs without UI or keyboard input
+- **Service discovery**: Same mDNS discovery as TUI mode
+- **Connection management**: Uses same `ConnectionManager` from `app.py`
+- **Audio playback**: Same synchronized audio playback
+- **Event logging**: Prints events to stdout instead of UI
+- **Signal handling**: SIGINT/SIGTERM for graceful shutdown
 
 ### `sendspin/keyboard.py`
 Keyboard input handling for interactive control. Responsibilities:
@@ -94,8 +115,10 @@ Package entry point, exports `main` from `cli.py`.
 
 ### Running the player
 ```bash
-uv run sendspin              # Auto-discover server
-uv run sendspin --url ws://host:port/sendspin  # Direct connection
+uv run sendspin                                # TUI mode with auto-discovery
+uv run sendspin --url ws://host:port/sendspin  # TUI mode with direct connection
+uv run sendspin daemon                         # Daemon mode (headless) with auto-discovery
+uv run sendspin daemon --url ws://host:port/sendspin  # Daemon mode with direct connection
 ```
 
 ### Development commands

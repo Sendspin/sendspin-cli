@@ -390,7 +390,6 @@ class AppConfig:
     client_id: str | None = None
     client_name: str | None = None
     static_delay_ms: float = 0.0
-    headless: bool = False
 
 
 class SendspinApp:
@@ -491,8 +490,8 @@ class SendspinApp:
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
             self._audio_handler.attach_client(self._client, listeners)
 
-            # Create UI for interactive mode (unless headless)
-            if sys.stdin.isatty() and not config.headless:
+            # Create UI for interactive mode
+            if sys.stdin.isatty():
                 self._ui = SendspinUI()
                 self._ui.start()
                 self._ui.set_delay(self._client.static_delay_ms)
@@ -521,24 +520,18 @@ class SendspinApp:
                     # Force disconnect to trigger reconnect with new URL
                     await self._client.disconnect()
 
-                async def wait_forever() -> None:
-                    await asyncio.Event().wait()
-
-                if config.headless:
-                    # In headless mode, just wait for cancellation
-                    keyboard_task = create_task(wait_forever())
-                else:
-                    keyboard_task = create_task(
-                        keyboard_loop(
-                            self._client,
-                            self._state,
-                            self._audio_handler,
-                            self._ui,
-                            self._print_event,
-                            get_servers,
-                            on_server_selected,
-                        )
+                # Start keyboard loop for interactive control
+                keyboard_task = create_task(
+                    keyboard_loop(
+                        self._client,
+                        self._state,
+                        self._audio_handler,
+                        self._ui,
+                        self._print_event,
+                        get_servers,
+                        on_server_selected,
                     )
+                )
 
                 connection_manager = ConnectionManager(self._discovery, keyboard_task)
 
