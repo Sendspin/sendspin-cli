@@ -6,6 +6,10 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sendspin.audio import AudioDevice
 
 PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
 
@@ -82,7 +86,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
 
     # Daemon subcommand
-    daemon_parser = subparsers.add_parser("daemon", help="Run Sendspin client in daemon mode (no UI)")
+    daemon_parser = subparsers.add_parser(
+        "daemon", help="Run Sendspin client in daemon mode (no UI)"
+    )
     daemon_parser.add_argument(
         "--url",
         default=None,
@@ -198,50 +204,58 @@ async def list_servers() -> None:
         sys.exit(1)
 
 
+class CLIError(Exception):
+    """CLI error with exit code."""
+
+    def __init__(self, message: str, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
+    """Resolve audio device from CLI argument.
+
+    Args:
+        device_arg: Device specifier (index number, name prefix, or None for default).
+
+    Returns:
+        The resolved AudioDevice.
+
+    Raises:
+        CLIError: If the device cannot be found.
+    """
+    from sendspin.audio import query_devices
+
+    devices = query_devices()
+
+    if device_arg is None:
+        device = next((d for d in devices if d.is_default), None)
+    elif device_arg.isnumeric():
+        device_id = int(device_arg)
+        device = next((d for d in devices if d.index == device_id), None)
+    else:
+        # Find first output device whose name starts with the prefix
+        device = next((d for d in devices if d.name.startswith(device_arg)), None)
+
+    if device is None:
+        dev_type = "Default" if device_arg is None else "Specified"
+        raise CLIError(f"{dev_type} audio device not found.")
+
+    return device
+
+
 def _run_daemon_mode(args: argparse.Namespace) -> int:
     """Run the client in daemon mode (no UI)."""
-    try:
-        from sendspin.audio import query_devices
-        from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
-    except OSError as e:
-        if "PortAudio library not found" in str(e):
-            print(PORTAUDIO_NOT_FOUND_MESSAGE)
-            return 1
-        raise
+    from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
 
-    # Resolve audio device if specified
-    audio_device = None
-    devices = query_devices()
-    if args.audio_device is None:
-        audio_device = next((d for d in devices if d.is_default), None)
-    elif args.audio_device.isnumeric():
-        device_id = int(args.audio_device)
-        for dev in devices:
-            if dev.index == device_id:
-                audio_device = dev
-                break
-    else:
-        # Otherwise, find first output device whose name starts with the prefix
-        for dev in devices:
-            if dev.name.startswith(args.audio_device):
-                audio_device = dev
-                break
-
-    if audio_device is None:
-        dev_type = "Default" if args.audio_device is None else "Specified"
-        print(f"Error: {dev_type} audio device not found.")
-        return 1
-
-    # Create config from CLI arguments
     daemon_config = DaemonConfig(
+        audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
         client_id=args.id,
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
-        audio_device=audio_device,
     )
 
-    # Run the daemon
     daemon = SendspinDaemon(daemon_config)
     return asyncio.run(daemon.run())
 
@@ -284,10 +298,6 @@ def main() -> int:
             traceback.print_exc()
             return 1
 
-    # Handle daemon subcommand
-    if args.command == "daemon":
-        return _run_daemon_mode(args)
-
     # Handle --list-audio-devices before starting async runtime
     if args.list_audio_devices:
         list_audio_devices()
@@ -297,54 +307,40 @@ def main() -> int:
         asyncio.run(list_servers())
         return 0
 
-    # Handle deprecated --headless flag
-    if args.headless:
-        print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
-        print("Routing to daemon mode...\n")
-        return _run_daemon_mode(args)
-
     try:
-        from sendspin.audio import query_devices
-        from sendspin.tui.app import AppConfig, SendspinApp
+        return _run_client_mode(args)
+    except CLIError as e:
+        print(f"Error: {e}")
+        return e.exit_code
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)
             return 1
         raise
 
-    # Resolve audio device if specified
-    audio_device = None
-    devices = query_devices()
-    if args.audio_device is None:
-        audio_device = next((d for d in devices if d.is_default), None)
-    elif args.audio_device.isnumeric():
-        device_id = int(args.audio_device)
-        for dev in devices:
-            if dev.index == device_id:
-                audio_device = dev
-                break
-    else:
-        # Otherwise, find first output device whose name starts with the prefix
-        for dev in devices:
-            if dev.name.startswith(args.audio_device):
-                audio_device = dev
-                break
 
-    if audio_device is None:
-        dev_type = "Default" if args.audio_device is None else "Specified"
-        print(f"Error: {dev_type} audio device not found.")
-        return 1
+def _run_client_mode(args: argparse.Namespace) -> int:
+    """Run the client in TUI or daemon mode."""
+    # Handle daemon subcommand
+    if args.command == "daemon":
+        return _run_daemon_mode(args)
 
-    # Create config from CLI arguments
+    # Handle deprecated --headless flag
+    if args.headless:
+        print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
+        print("Routing to daemon mode...\n")
+        return _run_daemon_mode(args)
+
+    from sendspin.tui.app import AppConfig, SendspinApp
+
     app_config = AppConfig(
+        audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
         client_id=args.id,
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
-        audio_device=audio_device,
     )
 
-    # Run the application
     app = SendspinApp(app_config)
     return asyncio.run(app.run())
 
