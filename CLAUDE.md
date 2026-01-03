@@ -42,12 +42,40 @@ Project documentation, installation instructions, usage guide (including command
 
 ### `sendspin/cli.py`
 Main entry point and orchestrator. Responsibilities:
-- **Argument parsing**: `--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`, etc.
-- **Service discovery**: mDNS discovery of Sendspin servers via `ServiceDiscovery` class
-- **Connection management**: `ConnectionManager` handles reconnection with exponential backoff
+- **Argument parsing**: `--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`, `--headless`, etc.
+- **Service discovery**: mDNS discovery of Sendspin servers via `ServiceDiscovery` class (normal mode)
+- **Client advertisement**: mDNS advertisement of client via `ClientAdvertisement` class (headless mode)
+- **Connection management**: `ConnectionManager` handles reconnection with exponential backoff (normal mode)
 - **State management**: `CLIState` dataclass mirrors server state (playback, metadata, volume)
 - **Audio stream handling**: `AudioStreamHandler` bridges between client and `AudioPlayer`
 - **Event callbacks**: Routes server messages to appropriate handlers (metadata, group updates, commands)
+
+### `sendspin/app.py`
+Core application logic. Responsibilities:
+- **Mode selection**: Switches between normal mode (client discovers server) and headless mode (server discovers client)
+- **Client creation**: Creates `SendspinClient` (normal) or `HeadlessClient` (headless)
+- **Connection loop**: Manages auto-reconnection in normal mode
+- **Headless server**: Runs WebSocket server to accept server-initiated connections in headless mode
+- **Event listeners**: Sets up listeners for metadata, group updates, and server commands
+
+### `sendspin/discovery.py`
+mDNS service discovery for finding Sendspin servers (normal mode). Responsibilities:
+- **Service browsing**: Listens for `_sendspin-server._tcp.local.` mDNS advertisements
+- **Server tracking**: Maintains list of discovered servers
+- **URL construction**: Builds WebSocket URLs from mDNS service info
+
+### `sendspin/client_advertisement.py`
+mDNS client advertisement for headless mode. Responsibilities:
+- **Service registration**: Advertises client as `_sendspin._tcp.local.` mDNS service
+- **Properties**: Publishes client ID, name, and WebSocket endpoint path
+- **Lifecycle**: Manages registration and unregistration of mDNS service
+
+### `sendspin/headless_server.py`
+WebSocket server for headless mode. Responsibilities:
+- **HeadlessClient**: Extends `SendspinClient` to accept incoming WebSocket connections
+- **Protocol handling**: Implements client-side protocol for server-initiated connections
+- **WebSocket server**: Runs aiohttp WebSocket server to accept connections from servers
+- **Connection management**: Handles single active connection, replacing on new connection
 
 ### `sendspin/keyboard.py`
 Keyboard input handling for interactive control. Responsibilities:
@@ -92,8 +120,9 @@ Package entry point, exports `main` from `cli.py`.
 
 ### Running the player
 ```bash
-uv run sendspin              # Auto-discover server
-uv run sendspin --url ws://host:port/sendspin  # Direct connection
+uv run sendspin              # Auto-discover server (normal mode)
+uv run sendspin --url ws://host:port/sendspin  # Direct connection (normal mode)
+uv run sendspin --headless   # Headless mode: advertise and wait for server to connect
 ```
 
 ### Development commands

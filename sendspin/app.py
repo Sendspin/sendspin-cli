@@ -44,8 +44,10 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
+from sendspin.client_advertisement import ClientAdvertisement
 from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
+from sendspin.headless_server import HeadlessClient, HeadlessWebSocketServer
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import SendspinUI
 from sendspin.utils import create_task
@@ -437,46 +439,76 @@ class SendspinApp:
 
         self._print_event(f"Using client ID: {client_id}")
 
-        self._client = SendspinClient(
-            client_id=client_id,
-            client_name=client_name,
-            roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
-            device_info=get_device_info(),
-            player_support=ClientHelloPlayerSupport(
-                supported_formats=[
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
-                    ),
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
-                    ),
-                ],
-                buffer_capacity=32_000_000,
-                supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
-            ),
-            static_delay_ms=config.static_delay_ms,
-        )
+        # Create client based on mode (headless or normal)
+        if config.headless:
+            # In headless mode, create a HeadlessClient that accepts incoming connections
+            self._client = HeadlessClient(
+                client_id=client_id,
+                client_name=client_name,
+                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
+                device_info=get_device_info(),
+                player_support=ClientHelloPlayerSupport(
+                    supported_formats=[
+                        SupportedAudioFormat(
+                            codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
+                        ),
+                        SupportedAudioFormat(
+                            codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
+                        ),
+                    ],
+                    buffer_capacity=32_000_000,
+                    supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
+                ),
+                static_delay_ms=config.static_delay_ms,
+            )
+        else:
+            self._client = SendspinClient(
+                client_id=client_id,
+                client_name=client_name,
+                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
+                device_info=get_device_info(),
+                player_support=ClientHelloPlayerSupport(
+                    supported_formats=[
+                        SupportedAudioFormat(
+                            codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
+                        ),
+                        SupportedAudioFormat(
+                            codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
+                        ),
+                    ],
+                    buffer_capacity=32_000_000,
+                    supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
+                ),
+                static_delay_ms=config.static_delay_ms,
+            )
 
-        # Start service discovery
-        self._discovery = ServiceDiscovery()
-        await self._discovery.start()
+        # Start service discovery (only in normal mode)
+        if not config.headless:
+            self._discovery = ServiceDiscovery()
+            await self._discovery.start()
+        else:
+            # In headless mode, no discovery needed
+            self._discovery = None
 
         try:
-            # Get initial server URL
-            url = config.url
-            if url is None:
-                logger.info("Waiting for mDNS discovery of Sendspin server...")
-                self._print_event("Searching for Sendspin server...")
-                try:
-                    url = await self._discovery.wait_for_first_server()
-                    logger.info("Discovered Sendspin server at %s", url)
-                    self._print_event(f"Found server at {url}")
-                except asyncio.CancelledError:
-                    # When KeyboardInterrupt occurs during discovery
-                    return 1
-                except Exception:
-                    logger.exception("Failed to discover server")
-                    return 1
+            # Get initial server URL (only in normal mode)
+            url = None
+            if not config.headless:
+                url = config.url
+                if url is None:
+                    assert self._discovery is not None
+                    logger.info("Waiting for mDNS discovery of Sendspin server...")
+                    self._print_event("Searching for Sendspin server...")
+                    try:
+                        url = await self._discovery.wait_for_first_server()
+                        logger.info("Discovered Sendspin server at %s", url)
+                        self._print_event(f"Found server at {url}")
+                    except asyncio.CancelledError:
+                        # When KeyboardInterrupt occurs during discovery
+                        return 1
+                    except Exception:
+                        logger.exception("Failed to discover server")
+                        return 1
 
             # Log audio device being used
             logger.info(
@@ -540,7 +572,12 @@ class SendspinApp:
                         )
                     )
 
-                connection_manager = ConnectionManager(self._discovery, keyboard_task)
+                # Create connection manager only in normal mode
+                if not config.headless:
+                    assert self._discovery is not None
+                    connection_manager = ConnectionManager(self._discovery, keyboard_task)
+                else:
+                    connection_manager = None
 
                 def signal_handler() -> None:
                     logger.debug("Received interrupt signal, shutting down...")
@@ -552,17 +589,46 @@ class SendspinApp:
                     loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
                 try:
-                    # Run connection loop with auto-reconnect
-                    await connection_loop(
-                        self._client,
-                        self._discovery,
-                        self._audio_handler,
-                        url,
-                        keyboard_task,
-                        self._print_event,
-                        connection_manager,
-                        self._ui,
-                    )
+                    if config.headless:
+                        # In headless mode, start WebSocket server and mDNS advertisement
+                        assert isinstance(self._client, HeadlessClient)
+                        headless_server = HeadlessWebSocketServer(self._client)
+                        await headless_server.start()
+
+                        # Start mDNS advertisement
+                        advertisement = ClientAdvertisement(
+                            client_id=client_id,
+                            client_name=client_name,
+                        )
+                        await advertisement.start()
+
+                        self._print_event("Headless mode: waiting for server to connect...")
+                        logger.info("Headless mode enabled, waiting for server connection")
+
+                        # Wait for keyboard task to complete (Ctrl+C or quit command)
+                        try:
+                            await keyboard_task
+                        except asyncio.CancelledError:
+                            pass
+                        finally:
+                            # Clean up
+                            await headless_server.stop()
+                            await advertisement.stop()
+                    else:
+                        # Normal mode: run connection loop with auto-reconnect
+                        assert url is not None
+                        assert self._discovery is not None
+                        assert connection_manager is not None
+                        await connection_loop(
+                            self._client,
+                            self._discovery,
+                            self._audio_handler,
+                            url,
+                            keyboard_task,
+                            self._print_event,
+                            connection_manager,
+                            self._ui,
+                        )
                 except asyncio.CancelledError:
                     logger.debug("Connection loop cancelled")
                 finally:
@@ -587,8 +653,9 @@ class SendspinApp:
                     )
 
         finally:
-            # Stop discovery
-            await self._discovery.stop()
+            # Stop discovery (only if it was started)
+            if self._discovery is not None:
+                await self._discovery.stop()
 
         return 0
 

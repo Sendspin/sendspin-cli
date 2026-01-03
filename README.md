@@ -118,13 +118,19 @@ sendspin --static-delay-ms -100
 
 ### Headless Mode
 
-To run the player without the interactive terminal UI (useful for background services or scripts):
+In headless mode, the CLI operates as a discoverable client that servers can connect to:
 
 ```bash
 sendspin --headless
 ```
 
-In headless mode, status messages are printed to stdout instead of the TUI.
+**How it works:**
+- The CLI advertises itself via mDNS (as `_sendspin._tcp.local.`)
+- Servers with client discovery enabled will automatically find and connect to it
+- No interactive UI is displayed; status messages are printed to stdout
+- Useful for background services, automated setups, or headless devices
+
+This is ideal for setups where you want the server to control which clients are active, rather than having clients discover and connect to servers.
 
 ### Debugging & Troubleshooting
 
