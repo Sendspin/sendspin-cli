@@ -5,15 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import platform
 import signal
 import socket
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
-from importlib.metadata import version
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -22,7 +19,6 @@ if TYPE_CHECKING:
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
 from aiosendspin.models.core import (
-    DeviceInfo,
     GroupUpdateServerPayload,
     ServerCommandPayload,
     ServerStatePayload,
@@ -48,7 +44,7 @@ from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
-from sendspin.utils import create_task
+from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
 
@@ -121,52 +117,6 @@ class AppState:
         if self.playback_state is not None:
             lines.append(f"State: {self.playback_state.value}")
         return "\n".join(lines)
-
-
-def get_device_info() -> DeviceInfo:
-    """Get device information for the client hello message."""
-    # Get OS/platform information
-    system = platform.system()
-    product_name = f"{system}"
-
-    # Try to get more specific product info
-    if system == "Linux":
-        # Try reading /etc/os-release for distribution info
-        try:
-            os_release = Path("/etc/os-release")
-            if os_release.exists():
-                with os_release.open() as f:
-                    for line in f:
-                        if line.startswith("PRETTY_NAME="):
-                            product_name = line.split("=", 1)[1].strip().strip('"')
-                            break
-        except (OSError, IndexError):
-            pass
-    elif system == "Darwin":
-        mac_version = platform.mac_ver()[0]
-        product_name = f"macOS {mac_version}" if mac_version else "macOS"
-    elif system == "Windows":
-        try:
-            win_ver = platform.win32_ver()
-            # Check build number to distinguish Windows 11 (build 22000+) from Windows 10
-            if win_ver[0] == "10" and win_ver[1] and int(win_ver[1].split(".")[2]) >= 22000:
-                product_name = "Windows 11"
-            else:
-                product_name = f"Windows {win_ver[0]}"
-        except (ValueError, IndexError, AttributeError):
-            product_name = f"Windows {platform.release()}"
-
-    # Get software version
-    try:
-        software_version = f"aiosendspin {version('aiosendspin')}"
-    except Exception:  # noqa: BLE001
-        software_version = "aiosendspin (unknown version)"
-
-    return DeviceInfo(
-        product_name=product_name,
-        manufacturer=None,  # Could add manufacturer detection if needed
-        software_version=software_version,
-    )
 
 
 class ConnectionManager:

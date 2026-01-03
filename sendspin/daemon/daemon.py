@@ -1,4 +1,4 @@
-"""Daemon mode for running Sendspin client without UI."""
+"""Daemon mode for running a Sendspin client without UI."""
 
 from __future__ import annotations
 
@@ -8,10 +8,6 @@ import logging
 import signal
 import socket
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 from aiosendspin.client import SendspinClient
 from aiosendspin.models.player import (
@@ -19,22 +15,13 @@ from aiosendspin.models.player import (
     PlayerCommand,
     SupportedAudioFormat,
 )
-from aiosendspin.models.types import (
-    AudioCodec,
-    Roles,
-)
+from aiosendspin.models.types import AudioCodec, Roles
 
-from sendspin.tui.app import (
-    AppState,
-    ConnectionManager,
-    connection_loop,
-    get_device_info,
-)
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
-from sendspin.utils import create_task
+from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
 
@@ -51,19 +38,14 @@ class DaemonConfig:
 
 
 class SendspinDaemon:
-    """Sendspin daemon - headless mode without UI."""
+    """Sendspin daemon - headless audio player mode."""
 
     def __init__(self, config: DaemonConfig) -> None:
         """Initialize the daemon."""
         self._config = config
-        self._state = AppState()
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._discovery: ServiceDiscovery | None = None
-
-    def _print_event(self, message: str) -> None:
-        """Print an event message."""
-        print(message, flush=True)  # noqa: T201
 
     async def run(self) -> int:
         """Run the daemon."""
@@ -83,12 +65,13 @@ class SendspinDaemon:
             if client_name is None:
                 client_name = hostname
 
-        self._print_event(f"Using client ID: {client_id}")
+        logger.info("Starting Sendspin daemon: %s", client_id)
 
+        # Create client with PLAYER role only - daemon just plays audio
         self._client = SendspinClient(
             client_id=client_id,
             client_name=client_name,
-            roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
+            roles=[Roles.PLAYER],  # Only PLAYER role - no metadata, no controller
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
                 supported_formats=[
@@ -114,33 +97,29 @@ class SendspinDaemon:
             url = config.url
             if url is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
-                self._print_event("Searching for Sendspin server...")
                 try:
                     url = await self._discovery.wait_for_first_server()
                     logger.info("Discovered Sendspin server at %s", url)
-                    self._print_event(f"Found server at {url}")
                 except asyncio.CancelledError:
-                    # When KeyboardInterrupt occurs during discovery
                     return 1
                 except Exception:
                     logger.exception("Failed to discover server")
                     return 1
 
-            # Log audio device being used
             logger.info(
                 "Using audio device %d: %s",
                 config.audio_device.index,
                 config.audio_device.name,
             )
-            self._print_event(f"Using audio device: {config.audio_device.name}")
 
             listeners = ClientListenerManager()
 
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
             self._audio_handler.attach_client(self._client, listeners)
 
-            self._setup_listeners(listeners)
+            # No listeners needed - daemon just plays audio, doesn't track state
             listeners.attach(self._client)
+
             loop = asyncio.get_running_loop()
 
             # Wait forever task for daemon mode - just wait for cancellation
@@ -148,68 +127,39 @@ class SendspinDaemon:
                 await asyncio.Event().wait()
 
             daemon_task = create_task(wait_forever())
-            connection_manager = ConnectionManager(self._discovery, daemon_task)
 
             def signal_handler() -> None:
                 logger.debug("Received interrupt signal, shutting down...")
                 daemon_task.cancel()
 
-            # Signal handlers aren't supported on this platform (e.g., Windows)
+            # Register signal handlers
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(signal.SIGINT, signal_handler)
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-            # Run connection loop with auto-reconnect
-            await connection_loop(
-                self._client,
-                self._discovery,
-                self._audio_handler,
-                url,
-                daemon_task,
-                self._print_event,
-                connection_manager,
-                ui=None,  # No UI in daemon mode
-            )
-        except asyncio.CancelledError:
-            logger.debug("Connection loop cancelled")
+            # Simple connection loop - just connect and wait
+            try:
+                logger.info("Connecting to %s", url)
+                await self._client.connect(url)
+                logger.info("Connected successfully")
+
+                # Wait for shutdown signal
+                await daemon_task
+            except asyncio.CancelledError:
+                logger.debug("Daemon shutdown requested")
+            except Exception:
+                logger.exception("Error during daemon operation")
+            finally:
+                # Remove signal handlers
+                with contextlib.suppress(NotImplementedError):
+                    loop.remove_signal_handler(signal.SIGINT)
+                    loop.remove_signal_handler(signal.SIGTERM)
+                await self._audio_handler.cleanup()
+                await self._client.disconnect()
+                logger.info("Daemon stopped")
+
         finally:
-            # Remove signal handlers
-            with contextlib.suppress(NotImplementedError):
-                loop.remove_signal_handler(signal.SIGINT)
-                loop.remove_signal_handler(signal.SIGTERM)
-            await self._audio_handler.cleanup()
-            await self._client.disconnect()
+            # Stop discovery
             await self._discovery.stop()
 
         return 0
-
-    def _setup_listeners(self, listeners: ClientListenerManager) -> None:
-        """Set up client event listeners."""
-        from sendspin.tui.app import (
-            _handle_group_update,
-            _handle_metadata_update,
-            _handle_server_command,
-            _handle_server_state,
-        )
-
-        assert self._client is not None
-        client = self._client
-        loop = asyncio.get_running_loop()
-
-        # Reuse the same listener handlers from app.py, but pass ui=None
-        listeners.add_metadata_listener(
-            lambda payload: _handle_metadata_update(
-                self._state, None, self._print_event, payload
-            )
-        )
-        listeners.add_group_update_listener(
-            lambda payload: _handle_group_update(self._state, None, self._print_event, payload)
-        )
-        listeners.add_controller_state_listener(
-            lambda payload: _handle_server_state(self._state, None, self._print_event, payload)
-        )
-        listeners.add_server_command_listener(
-            lambda payload: _handle_server_command(
-                self._state, client, None, self._print_event, payload, loop
-            )
-        )
