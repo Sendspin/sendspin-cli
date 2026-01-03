@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import sys
 from collections.abc import Coroutine
 from typing import TypeVar
