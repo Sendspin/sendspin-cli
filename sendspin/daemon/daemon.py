@@ -8,7 +8,9 @@ import logging
 import signal
 import socket
 from dataclasses import dataclass
+from functools import partial
 
+from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
@@ -42,6 +44,7 @@ class SendspinDaemon:
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._discovery: ServiceDiscovery | None = None
+        self._shutdown_event: asyncio.Event | None = None
 
     async def run(self) -> int:
         """Run the daemon."""
@@ -115,33 +118,20 @@ class SendspinDaemon:
 
             loop = asyncio.get_running_loop()
 
-            # Wait forever task for daemon mode - just wait for cancellation
-            async def wait_forever() -> None:
-                await asyncio.Event().wait()
-
-            daemon_task = create_task(wait_forever())
+            self._shutdown_event = asyncio.Event()
 
             def signal_handler() -> None:
                 logger.debug("Received interrupt signal, shutting down...")
-                daemon_task.cancel()
+                if self._shutdown_event is not None:
+                    self._shutdown_event.set()
 
             # Register signal handlers
             with contextlib.suppress(NotImplementedError):
                 loop.add_signal_handler(signal.SIGINT, signal_handler)
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-            # Simple connection loop - just connect and wait
             try:
-                logger.info("Connecting to %s", url)
-                await self._client.connect(url)
-                logger.info("Connected successfully")
-
-                # Wait for shutdown signal
-                await daemon_task
-            except asyncio.CancelledError:
-                logger.debug("Daemon shutdown requested")
-            except Exception:
-                logger.exception("Error during daemon operation")
+                await self._connection_loop(url)
             finally:
                 # Remove signal handlers
                 with contextlib.suppress(NotImplementedError):
@@ -156,3 +146,99 @@ class SendspinDaemon:
             await self._discovery.stop()
 
         return 0
+
+    async def _connection_loop(self, initial_url: str) -> None:
+        """Run the connection loop with automatic reconnection."""
+        assert self._client is not None
+        assert self._discovery is not None
+        assert self._audio_handler is not None
+        assert self._shutdown_event is not None
+
+        url = initial_url
+        error_backoff = 1.0
+        max_backoff = 300.0
+
+        while not self._shutdown_event.is_set():
+            try:
+                logger.info("Connecting to %s", url)
+                await self._client.connect(url)
+                logger.info("Connected to %s", url)
+                error_backoff = 1.0
+
+                # Wait for disconnect or shutdown
+                disconnect_event = asyncio.Event()
+                self._client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
+
+                shutdown_task = create_task(self._shutdown_event.wait())
+                disconnect_task = create_task(disconnect_event.wait())
+
+                done, pending = await asyncio.wait(
+                    {shutdown_task, disconnect_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+
+                for task in pending:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+
+                self._client.set_disconnect_listener(None)
+
+                if shutdown_task in done:
+                    break
+
+                # Connection dropped
+                logger.info("Disconnected from server")
+                await self._audio_handler.cleanup()
+
+                # Try to get new URL from discovery, or use last known URL
+                new_url = self._discovery.current_url()
+                if new_url:
+                    url = new_url
+
+                # Wait for server to reappear if discovery shows nothing
+                if not self._discovery.current_url():
+                    logger.info("Server offline, waiting for rediscovery...")
+                    while not self._shutdown_event.is_set():
+                        new_url = self._discovery.current_url()
+                        if new_url:
+                            url = new_url
+                            break
+                        await asyncio.sleep(1.0)
+
+                if self._shutdown_event.is_set():
+                    break
+
+                logger.info("Reconnecting to %s", url)
+
+            except (TimeoutError, OSError, ClientError) as e:
+                logger.warning(
+                    "Connection error (%s), retrying in %.0fs",
+                    type(e).__name__,
+                    error_backoff,
+                )
+
+                # Interruptible sleep
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=error_backoff)
+                    break  # Shutdown requested
+                except TimeoutError:
+                    pass  # Sleep completed, continue loop
+
+                # Check if URL changed while sleeping
+                new_url = self._discovery.current_url()
+                if new_url and new_url != url:
+                    logger.info("Server URL changed to %s", new_url)
+                    url = new_url
+                    error_backoff = 1.0
+                else:
+                    error_backoff = min(error_backoff * 2, max_backoff)
+
+            except Exception:
+                logger.exception("Unexpected error during connection")
+                try:
+                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=error_backoff)
+                    break
+                except TimeoutError:
+                    pass
+                error_backoff = min(error_backoff * 2, max_backoff)
