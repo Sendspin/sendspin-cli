@@ -31,24 +31,22 @@ class CommandHandler:
         client: SendspinClient,
         state: AppState,
         audio_handler: AudioStreamHandler,
-        ui: SendspinUI | None = None,
-        print_event: Callable[[str], None] | None = None,
-        get_servers: Callable[[], list[tuple[str, str, str, int]]] | None = None,
-        on_server_selected: Callable[[str], Awaitable[None]] | None = None,
+        ui: SendspinUI,
+        get_servers: Callable[[], list[tuple[str, str, str, int]]],
+        on_server_selected: Callable[[str], Awaitable[None]],
     ) -> None:
         """Initialize the command handler."""
         self._client = client
         self._state = state
         self._audio_handler = audio_handler
         self._ui = ui
-        self._print_event = print_event or (lambda _: None)
         self._get_servers = get_servers
         self._on_server_selected = on_server_selected
 
     async def send_media_command(self, command: MediaCommand) -> None:
         """Send a media command with validation."""
         if command not in self._state.supported_commands:
-            self._print_event(f"Server does not support {command.value}")
+            self._ui.add_event(f"Server does not support {command.value}")
             return
         await self._client.send_group_command(command)
 
@@ -68,14 +66,13 @@ class CommandHandler:
             self._audio_handler.audio_player.set_volume(
                 self._state.player_volume, muted=self._state.player_muted
             )
-        if self._ui is not None:
-            self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
+        self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
             volume=self._state.player_volume,
             muted=self._state.player_muted,
         )
-        self._print_event(f"Player volume: {target}%")
+        self._ui.add_event(f"Player volume: {target}%")
 
     async def toggle_player_mute(self) -> None:
         """Toggle player (local) mute state."""
@@ -85,25 +82,21 @@ class CommandHandler:
             self._audio_handler.audio_player.set_volume(
                 self._state.player_volume, muted=self._state.player_muted
             )
-        if self._ui is not None:
-            self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
+        self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
             volume=self._state.player_volume,
             muted=self._state.player_muted,
         )
-        self._print_event("Player muted" if self._state.player_muted else "Player unmuted")
+        self._ui.add_event("Player muted" if self._state.player_muted else "Player unmuted")
 
     async def adjust_delay(self, delta: float) -> None:
         """Adjust static delay by delta milliseconds."""
         self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
-        if self._ui is not None:
-            self._ui.set_delay(self._client.static_delay_ms)
+        self._ui.set_delay(self._client.static_delay_ms)
 
     def open_server_selector(self) -> None:
         """Open the server selector panel."""
-        if self._ui is None or self._get_servers is None:
-            return
         server_tuples = self._get_servers()
         servers = [
             DiscoveredServerInfo(name=name, url=url, host=host, port=port)
@@ -113,13 +106,10 @@ class CommandHandler:
 
     def close_server_selector(self) -> None:
         """Close the server selector panel."""
-        if self._ui is not None:
-            self._ui.hide_server_selector()
+        self._ui.hide_server_selector()
 
     async def select_server(self) -> None:
         """Select the highlighted server and connect to it."""
-        if self._ui is None or self._on_server_selected is None:
-            return
         server = self._ui.get_selected_server()
         if server is not None:
             self._ui.hide_server_selector()
@@ -132,10 +122,9 @@ async def keyboard_loop(
     client: SendspinClient,
     state: AppState,
     audio_handler: AudioStreamHandler,
-    ui: SendspinUI | None = None,
-    print_event: Callable[[str], None] | None = None,
-    get_servers: Callable[[], list[tuple[str, str, str, int]]] | None = None,
-    on_server_selected: Callable[[str], Awaitable[None]] | None = None,
+    ui: SendspinUI,
+    get_servers: Callable[[], list[tuple[str, str, str, int]]],
+    on_server_selected: Callable[[str], Awaitable[None]],
 ) -> None:
     """Run the keyboard input loop.
 
@@ -143,14 +132,11 @@ async def keyboard_loop(
         client: Sendspin client instance.
         state: Application state.
         audio_handler: Audio stream handler.
-        ui: Optional UI instance.
-        print_event: Function to print events.
+        ui: UI instance.
         get_servers: Function that returns list of (name, url, host, port) tuples.
         on_server_selected: Async callback when a server is selected (receives URL).
     """
-    handler = CommandHandler(
-        client, state, audio_handler, ui, print_event, get_servers, on_server_selected
-    )
+    handler = CommandHandler(client, state, audio_handler, ui, get_servers, on_server_selected)
 
     # Key dispatch table: key -> (highlight_name | None, async action)
     # For keys that need case-insensitive matching, use lowercase

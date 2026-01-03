@@ -10,12 +10,8 @@ import socket
 from dataclasses import dataclass
 
 from aiosendspin.client import SendspinClient
-from aiosendspin.models.player import (
-    ClientHelloPlayerSupport,
-    PlayerCommand,
-    SupportedAudioFormat,
-)
-from aiosendspin.models.types import AudioCodec, Roles
+from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
+from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler

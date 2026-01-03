@@ -8,7 +8,6 @@ import logging
 import signal
 import socket
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING
@@ -191,21 +190,21 @@ class ConnectionManager:
         """Increase the backoff duration for the next retry."""
         self._error_backoff = min(self._error_backoff * 2, self._max_backoff)
 
-    async def handle_error_backoff(self, print_event: Callable[[str], None]) -> bool:
+    async def handle_error_backoff(self, ui: SendspinUI) -> bool:
         """Sleep for error backoff with keyboard interrupt support.
 
         Returns True if interrupted by keyboard, False if completed normally.
         """
-        print_event(f"Connection error, retrying in {self._error_backoff:.0f}s...")
+        ui.add_event(f"Connection error, retrying in {self._error_backoff:.0f}s...")
         return await self.sleep_interruptible(self._error_backoff)
 
-    async def wait_for_server_reappear(self, print_event: Callable[[str], None]) -> str | None:
+    async def wait_for_server_reappear(self, ui: SendspinUI) -> str | None:
         """Wait for server to reappear on the network.
 
         Returns the new URL if server reappears, None if interrupted.
         """
         logger.info("Server offline, waiting for rediscovery...")
-        print_event("Waiting for server...")
+        ui.add_event("Waiting for server...")
 
         # Poll for discovery or keyboard exit
         while not self._keyboard_task.done():
@@ -223,9 +222,8 @@ async def connection_loop(  # noqa: PLR0915
     audio_handler: AudioStreamHandler,
     initial_url: str,
     keyboard_task: asyncio.Task[None],
-    print_event: Callable[[str], None],
     connection_manager: ConnectionManager,
-    ui: SendspinUI | None = None,
+    ui: SendspinUI,
 ) -> None:
     """
     Run the connection loop with automatic reconnection on disconnect.
@@ -240,9 +238,8 @@ async def connection_loop(  # noqa: PLR0915
         audio_handler: Audio stream handler.
         initial_url: Initial server URL.
         keyboard_task: Keyboard input task to monitor.
-        print_event: Function to print events.
         connection_manager: Connection manager for reconnection logic.
-        ui: Optional UI instance.
+        ui: UI instance.
     """
     manager = connection_manager
     url = initial_url
@@ -252,9 +249,8 @@ async def connection_loop(  # noqa: PLR0915
         try:
             await client.connect(url)
             logger.info("Connected to %s", url)
-            print_event(f"Connected to {url}")
-            if ui is not None:
-                ui.set_connected(url)
+            ui.add_event(f"Connected to {url}")
+            ui.set_connected(url)
             manager.reset_backoff()
             manager.set_last_attempted_url(url)
 
@@ -272,9 +268,8 @@ async def connection_loop(  # noqa: PLR0915
 
             # Connection dropped
             logger.info("Connection lost")
-            print_event("Connection lost")
-            if ui is not None:
-                ui.set_disconnected("Connection lost")
+            ui.add_event("Connection lost")
+            ui.set_disconnected("Connection lost")
 
             # Clean up audio state
             await audio_handler.cleanup()
@@ -284,9 +279,8 @@ async def connection_loop(  # noqa: PLR0915
             if pending_url:
                 url = pending_url
                 manager.reset_backoff()
-                print_event(f"Switching to {url}...")
-                if ui is not None:
-                    ui.set_disconnected(f"Switching to {url}...")
+                ui.add_event(f"Switching to {url}...")
+                ui.set_disconnected(f"Switching to {url}...")
                 continue
 
             # Update URL from discovery
@@ -294,18 +288,16 @@ async def connection_loop(  # noqa: PLR0915
 
             # Wait for server to reappear if it's gone
             if not new_url:
-                if ui is not None:
-                    ui.set_disconnected("Waiting for server...")
-                new_url = await manager.wait_for_server_reappear(print_event)
+                ui.set_disconnected("Waiting for server...")
+                new_url = await manager.wait_for_server_reappear(ui)
                 if keyboard_task.done():
                     break
 
             # Use the discovered URL
             if new_url:
                 url = new_url
-            print_event(f"Reconnecting to {url}...")
-            if ui is not None:
-                ui.set_disconnected(f"Reconnecting to {url}...")
+            ui.add_event(f"Reconnecting to {url}...")
+            ui.set_disconnected(f"Reconnecting to {url}...")
 
         except (TimeoutError, OSError, ClientError) as e:
             # Network-related errors - log cleanly
@@ -315,7 +307,7 @@ async def connection_loop(  # noqa: PLR0915
                 manager.get_error_backoff(),
             )
 
-            if await manager.handle_error_backoff(print_event):
+            if await manager.handle_error_backoff(ui):
                 break
 
             # Check if URL changed while sleeping
@@ -326,7 +318,7 @@ async def connection_loop(  # noqa: PLR0915
         except Exception:
             # Unexpected errors - log with full traceback
             logger.exception("Unexpected error during connection")
-            print_event("Unexpected error occurred")
+            ui.add_event("Unexpected error occurred")
             await asyncio.sleep(manager.get_error_backoff())
             manager.increase_backoff()
 
@@ -348,28 +340,40 @@ class SendspinApp:
     def __init__(self, config: AppConfig) -> None:
         """Initialize the application."""
         self._config = config
-        self._ui: SendspinUI | None = None
+        self._ui: SendspinUI
         self._state = AppState()
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._discovery: ServiceDiscovery | None = None
 
-    def _print_event(self, message: str) -> None:
-        """Print an event message."""
-        if self._ui is not None:
-            self._ui.add_event(message)
-        else:
-            print(message, flush=True)  # noqa: T201
-
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
         config = self._config
 
+        # TUI requires an interactive terminal
+        if not sys.stdin.isatty():
+            print(  # noqa: T201
+                "Error: TUI mode requires an interactive terminal.\n"
+                "Use 'sendspin daemon' for non-interactive/background operation."
+            )
+            return 1
+
         # In interactive mode with UI, suppress logs to avoid interfering with display
         # Only show WARNING and above unless explicitly set to DEBUG
-        if sys.stdin.isatty() and logging.getLogger().level != logging.DEBUG:
+        if logging.getLogger().level != logging.DEBUG:
             logging.getLogger().setLevel(logging.WARNING)
 
+        # Create and start UI early so add_event works
+        self._ui = SendspinUI()
+        self._ui.start()
+
+        try:
+            return await self._run_with_ui(config)
+        finally:
+            self._ui.stop()
+
+    async def _run_with_ui(self, config: AppConfig) -> int:
+        """Run the application with UI already started."""
         # Get hostname for defaults if needed
         client_id = config.client_id
         client_name = config.client_name
@@ -384,7 +388,7 @@ class SendspinApp:
             if client_name is None:
                 client_name = hostname
 
-        self._print_event(f"Using client ID: {client_id}")
+        self._ui.add_event(f"Using client ID: {client_id}")
 
         self._client = SendspinClient(
             client_id=client_id,
@@ -415,11 +419,11 @@ class SendspinApp:
             url = config.url
             if url is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
-                self._print_event("Searching for Sendspin server...")
+                self._ui.add_event("Searching for Sendspin server...")
                 try:
                     url = await self._discovery.wait_for_first_server()
                     logger.info("Discovered Sendspin server at %s", url)
-                    self._print_event(f"Found server at {url}")
+                    self._ui.add_event(f"Found server at {url}")
                 except asyncio.CancelledError:
                     # When KeyboardInterrupt occurs during discovery
                     return 1
@@ -433,18 +437,15 @@ class SendspinApp:
                 config.audio_device.index,
                 config.audio_device.name,
             )
-            self._print_event(f"Using audio device: {config.audio_device.name}")
+            self._ui.add_event(f"Using audio device: {config.audio_device.name}")
 
             listeners = ClientListenerManager()
 
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
             self._audio_handler.attach_client(self._client, listeners)
 
-            # Create UI for interactive mode
-            if sys.stdin.isatty():
-                self._ui = SendspinUI()
-                self._ui.start()
-                self._ui.set_delay(self._client.static_delay_ms)
+            # Set delay now that client is created
+            self._ui.set_delay(self._client.static_delay_ms)
 
             self._setup_listeners(listeners)
             listeners.attach(self._client)
@@ -474,7 +475,6 @@ class SendspinApp:
                     self._state,
                     self._audio_handler,
                     self._ui,
-                    self._print_event,
                     get_servers,
                     on_server_selected,
                 )
@@ -498,7 +498,6 @@ class SendspinApp:
                 self._audio_handler,
                 url,
                 keyboard_task,
-                self._print_event,
                 connection_manager,
                 self._ui,
             )
@@ -509,13 +508,10 @@ class SendspinApp:
             with contextlib.suppress(NotImplementedError):
                 loop.remove_signal_handler(signal.SIGINT)
                 loop.remove_signal_handler(signal.SIGTERM)
-            await self._audio_handler.cleanup()
+            if self._audio_handler is not None:
+                await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
-
-            # Stop UI
-            if self._ui is not None:
-                self._ui.stop()
 
             # Show hint if delay was changed during session
             current_delay = self._client.static_delay_ms
@@ -534,45 +530,38 @@ class SendspinApp:
         loop = asyncio.get_running_loop()
 
         listeners.add_metadata_listener(
-            lambda payload: _handle_metadata_update(
-                self._state, self._ui, self._print_event, payload
-            )
+            lambda payload: _handle_metadata_update(self._state, self._ui, payload)
         )
         listeners.add_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_group_update(self._state, self._ui, payload)
         )
         listeners.add_controller_state_listener(
-            lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
+            lambda payload: _handle_server_state(self._state, self._ui, payload)
         )
         listeners.add_server_command_listener(
-            lambda payload: _handle_server_command(
-                self._state, client, self._ui, self._print_event, payload, loop
-            )
+            lambda payload: _handle_server_command(self._state, client, self._ui, payload, loop)
         )
 
 
 def _handle_metadata_update(
     state: AppState,
-    ui: SendspinUI | None,
-    print_event: Callable[[str], None],
+    ui: SendspinUI,
     payload: ServerStatePayload,
 ) -> None:
     """Handle server/state messages with metadata."""
     if payload.metadata is not None and state.update_metadata(payload.metadata):
-        if ui is not None:
-            ui.set_metadata(
-                title=state.title,
-                artist=state.artist,
-                album=state.album,
-            )
-            ui.set_progress(state.track_progress, state.track_duration)
-        print_event(state.describe())
+        ui.set_metadata(
+            title=state.title,
+            artist=state.artist,
+            album=state.album,
+        )
+        ui.set_progress(state.track_progress, state.track_duration)
+        ui.add_event(state.describe())
 
 
 def _handle_group_update(
     state: AppState,
-    ui: SendspinUI | None,
-    print_event: Callable[[str], None],
+    ui: SendspinUI,
     payload: GroupUpdateServerPayload,
 ) -> None:
     """Handle group update messages."""
@@ -585,26 +574,22 @@ def _handle_group_update(
         state.album = None
         state.track_progress = None
         state.track_duration = None
-        if ui is not None:
-            ui.set_metadata(title=None, artist=None, album=None)
-            ui.clear_progress()
-        print_event(f"Group ID: {payload.group_id}")
+        ui.set_metadata(title=None, artist=None, album=None)
+        ui.clear_progress()
+        ui.add_event(f"Group ID: {payload.group_id}")
 
     if payload.group_name:
-        print_event(f"Group name: {payload.group_name}")
-    if ui is not None:
-        ui.set_group_name(payload.group_name)
+        ui.add_event(f"Group name: {payload.group_name}")
+    ui.set_group_name(payload.group_name)
     if payload.playback_state:
         state.playback_state = payload.playback_state
-        if ui is not None:
-            ui.set_playback_state(payload.playback_state)
-        print_event(f"Playback state: {payload.playback_state.value}")
+        ui.set_playback_state(payload.playback_state)
+        ui.add_event(f"Playback state: {payload.playback_state.value}")
 
 
 def _handle_server_state(
     state: AppState,
-    ui: SendspinUI | None,
-    print_event: Callable[[str], None],
+    ui: SendspinUI,
     payload: ServerStatePayload,
 ) -> None:
     """Handle server/state messages with controller state."""
@@ -617,20 +602,19 @@ def _handle_server_state(
 
         if volume_changed:
             state.volume = controller.volume
-            print_event(f"Volume: {controller.volume}%")
+            ui.add_event(f"Volume: {controller.volume}%")
         if mute_changed:
             state.muted = controller.muted
-            print_event("Muted" if controller.muted else "Unmuted")
+            ui.add_event("Muted" if controller.muted else "Unmuted")
 
-        if ui is not None and (volume_changed or mute_changed):
+        if volume_changed or mute_changed:
             ui.set_volume(state.volume, muted=state.muted)
 
 
 def _handle_server_command(
     state: AppState,
     client: SendspinClient,
-    ui: SendspinUI | None,
-    print_event: Callable[[str], None],
+    ui: SendspinUI,
     payload: ServerCommandPayload,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
@@ -642,14 +626,12 @@ def _handle_server_command(
 
     if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
         state.player_volume = player_cmd.volume
-        if ui is not None:
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
-        print_event(f"Server set player volume: {player_cmd.volume}%")
+        ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        ui.add_event(f"Server set player volume: {player_cmd.volume}%")
     elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
         state.player_muted = player_cmd.mute
-        if ui is not None:
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
-        print_event("Server muted player" if player_cmd.mute else "Server unmuted player")
+        ui.set_player_volume(state.player_volume, muted=state.player_muted)
+        ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
     # Send state update back to server per spec
     create_task(
@@ -657,5 +639,6 @@ def _handle_server_command(
             state=PlayerStateType.SYNCHRONIZED,
             volume=state.player_volume,
             muted=state.player_muted,
-        )
+        ),
+        loop=loop,
     )
