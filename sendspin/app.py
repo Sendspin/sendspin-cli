@@ -500,73 +500,69 @@ class SendspinApp:
             listeners.attach(self._client)
             loop = asyncio.get_running_loop()
 
-            try:
-                # Audio player will be created when first audio chunk arrives
+            # Forward declaration for on_server_selected closure
+            connection_manager: ConnectionManager | None = None
 
-                # Forward declaration for on_server_selected closure
-                connection_manager: ConnectionManager | None = None
+            def get_servers() -> list[tuple[str, str, str, int]]:
+                """Get available servers from discovery."""
+                if self._discovery is None:
+                    return []
+                return [(s.name, s.url, s.host, s.port) for s in self._discovery.get_servers()]
 
-                def get_servers() -> list[tuple[str, str, str, int]]:
-                    """Get available servers from discovery."""
-                    if self._discovery is None:
-                        return []
-                    return [(s.name, s.url, s.host, s.port) for s in self._discovery.get_servers()]
+            async def on_server_selected(new_url: str) -> None:
+                """Handle server selection by triggering reconnect."""
+                if connection_manager is None or self._client is None:
+                    return
+                connection_manager.set_pending_url(new_url)
+                # Force disconnect to trigger reconnect with new URL
+                await self._client.disconnect()
 
-                async def on_server_selected(new_url: str) -> None:
-                    """Handle server selection by triggering reconnect."""
-                    if connection_manager is None or self._client is None:
-                        return
-                    connection_manager.set_pending_url(new_url)
-                    # Force disconnect to trigger reconnect with new URL
-                    await self._client.disconnect()
-
-                # Start keyboard loop for interactive control
-                keyboard_task = create_task(
-                    keyboard_loop(
-                        self._client,
-                        self._state,
-                        self._audio_handler,
-                        self._ui,
-                        self._print_event,
-                        get_servers,
-                        on_server_selected,
-                    )
+            # Start keyboard loop for interactive control
+            keyboard_task = create_task(
+                keyboard_loop(
+                    self._client,
+                    self._state,
+                    self._audio_handler,
+                    self._ui,
+                    self._print_event,
+                    get_servers,
+                    on_server_selected,
                 )
+            )
 
-                connection_manager = ConnectionManager(self._discovery, keyboard_task)
+            connection_manager = ConnectionManager(self._discovery, keyboard_task)
 
-                def signal_handler() -> None:
-                    logger.debug("Received interrupt signal, shutting down...")
-                    keyboard_task.cancel()
+            def signal_handler() -> None:
+                logger.debug("Received interrupt signal, shutting down...")
+                keyboard_task.cancel()
 
-                # Signal handlers aren't supported on this platform (e.g., Windows)
-                with contextlib.suppress(NotImplementedError):
-                    loop.add_signal_handler(signal.SIGINT, signal_handler)
-                    loop.add_signal_handler(signal.SIGTERM, signal_handler)
+            # Signal handlers aren't supported on this platform (e.g., Windows)
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(signal.SIGINT, signal_handler)
+                loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-                try:
-                    # Run connection loop with auto-reconnect
-                    await connection_loop(
-                        self._client,
-                        self._discovery,
-                        self._audio_handler,
-                        url,
-                        keyboard_task,
-                        self._print_event,
-                        connection_manager,
-                        self._ui,
-                    )
-                except asyncio.CancelledError:
-                    logger.debug("Connection loop cancelled")
-                finally:
-                    # Remove signal handlers
-                    # Signal handlers aren't supported on this platform (e.g., Windows)
-                    with contextlib.suppress(NotImplementedError):
-                        loop.remove_signal_handler(signal.SIGINT)
-                        loop.remove_signal_handler(signal.SIGTERM)
-                    await self._audio_handler.cleanup()
-                    await self._client.disconnect()
+            try:
+                # Run connection loop with auto-reconnect
+                await connection_loop(
+                    self._client,
+                    self._discovery,
+                    self._audio_handler,
+                    url,
+                    keyboard_task,
+                    self._print_event,
+                    connection_manager,
+                    self._ui,
+                )
+            except asyncio.CancelledError:
+                logger.debug("Connection loop cancelled")
             finally:
+                # Remove signal handlers
+                with contextlib.suppress(NotImplementedError):
+                    loop.remove_signal_handler(signal.SIGINT)
+                    loop.remove_signal_handler(signal.SIGTERM)
+                await self._audio_handler.cleanup()
+                await self._client.disconnect()
+
                 # Stop UI
                 if self._ui is not None:
                     self._ui.stop()

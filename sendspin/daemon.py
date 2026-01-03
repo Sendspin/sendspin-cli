@@ -143,48 +143,43 @@ class SendspinDaemon:
             listeners.attach(self._client)
             loop = asyncio.get_running_loop()
 
+            # Wait forever task for daemon mode - just wait for cancellation
+            async def wait_forever() -> None:
+                await asyncio.Event().wait()
+
+            daemon_task = create_task(wait_forever())
+            connection_manager = ConnectionManager(self._discovery, daemon_task)
+
+            def signal_handler() -> None:
+                logger.debug("Received interrupt signal, shutting down...")
+                daemon_task.cancel()
+
+            # Signal handlers aren't supported on this platform (e.g., Windows)
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(signal.SIGINT, signal_handler)
+                loop.add_signal_handler(signal.SIGTERM, signal_handler)
+
             try:
-                # Wait forever task for daemon mode - just wait for cancellation
-                async def wait_forever() -> None:
-                    await asyncio.Event().wait()
-
-                daemon_task = create_task(wait_forever())
-                connection_manager = ConnectionManager(self._discovery, daemon_task)
-
-                def signal_handler() -> None:
-                    logger.debug("Received interrupt signal, shutting down...")
-                    daemon_task.cancel()
-
-                # Signal handlers aren't supported on this platform (e.g., Windows)
-                with contextlib.suppress(NotImplementedError):
-                    loop.add_signal_handler(signal.SIGINT, signal_handler)
-                    loop.add_signal_handler(signal.SIGTERM, signal_handler)
-
-                try:
-                    # Run connection loop with auto-reconnect
-                    await connection_loop(
-                        self._client,
-                        self._discovery,
-                        self._audio_handler,
-                        url,
-                        daemon_task,
-                        self._print_event,
-                        connection_manager,
-                        ui=None,  # No UI in daemon mode
-                    )
-                except asyncio.CancelledError:
-                    logger.debug("Connection loop cancelled")
-                finally:
-                    # Remove signal handlers
-                    # Signal handlers aren't supported on this platform (e.g., Windows)
-                    with contextlib.suppress(NotImplementedError):
-                        loop.remove_signal_handler(signal.SIGINT)
-                        loop.remove_signal_handler(signal.SIGTERM)
-                    await self._audio_handler.cleanup()
-                    await self._client.disconnect()
-
+                # Run connection loop with auto-reconnect
+                await connection_loop(
+                    self._client,
+                    self._discovery,
+                    self._audio_handler,
+                    url,
+                    daemon_task,
+                    self._print_event,
+                    connection_manager,
+                    ui=None,  # No UI in daemon mode
+                )
+            except asyncio.CancelledError:
+                logger.debug("Connection loop cancelled")
             finally:
-                pass  # No additional cleanup needed for inner try block
+                # Remove signal handlers
+                with contextlib.suppress(NotImplementedError):
+                    loop.remove_signal_handler(signal.SIGINT)
+                    loop.remove_signal_handler(signal.SIGTERM)
+                await self._audio_handler.cleanup()
+                await self._client.disconnect()
 
         finally:
             # Stop discovery
