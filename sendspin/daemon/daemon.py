@@ -63,11 +63,10 @@ class SendspinDaemon:
 
         logger.info("Starting Sendspin daemon: %s", client_id)
 
-        # Create client with PLAYER role only - daemon just plays audio
         self._client = SendspinClient(
             client_id=client_id,
             client_name=client_name,
-            roles=[Roles.PLAYER],  # Only PLAYER role - no metadata, no controller
+            roles=[Roles.PLAYER],
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
                 supported_formats=[
