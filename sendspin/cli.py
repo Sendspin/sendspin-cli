@@ -92,7 +92,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     daemon_parser.add_argument(
         "--url",
         default=None,
-        help=("WebSocket URL of the Sendspin server. If omitted, discover via mDNS."),
+        help=(
+            "WebSocket URL of the Sendspin server to connect to. "
+            "If omitted, advertise via mDNS and wait for servers to connect."
+        ),
+    )
+    daemon_parser.add_argument(
+        "--port",
+        type=int,
+        default=8927,
+        help="Port to listen on in passive mode (default: 8927)",
     )
     daemon_parser.add_argument(
         "--name",
@@ -248,12 +257,16 @@ def _run_daemon_mode(args: argparse.Namespace) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
 
+    # Get port if available (daemon subcommand), otherwise use default
+    port = getattr(args, "port", 8927)
+
     daemon_config = DaemonConfig(
         audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
         client_id=args.id,
         client_name=args.name,
         static_delay_ms=args.static_delay_ms,
+        port=port,
     )
 
     daemon = SendspinDaemon(daemon_config)

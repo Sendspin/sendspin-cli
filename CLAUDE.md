@@ -16,17 +16,17 @@ Sendspin CLI is a synchronized audio player client for the [Sendspin Protocol](h
               │   tui/   │                    │ daemon/  │
               └──────────┘                    └──────────┘
                     │                               │
-        ┌───────────┼───────────┐                   │
-        │           │           │                   │
-        ▼           ▼           ▼                   ▼
-┌────────────┐ ┌─────────┐ ┌─────────┐      ┌─────────────┐
-│ keyboard   │ │   ui    │ │   app   │      │   daemon    │
-│            │ │         │ │         │      │             │
-│ - Keys     │ │ - TUI   │ │ - State │      │ - Headless  │
-│ - Commands │ │ - Panel │ │ - Tasks │      │ - Signals   │
-└────────────┘ └─────────┘ └─────────┘      └─────────────┘
-        │           │           │                   │
-        └───────────┼───────────┴───────────────────┘
+        ┌───────────┼───────────┐       ┌───────────┼───────────┐
+        │           │           │       │           │           │
+        ▼           ▼           ▼       ▼           ▼           ▼
+┌────────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────┐
+│ keyboard   │ │   ui    │ │   app   │ │  daemon  │ │advertise-│ │passive_client│
+│            │ │         │ │         │ │          │ │  ment    │ │   /server    │
+│ - Keys     │ │ - TUI   │ │ - State │ │ - Active │ │          │ │              │
+│ - Commands │ │ - Panel │ │ - Tasks │ │ - Passive│ │ - mDNS   │ │ - WebSocket  │
+└────────────┘ └─────────┘ └─────────┘ └──────────┘ └──────────┘ └──────────────┘
+        │           │           │             │           │           │
+        └───────────┼───────────┴─────────────┴───────────┴───────────┘
                     │
         ┌───────────┼───────────────────┐
         │           │                   │
@@ -82,16 +82,33 @@ Rich-based terminal UI for visual feedback. Responsibilities:
 - **State management**: `UIState` dataclass for all display state
 
 ### `sendspin/daemon/` (Daemon Mode Package)
-Headless operation mode for background services.
+Headless operation mode for background services and always-on audio endpoints.
 
 #### `sendspin/daemon/daemon.py`
 Daemon mode for headless operation (via `sendspin daemon` or deprecated `--headless`). Responsibilities:
 - **Headless operation**: Runs without UI or keyboard input
-- **Service discovery**: Same mDNS discovery as TUI mode
-- **Connection management**: Reuses `ConnectionManager` from `tui/app.py`
+- **Active mode**: When `--url` specified, connects to a specific server (like TUI mode)
+- **Passive mode**: When no URL, advertises via mDNS and accepts incoming server connections
 - **Audio playback**: Same synchronized audio playback
-- **Event logging**: Prints events to stdout instead of UI
 - **Signal handling**: SIGINT/SIGTERM for graceful shutdown
+
+#### `sendspin/daemon/advertisement.py`
+mDNS service advertisement for passive mode. Responsibilities:
+- **Service registration**: Registers `_sendspin._tcp.local.` via zeroconf
+- **Port/path configuration**: Advertises listening port and WebSocket path
+- **Lifecycle management**: Start/stop service advertisement
+
+#### `sendspin/daemon/server.py`
+WebSocket server for accepting incoming connections. Responsibilities:
+- **HTTP server**: aiohttp web application listening on configured port
+- **WebSocket endpoint**: Accepts connections at `/sendspin` path
+- **Connection routing**: Invokes callback when servers connect
+
+#### `sendspin/daemon/passive_client.py`
+Sendspin client for passive/server-initiated connections. Responsibilities:
+- **Accept connections**: Handles incoming WebSocket from servers
+- **Protocol handling**: Runs client protocol (hello, time sync, audio) over incoming connection
+- **Subclass of SendspinClient**: Extends to accept rather than initiate connections
 
 ### `sendspin/audio.py`
 Time-synchronized audio playback engine. Responsibilities:
@@ -120,8 +137,9 @@ Package entry point, exports `main` from `cli.py`.
 ```bash
 uv run sendspin                                # TUI mode with auto-discovery
 uv run sendspin --url ws://host:port/sendspin  # TUI mode with direct connection
-uv run sendspin daemon                         # Daemon mode (headless) with auto-discovery
-uv run sendspin daemon --url ws://host:port/sendspin  # Daemon mode with direct connection
+uv run sendspin daemon                         # Daemon mode: advertise and wait for server connections
+uv run sendspin daemon --url ws://host:port/sendspin  # Daemon mode: connect to specific server
+uv run sendspin daemon --port 9000             # Daemon mode: use custom listening port
 ```
 
 ### Development commands

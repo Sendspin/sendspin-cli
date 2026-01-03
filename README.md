@@ -116,15 +116,27 @@ sendspin --static-delay-ms -100
 
 > **Note:** Based on limited testing, the delay value is typically a negative number (e.g., `-100` or `-150`) to compensate for audio hardware buffering.
 
-### Headless Mode
+### Daemon Mode
 
-To run the player without the interactive terminal UI (useful for background services or scripts):
+To run the player without the interactive terminal UI (useful for background services or headless devices):
 
 ```bash
-sendspin --headless
+sendspin daemon
 ```
 
-In headless mode, status messages are printed to stdout instead of the TUI.
+In daemon mode, the client advertises itself via mDNS and waits for Sendspin servers to connect to it. This is ideal for always-on audio endpoints like Raspberry Pi speakers.
+
+**Connect to a specific server instead:**
+```bash
+sendspin daemon --url ws://192.168.1.100:8080/sendspin
+```
+
+**Customize the listening port (default: 8927):**
+```bash
+sendspin daemon --port 9000
+```
+
+> **Note:** The `--headless` flag is deprecated. Use `sendspin daemon` instead.
 
 ### Debugging & Troubleshooting
 
