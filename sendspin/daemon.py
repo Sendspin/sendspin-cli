@@ -159,30 +159,26 @@ class SendspinDaemon:
                 loop.add_signal_handler(signal.SIGINT, signal_handler)
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-            try:
-                # Run connection loop with auto-reconnect
-                await connection_loop(
-                    self._client,
-                    self._discovery,
-                    self._audio_handler,
-                    url,
-                    daemon_task,
-                    self._print_event,
-                    connection_manager,
-                    ui=None,  # No UI in daemon mode
-                )
-            except asyncio.CancelledError:
-                logger.debug("Connection loop cancelled")
-            finally:
-                # Remove signal handlers
-                with contextlib.suppress(NotImplementedError):
-                    loop.remove_signal_handler(signal.SIGINT)
-                    loop.remove_signal_handler(signal.SIGTERM)
-                await self._audio_handler.cleanup()
-                await self._client.disconnect()
-
+            # Run connection loop with auto-reconnect
+            await connection_loop(
+                self._client,
+                self._discovery,
+                self._audio_handler,
+                url,
+                daemon_task,
+                self._print_event,
+                connection_manager,
+                ui=None,  # No UI in daemon mode
+            )
+        except asyncio.CancelledError:
+            logger.debug("Connection loop cancelled")
         finally:
-            # Stop discovery
+            # Remove signal handlers
+            with contextlib.suppress(NotImplementedError):
+                loop.remove_signal_handler(signal.SIGINT)
+                loop.remove_signal_handler(signal.SIGTERM)
+            await self._audio_handler.cleanup()
+            await self._client.disconnect()
             await self._discovery.stop()
 
         return 0

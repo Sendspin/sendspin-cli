@@ -541,43 +541,39 @@ class SendspinApp:
                 loop.add_signal_handler(signal.SIGINT, signal_handler)
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-            try:
-                # Run connection loop with auto-reconnect
-                await connection_loop(
-                    self._client,
-                    self._discovery,
-                    self._audio_handler,
-                    url,
-                    keyboard_task,
-                    self._print_event,
-                    connection_manager,
-                    self._ui,
-                )
-            except asyncio.CancelledError:
-                logger.debug("Connection loop cancelled")
-            finally:
-                # Remove signal handlers
-                with contextlib.suppress(NotImplementedError):
-                    loop.remove_signal_handler(signal.SIGINT)
-                    loop.remove_signal_handler(signal.SIGTERM)
-                await self._audio_handler.cleanup()
-                await self._client.disconnect()
-
-                # Stop UI
-                if self._ui is not None:
-                    self._ui.stop()
-
-                # Show hint if delay was changed during session
-                current_delay = self._client.static_delay_ms
-                if current_delay != config.static_delay_ms:
-                    print(  # noqa: T201
-                        f"\nDelay changed to {current_delay:.0f}ms. "
-                        f"Use '--static-delay-ms {current_delay:.0f}' next time to persist."
-                    )
-
+            # Run connection loop with auto-reconnect
+            await connection_loop(
+                self._client,
+                self._discovery,
+                self._audio_handler,
+                url,
+                keyboard_task,
+                self._print_event,
+                connection_manager,
+                self._ui,
+            )
+        except asyncio.CancelledError:
+            logger.debug("Connection loop cancelled")
         finally:
-            # Stop discovery
+            # Remove signal handlers
+            with contextlib.suppress(NotImplementedError):
+                loop.remove_signal_handler(signal.SIGINT)
+                loop.remove_signal_handler(signal.SIGTERM)
+            await self._audio_handler.cleanup()
+            await self._client.disconnect()
             await self._discovery.stop()
+
+            # Stop UI
+            if self._ui is not None:
+                self._ui.stop()
+
+            # Show hint if delay was changed during session
+            current_delay = self._client.static_delay_ms
+            if current_delay != config.static_delay_ms:
+                print(  # noqa: T201
+                    f"\nDelay changed to {current_delay:.0f}ms. "
+                    f"Use '--static-delay-ms {current_delay:.0f}' next time to persist."
+                )
 
         return 0
 
