@@ -6,6 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from zeroconf import ServiceListener
@@ -25,6 +26,22 @@ class DiscoveredServer:
     url: str
     host: str
     port: int
+
+    @classmethod
+    def from_url(cls, name: str, url: str) -> DiscoveredServer:
+        """Create a discovered server."""
+        parts = urlparse(url)
+        if parts.hostname is None:
+            raise ValueError("URL contains no hostname")
+        port = parts.port
+        if port is None:
+            port = 443 if parts.scheme in ("wss", "https") else 80
+        return cls(
+            name=name,
+            url=url,
+            host=parts.hostname,
+            port=port,
+        )
 
 
 SERVICE_TYPE = "_sendspin-server._tcp.local."
@@ -48,24 +65,19 @@ class _ServiceDiscoveryListener:
 
     def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
-        self._current_url: str | None = None
-        self._first_result: asyncio.Future[str] = loop.create_future()
+        self._next_result: asyncio.Future[DiscoveredServer] | None = None
         self._servers: dict[str, DiscoveredServer] = {}
-        self.tasks: set[asyncio.Task[None]] = set()
-
-    @property
-    def current_url(self) -> str | None:
-        """Get the current discovered server URL, or None if no servers."""
-        return self._current_url
 
     @property
     def servers(self) -> dict[str, DiscoveredServer]:
         """Get all discovered servers."""
         return self._servers
 
-    async def wait_for_first(self) -> str:
+    async def wait_for_next(self) -> DiscoveredServer:
         """Wait for the first server to be discovered."""
-        return await self._first_result
+        if self._next_result is None:
+            self._next_result = self._loop.create_future()
+        return await self._next_result
 
     async def _process_service_info(
         self, zeroconf: AsyncZeroconf, service_type: str, name: str
@@ -79,7 +91,6 @@ class _ServiceDiscoveryListener:
             return
         host = addresses[0]
         url = _build_service_url(host, info.port, info.properties)
-        self._current_url = url
 
         # Track this server
         self._servers[name] = DiscoveredServer(
@@ -90,27 +101,19 @@ class _ServiceDiscoveryListener:
         )
 
         # Signal first server discovery
-        if not self._first_result.done():
-            self._first_result.set_result(url)
-
-    def _schedule(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        task = create_task(
-            self._process_service_info(zeroconf, service_type, name), loop=self._loop
-        )
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
-        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+        if self._next_result and not self._next_result.done():
+            self._next_result.set_result(self._servers[name])
+            self._next_result = None
 
     def add_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        self._schedule(zeroconf, service_type, name)
+        create_task(self._process_service_info(zeroconf, service_type, name), loop=self._loop)
 
     def update_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
-        self._schedule(zeroconf, service_type, name)
+        create_task(self._process_service_info(zeroconf, service_type, name), loop=self._loop)
 
     def remove_service(self, _zeroconf: AsyncZeroconf, _service_type: str, name: str) -> None:
         """Handle service removal (server offline)."""
         self._servers.pop(name, None)
-        self._current_url = None
 
 
 class ServiceDiscovery:
@@ -137,15 +140,16 @@ class ServiceDiscovery:
             await self.stop()
             raise
 
-    async def wait_for_first_server(self) -> str:
-        """Wait indefinitely for the first server to be discovered."""
+    async def wait_for_server(self) -> DiscoveredServer:
+        """Wait indefinitely for a server to be discovered.
+
+        Will return directly if a server is currently known.
+        """
         if self._listener is None:
             raise RuntimeError("Discovery not started. Call start() first.")
-        return await self._listener.wait_for_first()
-
-    def current_url(self) -> str | None:
-        """Get the current discovered server URL, or None if no servers."""
-        return self._listener.current_url if self._listener else None
+        if servers := self.get_servers():
+            return servers[0]
+        return await self._listener.wait_for_next()
 
     def get_servers(self) -> list[DiscoveredServer]:
         """Get all discovered servers."""
