@@ -83,7 +83,6 @@ class SendspinDaemon:
             static_delay_ms=config.static_delay_ms,
         )
 
-        # Start service discovery
         self._discovery = ServiceDiscovery()
         await self._discovery.start()
 
@@ -112,7 +111,6 @@ class SendspinDaemon:
             self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
             self._audio_handler.attach_client(self._client, listeners)
 
-            # No listeners needed - daemon just plays audio, doesn't track state
             listeners.attach(self._client)
 
             loop = asyncio.get_running_loop()
