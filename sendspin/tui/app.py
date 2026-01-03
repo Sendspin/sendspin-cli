@@ -46,8 +46,8 @@ from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
-from sendspin.keyboard import keyboard_loop
-from sendspin.ui import SendspinUI
+from sendspin.tui.keyboard import keyboard_loop
+from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task
 
 logger = logging.getLogger(__name__)

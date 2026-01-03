@@ -202,7 +202,7 @@ def _run_daemon_mode(args: argparse.Namespace) -> int:
     """Run the client in daemon mode (no UI)."""
     try:
         from sendspin.audio import query_devices
-        from sendspin.daemon import DaemonConfig, SendspinDaemon
+        from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)
@@ -305,7 +305,7 @@ def main() -> int:
 
     try:
         from sendspin.audio import query_devices
-        from sendspin.app import AppConfig, SendspinApp
+        from sendspin.tui.app import AppConfig, SendspinApp
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)

@@ -11,14 +11,14 @@ from typing import TYPE_CHECKING
 import readchar
 from aiosendspin.models.types import MediaCommand, PlaybackStateType, PlayerStateType
 
-from sendspin.ui import DiscoveredServerInfo
+from sendspin.tui.ui import DiscoveredServerInfo
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
 
-    from sendspin.app import AppState
     from sendspin.audio_connector import AudioStreamHandler
-    from sendspin.ui import SendspinUI
+    from sendspin.tui.app import AppState
+    from sendspin.tui.ui import SendspinUI
 
 logger = logging.getLogger(__name__)
 

@@ -24,7 +24,7 @@ from aiosendspin.models.types import (
     Roles,
 )
 
-from sendspin.app import (
+from sendspin.tui.app import (
     AppState,
     ConnectionManager,
     connection_loop,
@@ -185,7 +185,7 @@ class SendspinDaemon:
 
     def _setup_listeners(self, listeners: ClientListenerManager) -> None:
         """Set up client event listeners."""
-        from sendspin.app import (
+        from sendspin.tui.app import (
             _handle_group_update,
             _handle_metadata_update,
             _handle_server_command,
