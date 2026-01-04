@@ -1,12 +1,12 @@
 #!/bin/bash
-# Sendspin systemd installation
+# Sendspin systemd service installation
 set -e
 
 # Colors
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; D='\033[2m'; N='\033[0m'
 
-# Check root
-[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Must run with sudo"; exit 1; }
+# Check for root via sudo, detect original user to install properly.
+[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
 USER=${SUDO_USER:-$(whoami)}
 [[ -z "$USER" || "$USER" == "root" ]] && { echo -e "${R}Error:${N} Cannot determine user (installing as root is not recommended; log in as a user and run with sudo)"; exit 1; }
 
@@ -20,10 +20,9 @@ elif command -v yum &>/dev/null; then PKG_MGR="yum"
 elif command -v pacman &>/dev/null; then PKG_MGR="pacman"
 fi
 
-# Check dependencies
 echo -e "${D}Checking dependencies...${N}"
 
-# Check libportaudio2
+# Check for and offer to install libportaudio2
 if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     echo -e "${Y}Missing:${N} libportaudio2"
     if [[ -n "$PKG_MGR" ]]; then
@@ -43,23 +42,7 @@ if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     fi
 fi
 
-# Check Python version
-if command -v python3 &>/dev/null; then
-    PY_VER=$(python3 --version 2>&1 | awk '{print $2}')
-    PY_MAJ=$(echo "$PY_VER" | cut -d. -f1)
-    PY_MIN=$(echo "$PY_VER" | cut -d. -f2)
-    if [[ $PY_MAJ -lt 3 || ($PY_MAJ -eq 3 && $PY_MIN -lt 12) ]]; then
-        echo -e "${R}Error:${N} Python 3.12+ required (found $PY_VER)"
-        echo -e "To resolve: install Python 3.12+ via your package manager or pyenv"
-        exit 1
-    fi
-else
-    echo -e "${R}Error:${N} python3 not found"
-    [[ -n "$PKG_MGR" ]] && echo -e "To resolve: install python, for example: ${B}sudo $PKG_MGR install python3${N}"
-    exit 1
-fi
-
-# Check uv
+# Check for and offer to install uv if needed
 if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
    ! sudo -u "$USER" test -f "/home/$USER/.cargo/bin/uv" && \
    ! sudo -u "$USER" test -f "/home/$USER/.local/bin/uv"; then
@@ -77,17 +60,17 @@ fi
 echo -e "\n${D}Installing sendspin...${N}"
 sudo -u "$USER" bash -l -c "uv tool install sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
 
+# Grab the proper bin path from uv (in case it's non-standard)
+SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
+
 # Configure
 echo ""
 read -p "Client name [$(hostname)]: " NAME
 NAME=${NAME:-$(hostname)}
 
 echo -e "\n${D}Available audio devices:${N}"
-sudo -u "$USER" bash -c "/home/$USER/.local/bin/sendspin --list-audio-devices" 2>&1 | head -n -2
+sudo -u "$USER" bash -c "$SENDSPIN_BIN --list-audio-devices" 2>&1 | head -n -2
 read -p "Audio device [default]: " DEVICE
-
-echo ""
-read -p "Server URL [Leave blank to auto-discover (recommended)]: " URL
 
 # Save config
 cat > /etc/default/sendspin << EOF
@@ -96,9 +79,6 @@ SENDSPIN_CLIENT_NAME=$NAME
 
 # Audio device index or name prefix (leave empty for default)
 SENDSPIN_AUDIO_DEVICE=$DEVICE
-
-# WebSocket server URL (leave empty for auto-discovery via mDNS)
-SENDSPIN_SERVER_URL=$URL
 
 # Playback delay in milliseconds (typically negative, e.g., -100)
 SENDSPIN_STATIC_DELAY_MS=0
@@ -118,10 +98,9 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/default/sendspin
 User=$USER
-ExecStart=/bin/bash -c 'exec \$HOME/.local/bin/sendspin --headless \
+ExecStart=/bin/bash -c 'exec $SENDSPIN_BIN --headless \
     \${SENDSPIN_CLIENT_NAME:+--name "\${SENDSPIN_CLIENT_NAME}"} \
     \${SENDSPIN_AUDIO_DEVICE:+--audio-device "\${SENDSPIN_AUDIO_DEVICE}"} \
-    \${SENDSPIN_SERVER_URL:+--url "\${SENDSPIN_SERVER_URL}"} \
     --static-delay-ms \${SENDSPIN_STATIC_DELAY_MS:-0} \
     \${SENDSPIN_ARGS}'
 Restart=on-failure

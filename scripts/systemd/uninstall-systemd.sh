@@ -6,7 +6,7 @@ set -e
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; D='\033[2m'; N='\033[0m'
 
 # Check root
-[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Must run with sudo"; exit 1; }
+[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
 USER=${SUDO_USER:-$(whoami)}
 [[ -z "$USER" || "$USER" == "root" ]] && { echo -e "${R}Error:${N} Cannot determine user"; exit 1; }
 
