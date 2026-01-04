@@ -8,7 +8,7 @@ import sys
 from collections.abc import Coroutine
 from importlib.metadata import version
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from aiosendspin.models.core import DeviceInfo
 
@@ -16,6 +16,8 @@ _T = TypeVar("_T")
 
 # Check if eager_start is supported (Python 3.12+)
 _SUPPORTS_EAGER_START = sys.version_info >= (3, 12)
+
+TASKS: set[asyncio.Task[Any]] = set()
 
 
 def create_task(
@@ -49,9 +51,18 @@ def create_task(
 
     if _SUPPORTS_EAGER_START and eager_start:
         # Use Task constructor directly - it supports eager_start and schedules automatically
-        return asyncio.Task(coro, loop=loop, name=name, eager_start=True)
+        task = asyncio.Task(coro, loop=loop, name=name, eager_start=True)
+    else:
+        task = loop.create_task(coro, name=name)
 
-    return loop.create_task(coro, name=name)
+    if task.done():
+        return task
+
+    TASKS.add(task)
+    task.add_done_callback(TASKS.discard)
+    task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    return task
 
 
 def get_device_info() -> DeviceInfo:

@@ -13,6 +13,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from sendspin.discovery import DiscoveredServer
+
 
 class _RefreshableLayout:
     """A renderable that rebuilds on each render cycle."""
@@ -30,16 +32,6 @@ SHORTCUT_HIGHLIGHT_DURATION = 0.15
 
 
 @dataclass
-class DiscoveredServerInfo:
-    """Information about a discovered server for display."""
-
-    name: str
-    url: str
-    host: str
-    port: int
-
-
-@dataclass
 class UIState:
     """Holds state for the UI display."""
 
@@ -51,7 +43,7 @@ class UIState:
 
     # Server selector
     show_server_selector: bool = False
-    available_servers: list[DiscoveredServerInfo] = field(default_factory=list)
+    available_servers: list[DiscoveredServer] = field(default_factory=list)
     selected_server_index: int = 0
 
     # Playback
@@ -80,10 +72,10 @@ class UIState:
 class SendspinUI:
     """Rich-based terminal UI for the Sendspin CLI."""
 
-    def __init__(self) -> None:
+    def __init__(self, delay_ms: float) -> None:
         """Initialize the UI."""
         self._console = Console()
-        self._state = UIState()
+        self._state = UIState(delay_ms=delay_ms)
         self._live: Live | None = None
         self._running = False
 
@@ -322,7 +314,11 @@ class SendspinUI:
         shortcuts.append("↓", style=self._shortcut_style("selector-down"))
         shortcuts.append(" navigate  ", style="dim")
         shortcuts.append("<enter>", style=self._shortcut_style("selector-enter"))
-        shortcuts.append(" connect", style="dim")
+        shortcuts.append(" connect  ", style="dim")
+        shortcuts.append("r", style=self._shortcut_style("selector-enter"))
+        shortcuts.append(" refresh  ", style="dim")
+        shortcuts.append("q", style=self._shortcut_style("selector-enter"))
+        shortcuts.append(" back", style="dim")
         content.add_row(shortcuts)
 
         return Panel(content, title="Select Server", border_style="cyan")
@@ -491,7 +487,7 @@ class SendspinUI:
         self._state.delay_ms = delay_ms
         self.refresh()
 
-    def show_server_selector(self, servers: list[DiscoveredServerInfo]) -> None:
+    def show_server_selector(self, servers: list[DiscoveredServer]) -> None:
         """Show the server selector with available servers."""
         self._state.available_servers = servers
         self._state.selected_server_index = 0
@@ -517,7 +513,7 @@ class SendspinUI:
         )
         self.refresh()
 
-    def get_selected_server(self) -> DiscoveredServerInfo | None:
+    def get_selected_server(self) -> DiscoveredServer | None:
         """Get the currently selected server."""
         if not self._state.available_servers:
             return None

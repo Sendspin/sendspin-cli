@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import sys
 from collections.abc import Sequence
+import socket
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from sendspin.audio import AudioDevice
+
+LOGGER = logging.getLogger(__name__)
 
 PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
 
@@ -197,8 +201,6 @@ async def list_servers() -> None:
             print(f"  {server.name}")
             print(f"    URL:  {server.url}")
             print(f"    Host: {server.host}:{server.port}")
-        if servers:
-            print(f"\nTo connect to a server:\n  sendspin --url {servers[0].url}")
     except Exception as e:  # noqa: BLE001
         print(f"Error discovering servers: {e}")
         sys.exit(1)
@@ -241,23 +243,47 @@ def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
         dev_type = "Default" if device_arg is None else "Specified"
         raise CLIError(f"{dev_type} audio device not found.")
 
+    LOGGER.info(
+        "Using audio device %d: %s",
+        device.index,
+        device.name,
+    )
+
     return device
 
 
-def _run_daemon_mode(args: argparse.Namespace) -> int:
+def _resolve_client_info(client_id: str | None, client_name: str | None) -> tuple[str, str]:
+    """Determine client ID and name."""
+    # Get hostname for defaults if needed
+    if client_id is None or client_name is None:
+        hostname = socket.gethostname()
+        if not hostname:
+            raise CLIError("Unable to determine hostname. Please specify --id and/or --name", 1)
+        # Auto-generate client ID and name from hostname
+        if client_id is None:
+            client_id = f"sendspin-cli-{hostname}"
+        if client_name is None:
+            client_name = hostname
+
+    return client_id, client_name
+
+
+async def _run_daemon_mode(args: argparse.Namespace) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
+
+    client_id, client_name = _resolve_client_info(args.id, args.name)
 
     daemon_config = DaemonConfig(
         audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
-        client_id=args.id,
-        client_name=args.name,
+        client_id=client_id,
+        client_name=client_name,
         static_delay_ms=args.static_delay_ms,
     )
 
     daemon = SendspinDaemon(daemon_config)
-    return asyncio.run(daemon.run())
+    return await daemon.run()
 
 
 def main() -> int:
@@ -308,7 +334,7 @@ def main() -> int:
         return 0
 
     try:
-        return _run_client_mode(args)
+        return asyncio.run(_run_client_mode(args))
     except CLIError as e:
         print(f"Error: {e}")
         return e.exit_code
@@ -319,30 +345,32 @@ def main() -> int:
         raise
 
 
-def _run_client_mode(args: argparse.Namespace) -> int:
+async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
     # Handle daemon subcommand
     if args.command == "daemon":
-        return _run_daemon_mode(args)
+        return await _run_daemon_mode(args)
 
     # Handle deprecated --headless flag
     if args.headless:
         print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
         print("Routing to daemon mode...\n")
-        return _run_daemon_mode(args)
+        return await _run_daemon_mode(args)
 
     from sendspin.tui.app import AppConfig, SendspinApp
+
+    client_id, client_name = _resolve_client_info(args.id, args.name)
 
     app_config = AppConfig(
         audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
-        client_id=args.id,
-        client_name=args.name,
+        client_id=client_id,
+        client_name=client_name,
         static_delay_ms=args.static_delay_ms,
     )
 
     app = SendspinApp(app_config)
-    return asyncio.run(app.run())
+    return await app.run()
 
 
 if __name__ == "__main__":
