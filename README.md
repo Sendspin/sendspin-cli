@@ -2,7 +2,13 @@
 
 [![pypi_badge](https://img.shields.io/pypi/v/sendspin.svg)](https://pypi.python.org/pypi/sendspin)
 
-Connect to any [Sendspin](https://www.sendspin-audio.com) server and instantly turn your computer into an audio target that can participate in multi-room audio. Sendspin CLI includes both a TUI and a headless mode.
+Connect to any [Sendspin](https://www.sendspin-audio.com) server and instantly turn your computer into an audio target that can participate in multi-room audio.
+
+Sendspin CLI includes three apps:
+
+- **`sendspin`** - Terminal client for interactive use
+- **`sendspin daemon`** - Background daemon for headless devices
+- **`sendspin serve`** - Host a Sendspin party to demo Sendspin
 
 <img width="1144" height="352" alt="image" src="https://github.com/user-attachments/assets/5a649bde-76f6-486f-b3aa-0af5e49e0ac7" />
 
@@ -109,7 +115,7 @@ sendspin --audio-device 2
 sendspin --audio-device "MacBook"
 ```
 
-This is particularly useful for headless devices or when you want to route audio to a specific output.
+This is particularly useful when running `sendspin daemon` on headless devices or when you want to route audio to a specific output.
 
 ### Adjusting Playback Delay
 
@@ -121,15 +127,19 @@ sendspin --static-delay-ms -100
 
 > **Note:** Based on limited testing, the delay value is typically a negative number (e.g., `-100` or `-150`) to compensate for audio hardware buffering.
 
-### Headless Mode
+### Daemon Mode
 
-To run the player without the interactive terminal UI (useful for background services or scripts):
+To run the player as a background daemon without the interactive TUI (useful for headless devices or scripts):
 
 ```bash
-sendspin --headless
+sendspin daemon
 ```
 
-In headless mode, status messages are printed to stdout instead of the TUI.
+The daemon runs in the background and logs status messages to stdout. It accepts the same connection and audio options as the TUI client:
+
+```bash
+sendspin daemon --name "Kitchen" --audio-device 2
+```
 
 ### Debugging & Troubleshooting
 
@@ -150,7 +160,7 @@ This player is highly experimental and has several known limitations:
 
 ## Install as Daemon (systemd, Linux)
 
-For headless devices like Raspberry Pi, you can install Sendspin as a systemd service that starts automatically on boot.
+For headless devices like Raspberry Pi, you can install `sendspin daemon` as a systemd service that starts automatically on boot.
 
 **Install:**
 ```bash
