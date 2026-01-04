@@ -375,6 +375,12 @@ class SendspinApp:
                     ui.set_disconnected(f"Switching to {url}...")
                     continue
 
+                # If URL was provided via --url, reconnect directly without mDNS
+                if self._config.url:
+                    ui.add_event(f"Reconnecting to {url}...")
+                    ui.set_disconnected(f"Reconnecting to {url}...")
+                    continue
+
                 # Update URL from discovery
                 server = servers[0] if (servers := discovery.get_servers()) else None
 
