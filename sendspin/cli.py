@@ -88,6 +88,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level to use",
     )
+    serve_parser.add_argument(
+        "--bad-idea-discover-clients",
+        action="store_true",
+        help=(
+            "Discover clients via mDNS and automatically connect to them. "
+            "WARNING: This can cause mayhem, as all players that are discovered "
+            "will start playing automatically when connected."
+        ),
+    )
 
     # Daemon subcommand
     daemon_parser = subparsers.add_parser(
@@ -312,6 +321,7 @@ def main() -> int:
             source=source,
             port=args.port,
             name=args.name,
+            discover_clients=args.bad_idea_discover_clients,
         )
         try:
             return asyncio.run(run_server(serve_config))
