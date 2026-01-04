@@ -17,7 +17,7 @@ from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
-from sendspin.utils import create_task, get_device_info
+from sendspin.utils import get_device_info
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,6 @@ class SendspinDaemon:
         )
         self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
         self._discovery = ServiceDiscovery()
-        self._shutdown_event = asyncio.Event()
 
     async def run(self) -> int:
         """Run the daemon."""
@@ -68,9 +67,13 @@ class SendspinDaemon:
         url = self._config.url
         loop = asyncio.get_running_loop()
 
+        # Store reference to current task so it can be cancelled on shutdown
+        main_task = asyncio.current_task()
+        assert main_task is not None
+
         def signal_handler() -> None:
             logger.debug("Received interrupt signal, shutting down...")
-            self._shutdown_event.set()
+            main_task.cancel()
 
         # Register signal handlers
         with contextlib.suppress(NotImplementedError):
@@ -82,16 +85,16 @@ class SendspinDaemon:
         try:
             if url is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
-                url = await self._discover_server()
-                if self._shutdown_event.is_set():
-                    return 0
+                server = await self._discovery.wait_for_server()
+                url = server.url
 
             listeners = ClientListenerManager()
             self._audio_handler.attach_client(self._client, listeners)
             listeners.attach(self._client)
 
             await self._connection_loop(url, use_discovery=self._config.url is None)
-
+        except asyncio.CancelledError:
+            logger.debug("Daemon cancelled")
         finally:
             await self._audio_handler.cleanup()
             await self._client.disconnect()
@@ -105,39 +108,25 @@ class SendspinDaemon:
         url = initial_url
         error_backoff = 1.0
         max_backoff = 300.0
-        disconnect_event = asyncio.Event()
-        self._client.set_disconnect_listener(disconnect_event.set)
 
-        while not self._shutdown_event.is_set():
-            disconnect_event.clear()
-
+        while True:
             try:
                 await self._client.connect(url)
                 error_backoff = 1.0
-                shutdown_task = create_task(self._shutdown_event.wait())
-                disconnect_task = create_task(disconnect_event.wait())
 
-                done, pending = await asyncio.wait(
-                    {shutdown_task, disconnect_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
-                for task in pending:
-                    task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await task
-
-                if shutdown_task in done:
-                    break
+                # Wait for disconnect
+                disconnect_event: asyncio.Event = asyncio.Event()
+                self._client.set_disconnect_listener(disconnect_event.set)
+                await disconnect_event.wait()
+                self._client.set_disconnect_listener(None)
 
                 # Connection dropped
                 logger.info("Disconnected from server")
                 await self._audio_handler.cleanup()
 
                 if use_discovery:
-                    url = await self._discover_server()
-                    if self._shutdown_event.is_set():
-                        break
+                    server = await self._discovery.wait_for_server()
+                    url = server.url
 
                 logger.info("Reconnecting to %s", url)
 
@@ -148,12 +137,7 @@ class SendspinDaemon:
                     error_backoff,
                 )
 
-                # Interruptible sleep
-                try:
-                    await asyncio.wait_for(self._shutdown_event.wait(), timeout=error_backoff)
-                    break  # Shutdown requested
-                except TimeoutError:
-                    pass  # Sleep completed, continue loop
+                await asyncio.sleep(error_backoff)
 
                 # Check if URL changed while sleeping (only when using discovery)
                 if use_discovery and (servers := self._discovery.get_servers()):
@@ -169,23 +153,3 @@ class SendspinDaemon:
             except Exception:
                 logger.exception("Unexpected error during connection")
                 break
-
-    async def _discover_server(self) -> str:
-        """Discover next server to use.
-
-        Returns empty string when shutdown is set.
-        """
-        next_server_task = create_task(self._discovery.wait_for_server())
-
-        if not next_server_task.done():
-            shutdown_task = create_task(self._shutdown_event.wait())
-            await asyncio.wait(
-                {shutdown_task, next_server_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-        if self._shutdown_event.is_set():
-            return ""
-
-        server = await next_server_task
-        return server.url
