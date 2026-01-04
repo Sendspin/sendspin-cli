@@ -28,14 +28,19 @@ uvx sendspin serve https://retro.dancewave.online/retrodance.mp3
 
 ## Installation
 
-**With pip:**
-```bash
-pip install sendspin
-```
-
 **With uv:**
 ```bash
 uv tool install sendspin
+```
+
+**Install as daemon (Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/install-systemd.sh | sudo bash
+```
+
+**With pip:**
+```bash
+pip install sendspin
 ```
 
 <details>
@@ -142,6 +147,36 @@ This player is highly experimental and has several known limitations:
 
 - **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
 - **Configuration Persistence**: Settings are not persistently stored; delay must be reconfigured on each restart using the `--static-delay-ms` option
+
+## Install as Daemon (systemd, Linux)
+
+For headless devices like Raspberry Pi, you can install Sendspin as a systemd service that starts automatically on boot.
+
+**Install:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/install-systemd.sh | sudo bash
+```
+
+The installer will:
+- Check and offer to install dependencies (libportaudio2, uv)
+- Install sendspin via `uv tool install`
+- Prompt for client name and audio device selection
+- Create systemd service and configuration
+
+**Manage the service:**
+```bash
+sudo systemctl start sendspin    # Start the service
+sudo systemctl stop sendspin     # Stop the service
+sudo systemctl status sendspin   # Check status
+journalctl -u sendspin -f        # View logs
+```
+
+**Configuration:** Edit `/etc/default/sendspin` to change client name, audio device, or delay settings.
+
+**Uninstall:**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/uninstall-systemd.sh | sudo bash
+```
 
 ## Sendspin Party
 
