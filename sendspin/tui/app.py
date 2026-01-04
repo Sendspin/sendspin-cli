@@ -8,7 +8,6 @@ import logging
 import signal
 import sys
 from dataclasses import dataclass, field
-from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,7 +37,6 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
@@ -266,13 +264,11 @@ class SendspinApp:
 
             await self._discovery.start()
 
-            listeners = ClientListenerManager()
-            listeners.add_metadata_listener(self._handle_metadata_update)
-            listeners.add_group_update_listener(self._handle_group_update)
-            listeners.add_controller_state_listener(self._handle_server_state)
-            listeners.add_server_command_listener(self._handle_server_command)
-            self._audio_handler.attach_client(self._client, listeners)
-            listeners.attach(self._client)
+            self._client.add_metadata_listener(self._handle_metadata_update)
+            self._client.add_group_update_listener(self._handle_group_update)
+            self._client.add_controller_state_listener(self._handle_server_state)
+            self._client.add_server_command_listener(self._handle_server_command)
+            self._audio_handler.attach_client(self._client)
 
             # Start keyboard loop for interactive control
             create_task(
@@ -353,9 +349,9 @@ class SendspinApp:
 
                 # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
-                client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
+                unsubscribe = client.add_disconnect_listener(disconnect_event.set)
                 await disconnect_event.wait()
-                client.set_disconnect_listener(None)
+                unsubscribe()
 
                 # Connection dropped
                 logger.info("Connection lost")
