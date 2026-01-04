@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiosendspin.models.core import ServerCommandPayload, StreamStartMessage
@@ -13,8 +14,6 @@ from sendspin.audio import AudioDevice, AudioPlayer
 
 if TYPE_CHECKING:
     from aiosendspin.client import PCMFormat, SendspinClient
-
-    from sendspin.client_listeners import ClientListenerManager
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +37,25 @@ class AudioStreamHandler:
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
 
-    def attach_client(self, client: SendspinClient, listeners: ClientListenerManager) -> None:
+    def attach_client(self, client: SendspinClient) -> list[Callable[[], None]]:
         """Attach to a SendspinClient and register listeners.
 
         Args:
-            client: The Sendspin client (for time sync functions).
-            listeners: The listener manager to register callbacks with.
+            client: The Sendspin client to attach to.
+
+        Returns:
+            List of unsubscribe functions for all registered listeners.
         """
         self._client = client
 
-        # Register listeners with the manager
-        listeners.add_audio_chunk_listener(self._on_audio_chunk)
-        listeners.add_stream_start_listener(self._on_stream_start)
-        listeners.add_stream_end_listener(self._on_stream_end)
-        listeners.add_stream_clear_listener(self._on_stream_clear)
-        listeners.add_server_command_listener(self._on_server_command)
+        # Register listeners directly with the client
+        return [
+            client.add_audio_chunk_listener(self._on_audio_chunk),
+            client.add_stream_start_listener(self._on_stream_start),
+            client.add_stream_end_listener(self._on_stream_end),
+            client.add_stream_clear_listener(self._on_stream_clear),
+            client.add_server_command_listener(self._on_server_command),
+        ]
 
     def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
         """Handle incoming audio chunks."""

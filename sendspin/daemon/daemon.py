@@ -15,7 +15,6 @@ from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.client_listeners import ClientListenerManager
 from sendspin.discovery import ServiceDiscovery
 from sendspin.utils import get_device_info
 
@@ -88,9 +87,7 @@ class SendspinDaemon:
                 server = await self._discovery.wait_for_server()
                 url = server.url
 
-            listeners = ClientListenerManager()
-            self._audio_handler.attach_client(self._client, listeners)
-            listeners.attach(self._client)
+            self._audio_handler.attach_client(self._client)
 
             await self._connection_loop(url, use_discovery=self._config.url is None)
         except asyncio.CancelledError:
@@ -116,9 +113,9 @@ class SendspinDaemon:
 
                 # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
-                self._client.set_disconnect_listener(disconnect_event.set)
+                unsubscribe = self._client.add_disconnect_listener(disconnect_event.set)
                 await disconnect_event.wait()
-                self._client.set_disconnect_listener(None)
+                unsubscribe()
 
                 # Connection dropped
                 logger.info("Disconnected from server")
