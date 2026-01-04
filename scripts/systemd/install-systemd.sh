@@ -98,7 +98,7 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=/etc/default/sendspin
 User=$USER
-ExecStart=/bin/bash -c 'exec $SENDSPIN_BIN --headless \
+ExecStart=/bin/bash -c 'exec $SENDSPIN_BIN daemon \
     \${SENDSPIN_CLIENT_NAME:+--name "\${SENDSPIN_CLIENT_NAME}"} \
     \${SENDSPIN_AUDIO_DEVICE:+--audio-device "\${SENDSPIN_AUDIO_DEVICE}"} \
     --static-delay-ms \${SENDSPIN_STATIC_DELAY_MS:-0} \
