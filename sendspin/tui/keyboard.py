@@ -100,6 +100,7 @@ async def keyboard_loop(
     ui: SendspinUI,
     show_server_selector: Callable[[], None],
     on_server_selected: Callable[[], Awaitable[None]],
+    request_shutdown: Callable[[], None],
 ) -> None:
     """Run the keyboard input loop.
 
@@ -108,8 +109,9 @@ async def keyboard_loop(
         state: Application state.
         audio_handler: Audio stream handler.
         ui: UI instance.
-        get_servers: Function that returns list of (name, url, host, port) tuples.
-        on_server_selected: Async callback when a server is selected (receives URL).
+        show_server_selector: Function to show the server selector UI.
+        on_server_selected: Async callback when a server is selected.
+        request_shutdown: Callback to request application shutdown.
     """
     handler = CommandHandler(client, state, audio_handler, ui)
 
@@ -144,6 +146,7 @@ async def keyboard_loop(
             # Run blocking readkey in executor to not block the event loop
             key = await loop.run_in_executor(None, readchar.readkey)
         except (asyncio.CancelledError, KeyboardInterrupt):
+            request_shutdown()
             break
 
         # Handle server selector mode
@@ -172,6 +175,7 @@ async def keyboard_loop(
         # Handle quit
         if key in "qQ":
             ui.highlight_shortcut("quit")
+            request_shutdown()
             break
 
         # Handle 's' to open server selector

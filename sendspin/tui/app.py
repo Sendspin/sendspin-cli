@@ -133,9 +133,6 @@ class ConnectionManager:
         self._last_attempted_url = ""
         self._pending_server: DiscoveredServer | None = None  # URL set by user for server switch
 
-    def set_keyboard_task(self, keyboard_task: asyncio.Task[None]) -> None:
-        self._keyboard_task = keyboard_task
-
     def set_pending_server(self, server: DiscoveredServer) -> None:
         """Set a pending server for server switch."""
         self._pending_server = server
@@ -145,18 +142,6 @@ class ConnectionManager:
         server = self._pending_server
         self._pending_server = None
         return server
-
-    async def sleep_interruptible(self, duration: float) -> bool:
-        """Sleep with keyboard interrupt support.
-
-        Returns True if interrupted by keyboard, False if completed normally.
-        """
-        try:
-            await asyncio.wait({self._keyboard_task}, timeout=duration)
-        except TimeoutError:
-            pass
-
-        return self._keyboard_task.done()
 
     def set_last_attempted_url(self, url: str) -> None:
         """Record the URL that was last attempted."""
@@ -192,33 +177,14 @@ class ConnectionManager:
         """Increase the backoff duration for the next retry."""
         self._error_backoff = min(self._error_backoff * 2, self._max_backoff)
 
-    async def handle_error_backoff(self, ui: SendspinUI) -> bool:
-        """Sleep for error backoff with keyboard interrupt support.
-
-        Returns True if interrupted by keyboard, False if completed normally.
-        """
+    async def handle_error_backoff(self, ui: SendspinUI) -> None:
+        """Sleep for error backoff duration."""
         ui.add_event(f"Connection error, retrying in {self._error_backoff:.0f}s...")
-        return await self.sleep_interruptible(self._error_backoff)
+        await asyncio.sleep(self._error_backoff)
 
-    async def discover_server(self) -> DiscoveredServer | None:
-        """Wait for server to reappear on the network.
-
-        Returns the new URL if server reappears, None if interrupted.
-        """
-        next_server_task = create_task(self._discovery.wait_for_server())
-
-        if not next_server_task.done():
-            await asyncio.wait(
-                {self._keyboard_task, next_server_task},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            if self._keyboard_task.done():
-                next_server_task.cancel()
-                return None
-
-        server = await next_server_task
-        return server
+    async def discover_server(self) -> DiscoveredServer:
+        """Wait for server to reappear on the network."""
+        return await self._discovery.wait_for_server()
 
 
 @dataclass
@@ -286,6 +252,13 @@ class SendspinApp:
         if logging.getLogger().level != logging.DEBUG:
             logging.getLogger().setLevel(logging.WARNING)
 
+        # Store reference to current task so it can be cancelled on shutdown
+        main_task = asyncio.current_task()
+        assert main_task is not None
+
+        def request_shutdown() -> None:
+            main_task.cancel()
+
         try:
             self._ui.start()
             self._ui.add_event(f"Using client ID: {config.client_id}")
@@ -302,7 +275,7 @@ class SendspinApp:
             listeners.attach(self._client)
 
             # Start keyboard loop for interactive control
-            keyboard_task = create_task(
+            create_task(
                 keyboard_loop(
                     self._client,
                     self._state,
@@ -310,14 +283,13 @@ class SendspinApp:
                     self._ui,
                     self._show_server_selector,
                     self._on_server_selected,
+                    request_shutdown,
                 )
             )
 
-            self._connection_manager.set_keyboard_task(keyboard_task)
-
             def signal_handler() -> None:
                 logger.debug("Received interrupt signal, shutting down...")
-                keyboard_task.cancel()
+                request_shutdown()
 
             # Signal handlers aren't supported on this platform (e.g., Windows)
             loop = asyncio.get_running_loop()
@@ -331,13 +303,11 @@ class SendspinApp:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
                 self._ui.add_event("Searching for Sendspin server...")
                 server = await self._connection_manager.discover_server()
-                if server is None:
-                    return 0
                 self._state.selected_server = server
                 self._ui.add_event(f"Found server at {server.url}")
 
             # Run connection loop with auto-reconnect
-            await self._connection_loop(keyboard_task)
+            await self._connection_loop()
         except asyncio.CancelledError:
             logger.debug("Connection loop cancelled")
         finally:
@@ -356,16 +326,13 @@ class SendspinApp:
 
         return 0
 
-    async def _connection_loop(self, keyboard_task: asyncio.Task[None]) -> None:
+    async def _connection_loop(self) -> None:
         """
         Run the connection loop with automatic reconnection on disconnect.
 
         Connects to the server, waits for disconnect, cleans up, then retries
         only if the server is visible via mDNS. Reconnects immediately when
         server reappears. Uses exponential backoff (up to 5 min) for errors.
-
-        Args:
-            keyboard_task: Keyboard input task to monitor.
         """
         assert self._state.selected_server
         manager = self._connection_manager
@@ -376,7 +343,7 @@ class SendspinApp:
         url = self._state.selected_server.url
         manager.set_last_attempted_url(url)
 
-        while not keyboard_task.done():
+        while True:
             try:
                 await self._client.connect(url)
                 ui.add_event(f"Connected to {url}")
@@ -384,17 +351,11 @@ class SendspinApp:
                 manager.reset_backoff()
                 manager.set_last_attempted_url(url)
 
-                # Wait for disconnect or keyboard exit
+                # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
                 client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
-                done, _ = await asyncio.wait(
-                    {keyboard_task, create_task(disconnect_event.wait())},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-
+                await disconnect_event.wait()
                 client.set_disconnect_listener(None)
-                if keyboard_task in done:
-                    break
 
                 # Connection dropped
                 logger.info("Connection lost")
@@ -424,8 +385,6 @@ class SendspinApp:
                     ui.add_event("Waiting for server...")
 
                     server = await manager.discover_server()
-                    if not server:
-                        break
 
                 self._state.selected_server = server
                 url = server.url
@@ -440,8 +399,7 @@ class SendspinApp:
                     manager.get_error_backoff(),
                 )
 
-                if await manager.handle_error_backoff(ui):
-                    break
+                await manager.handle_error_backoff(ui)
 
                 # Check if URL changed while sleeping
                 if servers := discovery.get_servers():
