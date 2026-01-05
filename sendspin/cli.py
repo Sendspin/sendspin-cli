@@ -7,6 +7,7 @@ import asyncio
 import logging
 import sys
 from collections.abc import Sequence
+from importlib.metadata import version
 import socket
 from typing import TYPE_CHECKING
 
@@ -56,6 +57,11 @@ def list_audio_devices() -> None:
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the Sendspin client."""
     parser = argparse.ArgumentParser(description="Sendspin CLI")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('sendspin')}",
+    )
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Serve subcommand
