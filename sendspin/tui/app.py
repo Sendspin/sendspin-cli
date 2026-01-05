@@ -59,7 +59,7 @@ class AppState:
     album: str | None = None
     track_progress: int | None = None
     track_duration: int | None = None
-    player_volume: int = 100
+    player_volume: int = 25 # Default player volume
     player_muted: bool = False
     group_id: str | None = None
 

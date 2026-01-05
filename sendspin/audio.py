@@ -200,7 +200,7 @@ class AudioPlayer:
         self._stream_started = False
         self._first_real_chunk = True  # Flag to initialize timing from first chunk
 
-        self._volume: int = 100  # 0-100 range
+        self._volume: int = 25  # 0-100 range
         self._muted: bool = False
 
         # Partial chunk tracking (to avoid discarding partial chunks)
