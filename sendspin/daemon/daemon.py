@@ -8,14 +8,13 @@ import logging
 import signal
 from dataclasses import dataclass
 
-from aiohttp import ClientError
-from aiosendspin.client import SendspinClient
+from aiohttp import ClientError, web
+from aiosendspin.client import ClientListener, SendspinClient
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.discovery import ServiceDiscovery
 from sendspin.utils import get_device_info
 
 logger = logging.getLogger(__name__)
@@ -30,17 +29,29 @@ class DaemonConfig:
     client_name: str
     url: str | None = None
     static_delay_ms: float = 0.0
+    listen_port: int = 8927
 
 
 class SendspinDaemon:
-    """Sendspin daemon - headless audio player mode."""
+    """Sendspin daemon - headless audio player mode.
+
+    When a URL is provided, the daemon connects to that server (client-initiated).
+    When no URL is provided, the daemon listens for incoming server connections
+    and advertises itself via mDNS (server-initiated connections).
+    """
 
     def __init__(self, config: DaemonConfig) -> None:
         """Initialize the daemon."""
         self._config = config
-        self._client = SendspinClient(
-            client_id=config.client_id,
-            client_name=config.client_name,
+        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._client: SendspinClient | None = None
+        self._listener: ClientListener | None = None
+
+    def _create_client(self) -> SendspinClient:
+        """Create a new SendspinClient instance."""
+        return SendspinClient(
+            client_id=self._config.client_id,
+            client_name=self._config.client_name,
             roles=[Roles.PLAYER],
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -55,15 +66,12 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=config.static_delay_ms,
+            static_delay_ms=self._config.static_delay_ms,
         )
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
-        self._discovery = ServiceDiscovery()
 
     async def run(self) -> int:
         """Run the daemon."""
-        logger.info("Starting Sendspin daemon: %s", self._client._client_id)
-        url = self._config.url
+        logger.info("Starting Sendspin daemon: %s", self._config.client_id)
         loop = asyncio.get_running_loop()
 
         # Store reference to current task so it can be cancelled on shutdown
@@ -79,30 +87,93 @@ class SendspinDaemon:
             loop.add_signal_handler(signal.SIGINT, signal_handler)
             loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-        await self._discovery.start()
-
         try:
-            if url is None:
-                logger.info("Waiting for mDNS discovery of Sendspin server...")
-                server = await self._discovery.wait_for_server()
-                url = server.url
-
-            self._audio_handler.attach_client(self._client)
-
-            await self._connection_loop(url, use_discovery=self._config.url is None)
+            if self._config.url is not None:
+                # Client-initiated connection mode
+                await self._run_client_initiated()
+            else:
+                # Server-initiated connection mode (listen for incoming connections)
+                await self._run_server_initiated()
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
-            await self._audio_handler.cleanup()
-            await self._client.disconnect()
-            await self._discovery.stop()
+            await self._cleanup()
             logger.info("Daemon stopped")
 
         return 0
 
-    async def _connection_loop(self, initial_url: str, use_discovery: bool) -> None:
-        """Run the connection loop with automatic reconnection."""
-        url = initial_url
+    async def _cleanup(self) -> None:
+        """Clean up all resources."""
+        await self._audio_handler.cleanup()
+        if self._client is not None:
+            await self._client.disconnect()
+            self._client = None
+        if self._listener is not None:
+            await self._listener.stop()
+            self._listener = None
+
+    async def _run_client_initiated(self) -> None:
+        """Run in client-initiated mode, connecting to a specific URL."""
+        assert self._config.url is not None
+        self._client = self._create_client()
+        self._audio_handler.attach_client(self._client)
+        await self._connection_loop(self._config.url)
+
+    async def _run_server_initiated(self) -> None:
+        """Run in server-initiated mode, listening for incoming connections."""
+        logger.info(
+            "Listening for server connections on port %d (mDNS: _sendspin._tcp.local.)",
+            self._config.listen_port,
+        )
+
+        self._listener = ClientListener(
+            client_id=self._config.client_id,
+            on_connection=self._handle_server_connection,
+            port=self._config.listen_port,
+        )
+        await self._listener.start()
+
+        # Keep running until cancelled
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            raise
+
+    async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
+        """Handle an incoming server connection."""
+        logger.info("Server connected")
+
+        # Clean up any previous client
+        if self._client is not None:
+            logger.info("Disconnecting from previous server")
+            await self._audio_handler.cleanup()
+            await self._client.disconnect()
+
+        # Create a new client for this connection
+        self._client = self._create_client()
+        self._audio_handler.attach_client(self._client)
+
+        try:
+            await self._client.attach_websocket(ws)
+
+            # Wait for disconnect
+            disconnect_event = asyncio.Event()
+            unsubscribe = self._client.add_disconnect_listener(disconnect_event.set)
+            await disconnect_event.wait()
+            unsubscribe()
+
+            logger.info("Server disconnected")
+        except TimeoutError:
+            logger.warning("Handshake with server timed out")
+        except Exception:
+            logger.exception("Error during server connection")
+        finally:
+            await self._audio_handler.cleanup()
+
+    async def _connection_loop(self, url: str) -> None:
+        """Run the connection loop with automatic reconnection (client-initiated mode)."""
+        assert self._client is not None
         error_backoff = 1.0
         max_backoff = 300.0
 
@@ -121,10 +192,6 @@ class SendspinDaemon:
                 logger.info("Disconnected from server")
                 await self._audio_handler.cleanup()
 
-                if use_discovery:
-                    server = await self._discovery.wait_for_server()
-                    url = server.url
-
                 logger.info("Reconnecting to %s", url)
 
             except (TimeoutError, OSError, ClientError) as e:
@@ -135,16 +202,6 @@ class SendspinDaemon:
                 )
 
                 await asyncio.sleep(error_backoff)
-
-                # Check if URL changed while sleeping (only when using discovery)
-                if use_discovery and (servers := self._discovery.get_servers()):
-                    new_url = servers[0].url
-                    if new_url and new_url != url:
-                        logger.info("Server URL changed to %s", new_url)
-                        url = new_url
-                        error_backoff = 1.0
-                        continue
-
                 error_backoff = min(error_backoff * 2, max_backoff)
 
             except Exception:

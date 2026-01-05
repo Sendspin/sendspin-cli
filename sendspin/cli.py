@@ -97,12 +97,27 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     # Daemon subcommand
     daemon_parser = subparsers.add_parser(
-        "daemon", help="Run Sendspin client in daemon mode (no UI)"
+        "daemon",
+        help="Run Sendspin client in daemon mode (no UI)",
+        description=(
+            "Run as a headless audio player. By default, listens for incoming server "
+            "connections and advertises via mDNS (_sendspin._tcp.local.). "
+            "Use --url to connect to a specific server instead."
+        ),
     )
     daemon_parser.add_argument(
         "--url",
         default=None,
-        help=("WebSocket URL of the Sendspin server. If omitted, discover via mDNS."),
+        help=(
+            "WebSocket URL of the Sendspin server to connect to. "
+            "If omitted, listen for incoming server connections via mDNS."
+        ),
+    )
+    daemon_parser.add_argument(
+        "--port",
+        type=int,
+        default=8927,
+        help="Port to listen on for incoming server connections (default: 8927)",
     )
     daemon_parser.add_argument(
         "--name",
@@ -286,6 +301,7 @@ async def _run_daemon_mode(args: argparse.Namespace) -> int:
         client_id=client_id,
         client_name=client_name,
         static_delay_ms=args.static_delay_ms,
+        listen_port=args.port,
     )
 
     daemon = SendspinDaemon(daemon_config)
