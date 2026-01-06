@@ -11,90 +11,221 @@
     <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
   </head>
   <body>
-    <div class="container">
-      <header>
-        <h1>Sendspin Party</h1>
-      </header>
+    <!-- Windows 95 Desktop -->
+    <div class="win95-desktop">
+      <!-- Desktop Icons -->
+      <div class="desktop-icons">
+        <div class="desktop-icon" id="icon-winamp">
+          <div class="icon-image winamp-icon"></div>
+          <span>Sendspin<br>Player</span>
+        </div>
+        <div class="desktop-icon" id="icon-share">
+          <div class="icon-image share-icon"></div>
+          <span>Multi-Room<br>Audio</span>
+        </div>
+        <div class="desktop-icon" id="icon-about">
+          <div class="icon-image about-icon"></div>
+          <span>About<br>Sendspin</span>
+        </div>
+      </div>
 
-      <!-- Start button -->
-      <div id="start-card" class="card start">
-        <button id="start-btn" class="btn btn-primary btn-xlarge">
-          Start Listening
+      <!-- Winamp Player Window -->
+      <div id="winamp-window" class="win95-window winamp hidden">
+        <div class="winamp-main">
+          <!-- Title bar with classic Winamp style -->
+          <div class="winamp-titlebar">
+            <div class="winamp-title-left">
+              <button class="winamp-sys-btn winamp-menu" title="Main Menu">&#9776;</button>
+            </div>
+            <div class="winamp-title-text">
+              <span class="winamp-marquee" id="winamp-title">SENDSPIN</span>
+            </div>
+            <div class="winamp-title-right">
+              <button class="winamp-sys-btn winamp-minimize" title="Minimize">_</button>
+              <button class="winamp-sys-btn winamp-shade" title="Shade">^</button>
+              <button class="winamp-sys-btn winamp-close" id="winamp-close" title="Close">X</button>
+            </div>
+          </div>
+
+          <!-- Display area -->
+          <div class="winamp-display">
+            <div class="winamp-visualizer" id="winamp-visualizer">
+              <canvas id="visualizer-canvas" width="75" height="16"></canvas>
+            </div>
+            <div class="winamp-info">
+              <div class="winamp-time" id="winamp-time">00:00</div>
+              <div class="winamp-status">
+                <span class="winamp-bitrate">128</span>
+                <span class="winamp-khz">48</span>
+                <span class="winamp-stereo">stereo</span>
+              </div>
+              <div class="winamp-sync" id="winamp-sync">-</div>
+            </div>
+            <div class="winamp-song-info">
+              <div class="winamp-scroll-wrapper">
+                <span class="winamp-song-title" id="winamp-song-title">*** SENDSPIN PARTY *** Synchronized Multi-Room Audio ***</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Volume and Balance -->
+          <div class="winamp-sliders">
+            <div class="winamp-slider-group">
+              <span class="winamp-slider-label">Volume</span>
+              <input type="range" id="volume-slider" class="winamp-slider" min="0" max="100" value="80" />
+            </div>
+            <div class="winamp-slider-group">
+              <span class="winamp-slider-label">Balance</span>
+              <input type="range" class="winamp-slider balance" min="-100" max="100" value="0" disabled />
+            </div>
+          </div>
+
+          <!-- Equalizer toggle and other buttons -->
+          <div class="winamp-buttons-row">
+            <button class="winamp-toggle" disabled>EQ</button>
+            <button class="winamp-toggle" disabled>PL</button>
+          </div>
+
+          <!-- Seek bar -->
+          <div class="winamp-seekbar">
+            <div class="winamp-seek-track">
+              <div class="winamp-seek-progress" id="seek-progress"></div>
+            </div>
+          </div>
+
+          <!-- Shuffle, repeat, transport controls -->
+          <div class="winamp-controls">
+            <div class="winamp-transport">
+              <button class="winamp-btn prev" disabled title="Previous">&#9198;</button>
+              <button class="winamp-btn play" id="play-btn" title="Play">&#9654;</button>
+              <button class="winamp-btn pause" disabled title="Pause">&#10074;&#10074;</button>
+              <button class="winamp-btn stop" id="stop-btn" title="Stop">&#9632;</button>
+              <button class="winamp-btn next" disabled title="Next">&#9197;</button>
+              <button class="winamp-btn eject" id="mute-btn" title="Mute">
+                <span id="mute-icon">&#128266;</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Start Dialog (Windows 95 style) -->
+      <div id="start-dialog" class="win95-window dialog">
+        <div class="win95-titlebar">
+          <span class="win95-title-icon"></span>
+          <span class="win95-title">Sendspin Party</span>
+          <button class="win95-close-btn" id="start-dialog-close">X</button>
+        </div>
+        <div class="win95-content">
+          <div class="dialog-icon info-icon"></div>
+          <div class="dialog-message">
+            <p>Welcome to <strong>Sendspin Party!</strong></p>
+            <p>Click Start Listening to begin synchronized audio playback.</p>
+          </div>
+        </div>
+        <div class="win95-buttons">
+          <button class="win95-btn" id="start-btn">Start Listening</button>
+          <button class="win95-btn" id="start-cancel">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Share Window -->
+      <div id="share-window" class="win95-window hidden">
+        <div class="win95-titlebar">
+          <span class="win95-title-icon"></span>
+          <span class="win95-title">Multi-Room Audio</span>
+          <button class="win95-close-btn" id="share-close">X</button>
+        </div>
+        <div class="win95-content share-content">
+          <div class="win95-groupbox">
+            <span class="groupbox-label">Experience Multi-Room Audio</span>
+            <p>Open this URL on other devices to hear perfectly synchronized audio:</p>
+            <div class="url-display">
+              <input type="text" id="share-server-url" class="win95-input" readonly />
+              <button class="win95-btn" id="share-btn">Copy</button>
+            </div>
+          </div>
+          <div class="win95-groupbox qr-group">
+            <span class="groupbox-label">QR Code</span>
+            <div id="qr-code"></div>
+          </div>
+          <div class="win95-buttons">
+            <a id="cast-link" class="win95-btn" target="_blank" href="https://sendspin.github.io/cast/">Cast to Speaker</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- About Window -->
+      <div id="about-window" class="win95-window hidden">
+        <div class="win95-titlebar">
+          <span class="win95-title-icon"></span>
+          <span class="win95-title">About Sendspin</span>
+          <button class="win95-close-btn" id="about-close">X</button>
+        </div>
+        <div class="win95-content about-content">
+          <div class="about-header">
+            <div class="about-logo"></div>
+            <div class="about-title">
+              <h2>Sendspin Party</h2>
+              <p>Version 1.0</p>
+            </div>
+          </div>
+          <div class="win95-groupbox">
+            <span class="groupbox-label">About</span>
+            <p>Listen, control and see your music with Sendspin, the open audio protocol by the Open Home Foundation.</p>
+            <p style="margin-top: 8px;">Want to take control of music in your house? Check out Music Assistant - open-source and free.</p>
+          </div>
+          <div class="win95-buttons about-links">
+            <a class="win95-btn" href="https://www.sendspin-audio.com" target="_blank">Sendspin</a>
+            <a class="win95-btn" href="https://www.music-assistant.io" target="_blank">Music Assistant</a>
+            <a class="win95-btn" href="https://www.openhomefoundation.org" target="_blank">Open Home</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Taskbar -->
+      <div class="win95-taskbar">
+        <button class="start-button" id="taskbar-start">
+          <span class="start-logo"></span>
+          <span>Start</span>
         </button>
-      </div>
-
-      <!-- Player controls (hidden until started) -->
-      <div id="player-card" class="card player hidden">
-        <div class="player-volume">
-          <button id="mute-btn" class="btn btn-icon" title="Toggle Mute">
-            <span id="mute-icon">&#128266;</span>
-          </button>
-          <input type="range" id="volume-slider" min="0" max="100" value="80" />
-          <span id="volume-value">80%</span>
+        <div class="taskbar-items">
+          <div class="taskbar-item active" id="taskbar-winamp">
+            <span class="taskbar-icon winamp-icon-small"></span>
+            <span>Sendspin Player</span>
+          </div>
         </div>
-        <div class="player-status">
-          <span id="sync-status" class="sync-badge">-</span>
-          <button id="disconnect-btn" class="btn btn-small btn-danger">
-            Disconnect
-          </button>
+        <div class="taskbar-tray">
+          <span id="taskbar-sync" class="tray-sync">-</span>
+          <span class="tray-time" id="tray-time">12:00 AM</span>
         </div>
       </div>
 
-      <!-- Share / Multi-room -->
-      <div id="share-card" class="card share">
-        <h2>Experience Multi-Room Audio</h2>
-        <p>
-          Open <a id="share-server-url" href=""></a> on other devices to hear
-          perfectly synchronized audio across all of them.
-        </p>
-        <div id="qr-code"></div>
-        <div class="share-buttons">
-          <button id="share-btn" class="btn btn-primary">Copy URL</button>
-          <a
-            id="cast-link"
-            class="btn"
-            target="_blank"
-            href="https://sendspin.github.io/cast/"
-            >Cast to Speaker</a
-          >
+      <!-- Start Menu -->
+      <div id="start-menu" class="win95-start-menu hidden">
+        <div class="start-menu-sidebar">
+          <span class="sidebar-text">Sendspin<span class="sidebar-95">95</span></span>
         </div>
-        <span id="share-feedback" class="share-feedback hidden">Copied!</span>
+        <div class="start-menu-items">
+          <div class="menu-item" id="menu-player">
+            <div class="menu-icon winamp-icon-small"></div>
+            <span>Sendspin Player</span>
+          </div>
+          <div class="menu-item" id="menu-share">
+            <div class="menu-icon share-icon-small"></div>
+            <span>Multi-Room Audio</span>
+          </div>
+          <div class="menu-item" id="menu-about">
+            <div class="menu-icon about-icon-small"></div>
+            <span>About Sendspin</span>
+          </div>
+          <div class="menu-separator"></div>
+          <div class="menu-item" id="menu-disconnect">
+            <div class="menu-icon shutdown-icon"></div>
+            <span>Disconnect...</span>
+          </div>
+        </div>
       </div>
-
-      <!-- About Sendspin -->
-      <div class="card about">
-        <h2>About Sendspin</h2>
-        <p>
-          Listen, control and see your music with Sendspin, the open audio
-          protocol by the Open Home Foundation.
-          <a href="https://www.sendspin-audio.com" target="_blank"
-            >Learn more about Sendspin.</a
-          >
-        </p>
-        <p>
-          Want to take control of music in your house and play on any speaker
-          that you own? Check out
-          <a href="https://www.music-assistant.io" target="_blank"
-            >Music Assistant,</a
-          >
-          open-source and free.
-        </p>
-      </div>
-
-      <!-- Footer -->
-      <footer>
-        <a href="https://www.sendspin-audio.com" target="_blank">Sendspin</a>
-        <span class="separator">·</span>
-        <a href="https://www.openhomefoundation.org" target="_blank"
-          >Open Home Foundation</a
-        >
-        <span class="separator">·</span>
-        <a
-          href="https://www.github.com/sendspin/sendspin-cli#sendspin-party"
-          target="_blank"
-          >Host your own party</a
-        >
-      </footer>
     </div>
 
     <script type="module" src="app.js"></script>
