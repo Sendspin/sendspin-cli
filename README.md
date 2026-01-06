@@ -41,7 +41,7 @@ uv tool install sendspin
 
 **Install as daemon (Linux):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/install-systemd.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/install-systemd.sh | sudo bash
 ```
 
 **With pip:**
@@ -164,7 +164,7 @@ For headless devices like Raspberry Pi, you can install `sendspin daemon` as a s
 
 **Install:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/install-systemd.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/install-systemd.sh | sudo bash
 ```
 
 The installer will:
@@ -185,7 +185,7 @@ journalctl -u sendspin -f        # View logs
 
 **Uninstall:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sendspin-Protocol/sendspin/main/sendspin-cli/scripts/systemd/uninstall-systemd.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/uninstall-systemd.sh | sudo bash
 ```
 
 ## Sendspin Party
