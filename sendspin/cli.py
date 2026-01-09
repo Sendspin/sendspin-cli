@@ -8,30 +8,6 @@ import sys
 from collections.abc import Sequence
 
 
-def list_audio_devices() -> None:
-    """List all available audio output devices."""
-    from sendspin.audio import query_devices
-
-    try:
-        devices = query_devices()
-
-        print("Available audio output devices:")
-        print()
-        for device in devices:
-            default_marker = " (default)" if device.is_default else ""
-            print(
-                f"  [{device.index}] {device.name}{default_marker}\n"
-                f"       Channels: {device.output_channels}, "
-                f"Sample rate: {device.sample_rate} Hz"
-            )
-        if devices:
-            print("\nTo select an audio device:\n  sendspin --audio-device 0")
-
-    except Exception as e:  # noqa: BLE001
-        print(f"Error listing audio devices: {e}")
-        sys.exit(1)
-
-
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the Sendspin client."""
     parser = argparse.ArgumentParser(description="Sendspin CLI")

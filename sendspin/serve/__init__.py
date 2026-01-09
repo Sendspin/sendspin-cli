@@ -42,7 +42,8 @@ def get_local_ip() -> str:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            ip: str = s.getsockname()[0]
+            return ip
     except Exception:
         return "localhost"
 
@@ -151,13 +152,10 @@ async def run_server(config: ServeConfig) -> int:
             # Wait for a client to connect
             if not active_group:
                 client_connected.clear()
-                try:
-                    await client_connected.wait()
-                except asyncio.CancelledError:
-                    raise
+                await client_connected.wait()
 
                 if shutdown_requested:
-                    break
+                    break  # type: ignore[unreachable]
 
             assert active_group is not None
 
@@ -168,11 +166,11 @@ async def run_server(config: ServeConfig) -> int:
                     main_channel_source=audio_source.generator,
                     main_channel_format=audio_source.format,
                 )
-                play_media_task = asyncio.create_task(active_group.play_media(media_stream))
-                await play_media_task
+                await active_group.play_media(media_stream)
             except asyncio.CancelledError:
                 if shutdown_requested:
-                    break
+                    break  # type: ignore[unreachable]
+                raise
             except Exception as e:
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)

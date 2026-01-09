@@ -43,7 +43,7 @@ from aiosendspin.models.types import (
     UndefinedField,
 )
 
-from sendspin.audio import AudioPlayer, SyncCalibrator
+from sendspin.audio import AudioDevice, AudioPlayer, SyncCalibrator
 from sendspin.discovery import ServiceDiscovery
 from sendspin.keyboard import keyboard_loop
 from sendspin.ui import CalibrationUI, SendspinUI
@@ -308,13 +308,12 @@ async def connection_loop(  # noqa: PLR0915
 
             # Wait for disconnect or keyboard exit
             disconnect_event: asyncio.Event = asyncio.Event()
-            client.set_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
+            client.add_disconnect_listener(partial(asyncio.Event.set, disconnect_event))
             done, _ = await asyncio.wait(
                 {keyboard_task, asyncio.create_task(disconnect_event.wait())},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
-            client.set_disconnect_listener(None)
             if keyboard_task in done:
                 break
 
@@ -385,7 +384,7 @@ class AudioStreamHandler:
     def __init__(
         self,
         client: SendspinClient,
-        audio_device: int | None = None,
+        audio_device: AudioDevice,
         calibrator: SyncCalibrator | None = None,
         *,
         mute_output: bool = False,
@@ -394,7 +393,7 @@ class AudioStreamHandler:
 
         Args:
             client: The Sendspin client instance.
-            audio_device: Audio device ID to use. None for default device.
+            audio_device: Audio device to use.
             calibrator: Optional sync calibrator for measuring timing offset.
             mute_output: If True, mute the audio output (for calibration mode).
         """
@@ -569,23 +568,10 @@ class SendspinApp:
                     logger.exception("Failed to discover server")
                     return 1
 
-            # Resolve audio device if specified
-            audio_device = None
-            if config.audio_device is not None:
-                try:
-                    audio_device = resolve_audio_device(config.audio_device)
-                    if audio_device is not None:
-                        device_name = sounddevice.query_devices(audio_device)["name"]
-                        logger.info("Using audio device %d: %s", audio_device, device_name)
-                        self._print_event(f"Using audio device: {device_name}")
-                except ValueError as e:
-                    logger.error("Audio device error: %s", e)
-                    return 1
-            else:
-                # Print default device
-                default_device = sounddevice.default.device[1]
-                device_name = sounddevice.query_devices(default_device)["name"]
-                self._print_event(f"Using audio device: {device_name}")
+            # Use audio device from config (already validated in cli.py)
+            audio_device = config.audio_device
+            logger.info("Using audio device %d: %s", audio_device.index, audio_device.name)
+            self._print_event(f"Using audio device: {audio_device.name}")
 
             # Create sync calibrator if in calibration mode
             calibrator: SyncCalibrator | None = None
@@ -667,7 +653,11 @@ class SendspinApp:
 
                 # Create histogram update task for calibration mode
                 histogram_task: asyncio.Task[None] | None = None
-                if config.calibrate_sync and self._calibration_ui is not None and calibrator is not None:
+                if (
+                    config.calibrate_sync
+                    and self._calibration_ui is not None
+                    and calibrator is not None
+                ):
 
                     async def update_histogram_loop() -> None:
                         """Periodically update the calibration histogram."""
@@ -749,30 +739,40 @@ class SendspinApp:
         client = self._client
         audio_handler = self._audio_handler
 
-        client.set_metadata_listener(
-            lambda payload: _handle_metadata_update(
-                self._state, self._ui, self._print_event, payload
+        def _metadata_listener(payload: ServerStatePayload) -> None:
+            asyncio.create_task(
+                _handle_metadata_update(self._state, self._ui, self._print_event, payload)
             )
-        )
-        client.set_group_update_listener(
-            lambda payload: _handle_group_update(self._state, self._ui, self._print_event, payload)
-        )
-        client.set_controller_state_listener(
-            lambda payload: _handle_server_state(self._state, self._ui, self._print_event, payload)
-        )
-        client.set_stream_start_listener(
+
+        def _group_update_listener(payload: GroupUpdateServerPayload) -> None:
+            asyncio.create_task(
+                _handle_group_update(self._state, self._ui, self._print_event, payload)
+            )
+
+        def _controller_state_listener(payload: ServerStatePayload) -> None:
+            asyncio.create_task(
+                _handle_server_state(self._state, self._ui, self._print_event, payload)
+            )
+
+        def _server_command_listener(payload: ServerCommandPayload) -> None:
+            asyncio.create_task(
+                _handle_server_command(
+                    self._state, audio_handler, client, self._ui, self._print_event, payload
+                )
+            )
+
+        client.add_metadata_listener(_metadata_listener)
+        client.add_group_update_listener(_group_update_listener)
+        client.add_controller_state_listener(_controller_state_listener)
+        client.add_stream_start_listener(
             lambda msg: audio_handler.on_stream_start(msg, self._print_event)
         )
-        client.set_stream_end_listener(
+        client.add_stream_end_listener(
             lambda roles: audio_handler.on_stream_end(roles, self._print_event)
         )
-        client.set_stream_clear_listener(audio_handler.on_stream_clear)
-        client.set_audio_chunk_listener(audio_handler.on_audio_chunk)
-        client.set_server_command_listener(
-            lambda payload: _handle_server_command(
-                self._state, audio_handler, client, self._ui, self._print_event, payload
-            )
-        )
+        client.add_stream_clear_listener(audio_handler.on_stream_clear)
+        client.add_audio_chunk_listener(audio_handler.on_audio_chunk)
+        client.add_server_command_listener(_server_command_listener)
 
 
 async def _handle_metadata_update(
