@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
+from aiosendspin_mpris import SendspinMpris
 from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
@@ -232,6 +233,7 @@ class SendspinApp:
         self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
+        self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -270,6 +272,8 @@ class SendspinApp:
             self._client.add_server_command_listener(self._handle_server_command)
             self._audio_handler.attach_client(self._client)
 
+            self._mpris.start()
+
             # Start keyboard loop for interactive control
             create_task(
                 keyboard_loop(
@@ -307,6 +311,7 @@ class SendspinApp:
         except asyncio.CancelledError:
             logger.debug("Connection loop cancelled")
         finally:
+            self._mpris.stop()
             self._ui.stop()
             await self._audio_handler.cleanup()
             await self._client.disconnect()

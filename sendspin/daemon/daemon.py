@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
+from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
 
@@ -38,10 +39,15 @@ class SendspinDaemon:
     def __init__(self, config: DaemonConfig) -> None:
         """Initialize the daemon."""
         self._config = config
+
+        client_roles = [Roles.PLAYER]
+        if MPRIS_AVAILABLE:
+            client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
+
         self._client = SendspinClient(
             client_id=config.client_id,
             client_name=config.client_name,
-            roles=[Roles.PLAYER],
+            roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
                 supported_formats=[
@@ -59,6 +65,7 @@ class SendspinDaemon:
         )
         self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
         self._discovery = ServiceDiscovery()
+        self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:
         """Run the daemon."""
@@ -89,10 +96,13 @@ class SendspinDaemon:
 
             self._audio_handler.attach_client(self._client)
 
+            self._mpris.start()
+
             await self._connection_loop(url, use_discovery=self._config.url is None)
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
+            self._mpris.stop()
             await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
