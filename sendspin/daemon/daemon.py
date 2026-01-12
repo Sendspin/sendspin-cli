@@ -8,31 +8,32 @@ import logging
 import signal
 from dataclasses import dataclass
 
-from aiohttp import ClientError
-from aiosendspin.client import SendspinClient
-from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
-from aiohttp import web
-from aiosendspin.client import ClientListener
+from aiohttp import ClientError, web
+from aiosendspin.client import ClientListener, SendspinClient
+from aiosendspin.models.core import ServerCommandPayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
-from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
+from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
+from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.utils import get_device_info
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DaemonConfig:
+class DaemonArgs:
     """Configuration for the Sendspin daemon."""
 
     audio_device: AudioDevice
     client_id: str
     client_name: str
     url: str | None = None
-    static_delay_ms: float = 0.0
+    static_delay_ms: float | None = None
     listen_port: int = 8927
+    settings_dir: str | None = None
 
 
 class SendspinDaemon:
@@ -43,23 +44,25 @@ class SendspinDaemon:
     and advertises itself via mDNS (server-initiated connections).
     """
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, args: DaemonArgs) -> None:
         """Initialize the daemon."""
-        self._config = config
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._args = args
         self._client: SendspinClient | None = None
         self._listener: ClientListener | None = None
+        self._audio_handler: AudioStreamHandler | None = None
+        self._settings: SettingsManager | None = None
         self._mpris: SendspinMpris | None = None
+        self._static_delay_ms: float = 0.0
 
-    def _create_client(self) -> SendspinClient:
+    def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         return SendspinClient(
-            client_id=self._config.client_id,
-            client_name=self._config.client_name,
+            client_id=self._args.client_id,
+            client_name=self._args.client_name,
             roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -74,12 +77,12 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=self._config.static_delay_ms,
+            static_delay_ms=static_delay_ms,
         )
 
     async def run(self) -> int:
         """Run the daemon."""
-        logger.info("Starting Sendspin daemon: %s", self._config.client_id)
+        logger.info("Starting Sendspin daemon: %s", self._args.client_id)
         loop = asyncio.get_running_loop()
 
         # Store reference to current task so it can be cancelled on shutdown
@@ -95,49 +98,70 @@ class SendspinDaemon:
             loop.add_signal_handler(signal.SIGINT, signal_handler)
             loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
+        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._args.settings_dir)
+
+        # Determine delay: CLI arg overrides if provided, otherwise use settings
+        if self._args.static_delay_ms is not None:
+            delay = self._args.static_delay_ms
+        else:
+            delay = self._settings.static_delay_ms
+
+        self._audio_handler = AudioStreamHandler(
+            audio_device=self._args.audio_device,
+            volume=self._settings.player_volume,
+            muted=self._settings.player_muted,
+        )
+
         try:
-            if self._config.url is not None:
+            if self._args.url is not None:
                 # Client-initiated connection mode
-                await self._run_client_initiated()
+                await self._run_client_initiated(delay)
             else:
                 # Server-initiated connection mode (listen for incoming connections)
-                await self._run_server_initiated()
+                await self._run_server_initiated(delay)
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
             if self._mpris is not None:
                 self._mpris.stop()
-            await self._audio_handler.cleanup()
+            if self._audio_handler is not None:
+                await self._audio_handler.cleanup()
             if self._client is not None:
                 await self._client.disconnect()
                 self._client = None
             if self._listener is not None:
                 await self._listener.stop()
                 self._listener = None
+            if self._settings:
+                await self._settings.flush()
             logger.info("Daemon stopped")
 
         return 0
 
-    async def _run_client_initiated(self) -> None:
+    async def _run_client_initiated(self, static_delay_ms: float) -> None:
         """Run in client-initiated mode, connecting to a specific URL."""
-        assert self._config.url is not None
-        self._client = self._create_client()
+        assert self._args.url is not None
+        assert self._audio_handler is not None
+        self._client = self._create_client(static_delay_ms)
         self._mpris = SendspinMpris(self._client)
         self._mpris.start()
         self._audio_handler.attach_client(self._client)
-        await self._connection_loop(self._config.url)
+        self._client.add_server_command_listener(self._handle_server_command)
+        await self._connection_loop(self._args.url)
 
-    async def _run_server_initiated(self) -> None:
+    async def _run_server_initiated(self, static_delay_ms: float) -> None:
         """Run in server-initiated mode, listening for incoming connections."""
         logger.info(
             "Listening for server connections on port %d (mDNS: _sendspin._tcp.local.)",
-            self._config.listen_port,
+            self._args.listen_port,
         )
 
+        self._static_delay_ms = static_delay_ms  # Store for use in connection handler
+
         self._listener = ClientListener(
-            client_id=self._config.client_id,
+            client_id=self._args.client_id,
             on_connection=self._handle_server_connection,
-            port=self._config.listen_port,
+            port=self._args.listen_port,
         )
         await self._listener.start()
 
@@ -151,6 +175,7 @@ class SendspinDaemon:
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""
         logger.info("Server connected")
+        assert self._audio_handler is not None
 
         # Clean up any previous client
         if self._client is not None:
@@ -161,8 +186,9 @@ class SendspinDaemon:
             await self._client.disconnect()
 
         # Create a new client for this connection
-        self._client = self._create_client()
+        self._client = self._create_client(self._static_delay_ms)
         self._audio_handler.attach_client(self._client)
+        self._client.add_server_command_listener(self._handle_server_command)
         self._mpris = SendspinMpris(self._client)
         self._mpris.start()
 
@@ -186,6 +212,7 @@ class SendspinDaemon:
     async def _connection_loop(self, url: str) -> None:
         """Run the connection loop with automatic reconnection (client-initiated mode)."""
         assert self._client is not None
+        assert self._audio_handler is not None
         error_backoff = 1.0
         max_backoff = 300.0
 
@@ -219,3 +246,33 @@ class SendspinDaemon:
             except Exception:
                 logger.exception("Unexpected error during connection")
                 break
+
+    def _handle_server_command(self, payload: ServerCommandPayload) -> None:
+        """Handle server commands for player volume/mute control and save to settings."""
+        if payload.player is None or self._settings is None or self._client is None:
+            return
+
+        assert self._audio_handler is not None
+        player_cmd = payload.player
+
+        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
+            self._settings.update(player_volume=player_cmd.volume)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server set player volume: %d%%", player_cmd.volume)
+        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+            self._settings.update(player_muted=player_cmd.mute)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server %s player", "muted" if player_cmd.mute else "unmuted")
+
+        # Send state update back to server per spec
+        create_task(
+            self._client.send_player_state(
+                state=PlayerStateType.SYNCHRONIZED,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+            )
+        )

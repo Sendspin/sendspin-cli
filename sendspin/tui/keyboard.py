@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
 
     from sendspin.audio_connector import AudioStreamHandler
+    from sendspin.settings import SettingsManager
     from sendspin.tui.app import AppState
     from sendspin.tui.ui import SendspinUI
 
@@ -29,12 +30,14 @@ class CommandHandler:
         state: AppState,
         audio_handler: AudioStreamHandler,
         ui: SendspinUI,
+        settings: SettingsManager,
     ) -> None:
         """Initialize the command handler."""
         self._client = client
         self._state = state
         self._audio_handler = audio_handler
         self._ui = ui
+        self._settings = settings
 
     async def send_media_command(self, command: MediaCommand) -> None:
         """Send a media command with validation."""
@@ -54,11 +57,8 @@ class CommandHandler:
         """Adjust player (local) volume by delta."""
         target = max(0, min(100, self._state.player_volume + delta))
         self._state.player_volume = target
-        # Apply volume to audio player
-        if self._audio_handler.audio_player is not None:
-            self._audio_handler.audio_player.set_volume(
-                self._state.player_volume, muted=self._state.player_muted
-            )
+        self._settings.update(player_volume=target)
+        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
         self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
@@ -70,11 +70,8 @@ class CommandHandler:
     async def toggle_player_mute(self) -> None:
         """Toggle player (local) mute state."""
         self._state.player_muted = not self._state.player_muted
-        # Apply mute to audio player
-        if self._audio_handler.audio_player is not None:
-            self._audio_handler.audio_player.set_volume(
-                self._state.player_volume, muted=self._state.player_muted
-            )
+        self._settings.update(player_muted=self._state.player_muted)
+        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
         self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
@@ -87,6 +84,7 @@ class CommandHandler:
         """Adjust static delay by delta milliseconds."""
         self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
         self._ui.set_delay(self._client.static_delay_ms)
+        self._settings.update(static_delay_ms=self._client.static_delay_ms)
 
     def close_server_selector(self) -> None:
         """Close the server selector panel."""
@@ -98,6 +96,7 @@ async def keyboard_loop(
     state: AppState,
     audio_handler: AudioStreamHandler,
     ui: SendspinUI,
+    settings: SettingsManager,
     show_server_selector: Callable[[], None],
     on_server_selected: Callable[[], Awaitable[None]],
     request_shutdown: Callable[[], None],
@@ -109,11 +108,12 @@ async def keyboard_loop(
         state: Application state.
         audio_handler: Audio stream handler.
         ui: UI instance.
+        settings: Settings manager for persisting player settings.
         show_server_selector: Function to show the server selector UI.
         on_server_selected: Async callback when a server is selected.
         request_shutdown: Callback to request application shutdown.
     """
-    handler = CommandHandler(client, state, audio_handler, ui)
+    handler = CommandHandler(client, state, audio_handler, ui, settings)
 
     # Key dispatch table: key -> (highlight_name | None, async action)
     # For keys that need case-insensitive matching, use lowercase

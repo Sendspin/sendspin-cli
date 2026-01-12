@@ -138,7 +138,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     daemon_parser.add_argument(
         "--static-delay-ms",
         type=float,
-        default=0.0,
+        default=None,
         help="Extra playback delay in milliseconds applied after clock sync",
     )
     daemon_parser.add_argument(
@@ -149,6 +149,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
             "Use --list-audio-devices to see available devices."
         ),
+    )
+    daemon_parser.add_argument(
+        "--settings-dir",
+        type=str,
+        default=None,
+        help="Directory to store settings (default: ~/.config/sendspin)",
     )
 
     # Default behavior (client mode) - existing arguments
@@ -176,7 +182,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--static-delay-ms",
         type=float,
-        default=0.0,
+        default=None,
         help="Extra playback delay in milliseconds applied after clock sync",
     )
     parser.add_argument(
@@ -291,20 +297,21 @@ def _resolve_client_info(client_id: str | None, client_name: str | None) -> tupl
 
 async def _run_daemon_mode(args: argparse.Namespace) -> int:
     """Run the client in daemon mode (no UI)."""
-    from sendspin.daemon.daemon import DaemonConfig, SendspinDaemon
+    from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
 
-    daemon_config = DaemonConfig(
+    daemon_args = DaemonArgs(
         audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
         client_id=client_id,
         client_name=client_name,
         static_delay_ms=args.static_delay_ms,
         listen_port=args.port,
+        settings_dir=args.settings_dir,
     )
 
-    daemon = SendspinDaemon(daemon_config)
+    daemon = SendspinDaemon(daemon_args)
     return await daemon.run()
 
 
@@ -379,11 +386,11 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         print("Routing to daemon mode...\n")
         return await _run_daemon_mode(args)
 
-    from sendspin.tui.app import AppConfig, SendspinApp
+    from sendspin.tui.app import AppArgs, SendspinApp
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
 
-    app_config = AppConfig(
+    app_args = AppArgs(
         audio_device=_resolve_audio_device(args.audio_device),
         url=args.url,
         client_id=client_id,
@@ -391,7 +398,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         static_delay_ms=args.static_delay_ms,
     )
 
-    app = SendspinApp(app_config)
+    app = SendspinApp(app_args)
     return await app.run()
 
 

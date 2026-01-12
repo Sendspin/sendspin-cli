@@ -39,6 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -187,32 +188,32 @@ class ConnectionManager:
 
 
 @dataclass
-class AppConfig:
+class AppArgs:
     """Configuration for the Sendspin application."""
 
     audio_device: AudioDevice
     client_id: str
     client_name: str
     url: str | None = None
-    static_delay_ms: float = 0.0
+    static_delay_ms: float | None = None
 
 
 class SendspinApp:
     """Main Sendspin application."""
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, args: AppArgs) -> None:
         """Initialize the application."""
-        self._config = config
-        self._ui = SendspinUI(config.static_delay_ms)
+        self._args = args
+        self._ui: SendspinUI | None = None
 
         server: DiscoveredServer | None = None
-        if config.url:
-            server = DiscoveredServer.from_url("Command-line argument", config.url)
+        if args.url:
+            server = DiscoveredServer.from_url("Command-line argument", args.url)
 
         self._state = AppState(selected_server=server)
         self._client = SendspinClient(
-            client_id=config.client_id,
-            client_name=config.client_name,
+            client_id=args.client_id,
+            client_name=args.client_name,
             roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -227,17 +228,18 @@ class SendspinApp:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=config.static_delay_ms,
+            static_delay_ms=0.0,  # Will be set after loading settings
         )
 
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._audio_handler: AudioStreamHandler | None = None
+        self._settings: SettingsManager | None = None
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
         self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
-        config = self._config
+        args = self._args
 
         # TUI requires an interactive terminal
         if not sys.stdin.isatty():
@@ -260,9 +262,31 @@ class SendspinApp:
             main_task.cancel()
 
         try:
+            self._settings = await get_settings_manager(SettingsMode.TUI)
+            self._state.player_volume = self._settings.player_volume
+            self._state.player_muted = self._settings.player_muted
+
+            # Determine delay: CLI arg overrides if provided, otherwise use settings
+            if args.static_delay_ms is not None:
+                delay = args.static_delay_ms
+            else:
+                delay = self._settings.static_delay_ms
+            self._client.set_static_delay_ms(delay)
+
+            self._ui = SendspinUI(
+                delay,
+                player_volume=self._settings.player_volume,
+                player_muted=self._settings.player_muted,
+            )
             self._ui.start()
-            self._ui.add_event(f"Using client ID: {config.client_id}")
-            self._ui.add_event(f"Using audio device: {config.audio_device.name}")
+            self._ui.add_event(f"Using client ID: {args.client_id}")
+            self._ui.add_event(f"Using audio device: {args.audio_device.name}")
+
+            self._audio_handler = AudioStreamHandler(
+                audio_device=args.audio_device,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+            )
 
             await self._discovery.start()
 
@@ -281,6 +305,7 @@ class SendspinApp:
                     self._state,
                     self._audio_handler,
                     self._ui,
+                    self._settings,
                     self._show_server_selector,
                     self._on_server_selected,
                     request_shutdown,
@@ -298,8 +323,31 @@ class SendspinApp:
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
             # Get initial server URL
-            url = config.url
-            if url is None:
+            if args.url:
+                # URL provided via CLI - selected_server already set in __init__
+                pass
+            elif self._settings.last_server_url:
+                # Try last known server first
+                last_url = self._settings.last_server_url
+                self._ui.add_event(f"Trying last server at {last_url}...")
+                try:
+                    await self._client.connect(last_url)
+                    # Success - create server entry
+                    self._state.selected_server = DiscoveredServer.from_url(
+                        "Last connected", last_url
+                    )
+                    self._ui.add_event(f"Connected to {last_url}")
+                    self._ui.set_connected(last_url)
+                    self._settings.update(last_server_url=last_url)
+                    # Run connection loop starting from wait-for-disconnect
+                    await self._connection_loop(already_connected=True)
+                    return 0
+                except (TimeoutError, OSError, ClientError):
+                    # Last server unavailable, fall through to discovery
+                    self._ui.add_event("Last server unavailable, searching...")
+
+            # No URL yet - do mDNS discovery
+            if self._state.selected_server is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
                 self._ui.add_event("Searching for Sendspin server...")
                 server = await self._connection_manager.discover_server()
@@ -312,30 +360,32 @@ class SendspinApp:
             logger.debug("Connection loop cancelled")
         finally:
             self._mpris.stop()
-            self._ui.stop()
-            await self._audio_handler.cleanup()
+            if self._ui:
+                self._ui.stop()
+            if self._audio_handler:
+                await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
-
-            # Show hint if delay was changed during session
-            current_delay = self._client.static_delay_ms
-            if current_delay != config.static_delay_ms:
-                print(  # noqa: T201
-                    f"\nDelay changed to {current_delay:.0f}ms. "
-                    f"Use '--static-delay-ms {current_delay:.0f}' next time to persist."
-                )
+            if self._settings:
+                await self._settings.flush()
 
         return 0
 
-    async def _connection_loop(self) -> None:
+    async def _connection_loop(self, *, already_connected: bool = False) -> None:
         """
         Run the connection loop with automatic reconnection on disconnect.
 
         Connects to the server, waits for disconnect, cleans up, then retries
         only if the server is visible via mDNS. Reconnects immediately when
         server reappears. Uses exponential backoff (up to 5 min) for errors.
+
+        Args:
+            already_connected: If True, skip the first connection attempt
+                (used when caller already established the connection).
         """
         assert self._state.selected_server
+        assert self._audio_handler is not None
+        assert self._ui is not None
         manager = self._connection_manager
         ui = self._ui
         client = self._client
@@ -343,14 +393,20 @@ class SendspinApp:
         discovery = self._discovery
         url = self._state.selected_server.url
         manager.set_last_attempted_url(url)
+        skip_connect = already_connected
 
         while True:
             try:
-                await self._client.connect(url)
-                ui.add_event(f"Connected to {url}")
-                ui.set_connected(url)
-                manager.reset_backoff()
-                manager.set_last_attempted_url(url)
+                if skip_connect:
+                    skip_connect = False
+                else:
+                    await self._client.connect(url)
+                    ui.add_event(f"Connected to {url}")
+                    ui.set_connected(url)
+                    manager.reset_backoff()
+                    manager.set_last_attempted_url(url)
+                    if self._settings:
+                        self._settings.update(last_server_url=url)
 
                 # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
@@ -377,7 +433,7 @@ class SendspinApp:
                     continue
 
                 # If URL was provided via --url, reconnect directly without mDNS
-                if self._config.url:
+                if self._args.url:
                     ui.add_event(f"Reconnecting to {url}...")
                     ui.set_disconnected(f"Reconnecting to {url}...")
                     continue
@@ -420,6 +476,7 @@ class SendspinApp:
                 break
 
     def _show_server_selector(self) -> None:
+        assert self._ui is not None
         servers = self._discovery.get_servers()
         if self._state.selected_server and self._state.selected_server not in servers:
             servers.insert(0, self._state.selected_server)
@@ -427,6 +484,7 @@ class SendspinApp:
 
     async def _on_server_selected(self) -> None:
         """Handle server selection by triggering reconnect."""
+        assert self._ui is not None
         server = self._ui.get_selected_server()
         if server is None:
             return
@@ -442,6 +500,7 @@ class SendspinApp:
 
     def _handle_metadata_update(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with metadata."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         if payload.metadata is not None and state.update_metadata(payload.metadata):
@@ -455,6 +514,7 @@ class SendspinApp:
 
     def _handle_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         # Only clear metadata when actually switching to a different group
@@ -480,6 +540,7 @@ class SendspinApp:
 
     def _handle_server_state(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with controller state."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         if payload.controller:
@@ -504,16 +565,23 @@ class SendspinApp:
         if payload.player is None:
             return
 
+        assert self._settings is not None
+        assert self._audio_handler is not None
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         player_cmd: PlayerCommandPayload = payload.player
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             state.player_volume = player_cmd.volume
+            self._settings.update(player_volume=player_cmd.volume)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event(f"Server set player volume: {player_cmd.volume}%")
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             state.player_muted = player_cmd.mute
+            self._settings.update(player_muted=player_cmd.mute)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
