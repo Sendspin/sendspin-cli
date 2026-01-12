@@ -9,15 +9,17 @@ import signal
 from dataclasses import dataclass
 
 from aiohttp import ClientError
-from aiosendspin.client import SendspinClient
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
+from aiosendspin.client import SendspinClient
+from aiosendspin.models.core import ServerCommandPayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
-from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
+from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery
-from sendspin.utils import get_device_info
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ class DaemonConfig:
     client_name: str
     url: str | None = None
     static_delay_ms: float = 0.0
+    settings_dir: str | None = None
 
 
 class SendspinDaemon:
@@ -63,7 +66,8 @@ class SendspinDaemon:
             ),
             static_delay_ms=config.static_delay_ms,
         )
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._audio_handler: AudioStreamHandler | None = None
+        self._settings: SettingsManager | None = None
         self._discovery = ServiceDiscovery()
         self._mpris = SendspinMpris(self._client)
 
@@ -88,6 +92,13 @@ class SendspinDaemon:
 
         await self._discovery.start()
 
+        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._config.settings_dir)
+        self._audio_handler = AudioStreamHandler(
+            audio_device=self._config.audio_device,
+            volume=self._settings.player_volume,
+            muted=self._settings.player_muted,
+        )
+
         try:
             if url is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
@@ -95,6 +106,7 @@ class SendspinDaemon:
                 url = server.url
 
             self._audio_handler.attach_client(self._client)
+            self._client.add_server_command_listener(self._handle_server_command)
 
             self._mpris.start()
 
@@ -103,15 +115,19 @@ class SendspinDaemon:
             logger.debug("Daemon cancelled")
         finally:
             self._mpris.stop()
-            await self._audio_handler.cleanup()
+            if self._audio_handler:
+                await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
+            if self._settings:
+                await self._settings.flush()
             logger.info("Daemon stopped")
 
         return 0
 
     async def _connection_loop(self, initial_url: str, use_discovery: bool) -> None:
         """Run the connection loop with automatic reconnection."""
+        assert self._audio_handler is not None
         url = initial_url
         error_backoff = 1.0
         max_backoff = 300.0
@@ -160,3 +176,33 @@ class SendspinDaemon:
             except Exception:
                 logger.exception("Unexpected error during connection")
                 break
+
+    def _handle_server_command(self, payload: ServerCommandPayload) -> None:
+        """Handle server commands for player volume/mute control and save to settings."""
+        if payload.player is None or self._settings is None:
+            return
+
+        assert self._audio_handler is not None
+        player_cmd = payload.player
+
+        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
+            self._settings.update(player_volume=player_cmd.volume)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server set player volume: %d%%", player_cmd.volume)
+        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+            self._settings.update(player_muted=player_cmd.mute)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server %s player", "muted" if player_cmd.mute else "unmuted")
+
+        # Send state update back to server per spec
+        create_task(
+            self._client.send_player_state(
+                state=PlayerStateType.SYNCHRONIZED,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+            )
+        )

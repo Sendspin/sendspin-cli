@@ -72,10 +72,21 @@ class UIState:
 class SendspinUI:
     """Rich-based terminal UI for the Sendspin CLI."""
 
-    def __init__(self, delay_ms: float) -> None:
+    def __init__(
+        self,
+        delay_ms: float,
+        *,
+        player_volume: int = 100,
+        player_muted: bool = False,
+    ) -> None:
         """Initialize the UI."""
         self._console = Console()
-        self._state = UIState(delay_ms=delay_ms)
+        self._state = UIState(
+            delay_ms=delay_ms,
+            volume=player_volume,
+            player_volume=player_volume,
+            player_muted=player_muted,
+        )
         self._live: Live | None = None
         self._running = False
 

@@ -135,6 +135,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Use --list-audio-devices to see available devices."
         ),
     )
+    daemon_parser.add_argument(
+        "--settings-dir",
+        type=str,
+        default=None,
+        help="Directory to store settings (default: ~/.config/sendspin)",
+    )
 
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
@@ -286,6 +292,7 @@ async def _run_daemon_mode(args: argparse.Namespace) -> int:
         client_id=client_id,
         client_name=client_name,
         static_delay_ms=args.static_delay_ms,
+        settings_dir=args.settings_dir,
     )
 
     daemon = SendspinDaemon(daemon_config)

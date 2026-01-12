@@ -39,6 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -203,7 +204,7 @@ class SendspinApp:
     def __init__(self, config: AppConfig) -> None:
         """Initialize the application."""
         self._config = config
-        self._ui = SendspinUI(config.static_delay_ms)
+        self._ui: SendspinUI | None = None
 
         server: DiscoveredServer | None = None
         if config.url:
@@ -230,7 +231,8 @@ class SendspinApp:
             static_delay_ms=config.static_delay_ms,
         )
 
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._audio_handler: AudioStreamHandler | None = None
+        self._settings: SettingsManager | None = None
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
         self._mpris = SendspinMpris(self._client)
@@ -260,9 +262,24 @@ class SendspinApp:
             main_task.cancel()
 
         try:
+            self._settings = await get_settings_manager(SettingsMode.TUI)
+            self._state.player_volume = self._settings.player_volume
+            self._state.player_muted = self._settings.player_muted
+
+            self._ui = SendspinUI(
+                config.static_delay_ms,
+                player_volume=self._settings.player_volume,
+                player_muted=self._settings.player_muted,
+            )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {config.client_id}")
             self._ui.add_event(f"Using audio device: {config.audio_device.name}")
+
+            self._audio_handler = AudioStreamHandler(
+                audio_device=config.audio_device,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+            )
 
             await self._discovery.start()
 
@@ -281,6 +298,7 @@ class SendspinApp:
                     self._state,
                     self._audio_handler,
                     self._ui,
+                    self._settings,
                     self._show_server_selector,
                     self._on_server_selected,
                     request_shutdown,
@@ -312,10 +330,14 @@ class SendspinApp:
             logger.debug("Connection loop cancelled")
         finally:
             self._mpris.stop()
-            self._ui.stop()
-            await self._audio_handler.cleanup()
+            if self._ui:
+                self._ui.stop()
+            if self._audio_handler:
+                await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
+            if self._settings:
+                await self._settings.flush()
 
             # Show hint if delay was changed during session
             current_delay = self._client.static_delay_ms
@@ -336,6 +358,8 @@ class SendspinApp:
         server reappears. Uses exponential backoff (up to 5 min) for errors.
         """
         assert self._state.selected_server
+        assert self._audio_handler is not None
+        assert self._ui is not None
         manager = self._connection_manager
         ui = self._ui
         client = self._client
@@ -420,6 +444,7 @@ class SendspinApp:
                 break
 
     def _show_server_selector(self) -> None:
+        assert self._ui is not None
         servers = self._discovery.get_servers()
         if self._state.selected_server and self._state.selected_server not in servers:
             servers.insert(0, self._state.selected_server)
@@ -427,6 +452,7 @@ class SendspinApp:
 
     async def _on_server_selected(self) -> None:
         """Handle server selection by triggering reconnect."""
+        assert self._ui is not None
         server = self._ui.get_selected_server()
         if server is None:
             return
@@ -442,6 +468,7 @@ class SendspinApp:
 
     def _handle_metadata_update(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with metadata."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         if payload.metadata is not None and state.update_metadata(payload.metadata):
@@ -455,6 +482,7 @@ class SendspinApp:
 
     def _handle_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         # Only clear metadata when actually switching to a different group
@@ -480,6 +508,7 @@ class SendspinApp:
 
     def _handle_server_state(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with controller state."""
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         if payload.controller:
@@ -504,16 +533,23 @@ class SendspinApp:
         if payload.player is None:
             return
 
+        assert self._settings is not None
+        assert self._audio_handler is not None
+        assert self._ui is not None
         state = self._state
         ui = self._ui
         player_cmd: PlayerCommandPayload = payload.player
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             state.player_volume = player_cmd.volume
+            self._settings.update(player_volume=player_cmd.volume)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event(f"Server set player volume: {player_cmd.volume}%")
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             state.player_muted = player_cmd.mute
+            self._settings.update(player_muted=player_cmd.mute)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
