@@ -84,6 +84,7 @@ class CommandHandler:
         """Adjust static delay by delta milliseconds."""
         self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
         self._ui.set_delay(self._client.static_delay_ms)
+        self._settings.update(static_delay_ms=self._client.static_delay_ms)
 
     def close_server_selector(self) -> None:
         """Close the server selector panel."""

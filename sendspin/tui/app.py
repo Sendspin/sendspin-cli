@@ -188,32 +188,32 @@ class ConnectionManager:
 
 
 @dataclass
-class AppConfig:
+class AppArgs:
     """Configuration for the Sendspin application."""
 
     audio_device: AudioDevice
     client_id: str
     client_name: str
     url: str | None = None
-    static_delay_ms: float = 0.0
+    static_delay_ms: float | None = None
 
 
 class SendspinApp:
     """Main Sendspin application."""
 
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(self, args: AppArgs) -> None:
         """Initialize the application."""
-        self._config = config
+        self._args = args
         self._ui: SendspinUI | None = None
 
         server: DiscoveredServer | None = None
-        if config.url:
-            server = DiscoveredServer.from_url("Command-line argument", config.url)
+        if args.url:
+            server = DiscoveredServer.from_url("Command-line argument", args.url)
 
         self._state = AppState(selected_server=server)
         self._client = SendspinClient(
-            client_id=config.client_id,
-            client_name=config.client_name,
+            client_id=args.client_id,
+            client_name=args.client_name,
             roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -228,7 +228,7 @@ class SendspinApp:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=config.static_delay_ms,
+            static_delay_ms=0.0,  # Will be set after loading settings
         )
 
         self._audio_handler: AudioStreamHandler | None = None
@@ -239,7 +239,7 @@ class SendspinApp:
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
-        config = self._config
+        args = self._args
 
         # TUI requires an interactive terminal
         if not sys.stdin.isatty():
@@ -266,17 +266,24 @@ class SendspinApp:
             self._state.player_volume = self._settings.player_volume
             self._state.player_muted = self._settings.player_muted
 
+            # Determine delay: CLI arg overrides if provided, otherwise use settings
+            if args.static_delay_ms is not None:
+                delay = args.static_delay_ms
+            else:
+                delay = self._settings.static_delay_ms
+            self._client.set_static_delay_ms(delay)
+
             self._ui = SendspinUI(
-                config.static_delay_ms,
+                delay,
                 player_volume=self._settings.player_volume,
                 player_muted=self._settings.player_muted,
             )
             self._ui.start()
-            self._ui.add_event(f"Using client ID: {config.client_id}")
-            self._ui.add_event(f"Using audio device: {config.audio_device.name}")
+            self._ui.add_event(f"Using client ID: {args.client_id}")
+            self._ui.add_event(f"Using audio device: {args.audio_device.name}")
 
             self._audio_handler = AudioStreamHandler(
-                audio_device=config.audio_device,
+                audio_device=args.audio_device,
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
             )
@@ -316,8 +323,31 @@ class SendspinApp:
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
             # Get initial server URL
-            url = config.url
-            if url is None:
+            if args.url:
+                # URL provided via CLI - selected_server already set in __init__
+                pass
+            elif self._settings.last_server_url:
+                # Try last known server first
+                last_url = self._settings.last_server_url
+                self._ui.add_event(f"Trying last server at {last_url}...")
+                try:
+                    await self._client.connect(last_url)
+                    # Success - create server entry
+                    self._state.selected_server = DiscoveredServer.from_url(
+                        "Last connected", last_url
+                    )
+                    self._ui.add_event(f"Connected to {last_url}")
+                    self._ui.set_connected(last_url)
+                    self._settings.update(last_server_url=last_url)
+                    # Run connection loop starting from wait-for-disconnect
+                    await self._connection_loop(already_connected=True)
+                    return 0
+                except (TimeoutError, OSError, ClientError):
+                    # Last server unavailable, fall through to discovery
+                    self._ui.add_event("Last server unavailable, searching...")
+
+            # No URL yet - do mDNS discovery
+            if self._state.selected_server is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
                 self._ui.add_event("Searching for Sendspin server...")
                 server = await self._connection_manager.discover_server()
@@ -339,23 +369,19 @@ class SendspinApp:
             if self._settings:
                 await self._settings.flush()
 
-            # Show hint if delay was changed during session
-            current_delay = self._client.static_delay_ms
-            if current_delay != config.static_delay_ms:
-                print(  # noqa: T201
-                    f"\nDelay changed to {current_delay:.0f}ms. "
-                    f"Use '--static-delay-ms {current_delay:.0f}' next time to persist."
-                )
-
         return 0
 
-    async def _connection_loop(self) -> None:
+    async def _connection_loop(self, *, already_connected: bool = False) -> None:
         """
         Run the connection loop with automatic reconnection on disconnect.
 
         Connects to the server, waits for disconnect, cleans up, then retries
         only if the server is visible via mDNS. Reconnects immediately when
         server reappears. Uses exponential backoff (up to 5 min) for errors.
+
+        Args:
+            already_connected: If True, skip the first connection attempt
+                (used when caller already established the connection).
         """
         assert self._state.selected_server
         assert self._audio_handler is not None
@@ -367,14 +393,20 @@ class SendspinApp:
         discovery = self._discovery
         url = self._state.selected_server.url
         manager.set_last_attempted_url(url)
+        skip_connect = already_connected
 
         while True:
             try:
-                await self._client.connect(url)
-                ui.add_event(f"Connected to {url}")
-                ui.set_connected(url)
-                manager.reset_backoff()
-                manager.set_last_attempted_url(url)
+                if skip_connect:
+                    skip_connect = False
+                else:
+                    await self._client.connect(url)
+                    ui.add_event(f"Connected to {url}")
+                    ui.set_connected(url)
+                    manager.reset_backoff()
+                    manager.set_last_attempted_url(url)
+                    if self._settings:
+                        self._settings.update(last_server_url=url)
 
                 # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
@@ -401,7 +433,7 @@ class SendspinApp:
                     continue
 
                 # If URL was provided via --url, reconnect directly without mDNS
-                if self._config.url:
+                if self._args.url:
                     ui.add_event(f"Reconnecting to {url}...")
                     ui.set_disconnected(f"Reconnecting to {url}...")
                     continue

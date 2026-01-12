@@ -45,12 +45,16 @@ class Settings:
 
     player_volume: int = 100
     player_muted: bool = False
+    static_delay_ms: float = 0.0
+    last_server_url: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert settings to a dictionary for serialization."""
         return {
             "player_volume": self.player_volume,
             "player_muted": self.player_muted,
+            "static_delay_ms": self.static_delay_ms,
+            "last_server_url": self.last_server_url,
         }
 
     @classmethod
@@ -59,6 +63,8 @@ class Settings:
         return cls(
             player_volume=data.get("player_volume", 100),
             player_muted=data.get("player_muted", False),
+            static_delay_ms=data.get("static_delay_ms", 0.0),
+            last_server_url=data.get("last_server_url"),
         )
 
 
@@ -94,30 +100,52 @@ class SettingsManager:
         """Get the player muted state."""
         return self._settings.player_muted
 
+    @property
+    def static_delay_ms(self) -> float:
+        """Get the static delay in milliseconds."""
+        return self._settings.static_delay_ms
+
+    @property
+    def last_server_url(self) -> str | None:
+        """Get the last connected server URL."""
+        return self._settings.last_server_url
+
     def update(
         self,
         *,
         player_volume: int | _UndefinedType = UNDEFINED,
         player_muted: bool | _UndefinedType = UNDEFINED,
+        static_delay_ms: float | _UndefinedType = UNDEFINED,
+        last_server_url: str | None | _UndefinedType = UNDEFINED,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save.
 
         Args:
             player_volume: New player volume (0-100), or UNDEFINED to keep current.
             player_muted: New player muted state, or UNDEFINED to keep current.
+            static_delay_ms: New static delay in ms, or UNDEFINED to keep current.
+            last_server_url: New last server URL, or UNDEFINED to keep current.
         """
         changed = False
 
+        # Handle player_volume separately due to clamping
         if not isinstance(player_volume, _UndefinedType):
             player_volume = max(0, min(100, player_volume))
             if self._settings.player_volume != player_volume:
                 self._settings.player_volume = player_volume
                 changed = True
 
-        if not isinstance(player_muted, _UndefinedType):
-            if self._settings.player_muted != player_muted:
-                self._settings.player_muted = player_muted
-                changed = True
+        # Handle other fields generically
+        fields = {
+            "player_muted": player_muted,
+            "static_delay_ms": static_delay_ms,
+            "last_server_url": last_server_url,
+        }
+        for name, value in fields.items():
+            if not isinstance(value, _UndefinedType):
+                if getattr(self._settings, name) != value:
+                    setattr(self._settings, name, value)
+                    changed = True
 
         if changed:
             self._schedule_save()

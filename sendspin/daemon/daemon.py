@@ -25,31 +25,31 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DaemonConfig:
+class DaemonArgs:
     """Configuration for the Sendspin daemon."""
 
     audio_device: AudioDevice
     client_id: str
     client_name: str
     url: str | None = None
-    static_delay_ms: float = 0.0
+    static_delay_ms: float | None = None
     settings_dir: str | None = None
 
 
 class SendspinDaemon:
     """Sendspin daemon - headless audio player mode."""
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, args: DaemonArgs) -> None:
         """Initialize the daemon."""
-        self._config = config
+        self._args = args
 
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         self._client = SendspinClient(
-            client_id=config.client_id,
-            client_name=config.client_name,
+            client_id=args.client_id,
+            client_name=args.client_name,
             roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -64,7 +64,7 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=config.static_delay_ms,
+            static_delay_ms=0.0,  # Will be set after loading settings
         )
         self._audio_handler: AudioStreamHandler | None = None
         self._settings: SettingsManager | None = None
@@ -74,7 +74,7 @@ class SendspinDaemon:
     async def run(self) -> int:
         """Run the daemon."""
         logger.info("Starting Sendspin daemon: %s", self._client._client_id)
-        url = self._config.url
+        url = self._args.url
         loop = asyncio.get_running_loop()
 
         # Store reference to current task so it can be cancelled on shutdown
@@ -92,9 +92,17 @@ class SendspinDaemon:
 
         await self._discovery.start()
 
-        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._config.settings_dir)
+        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._args.settings_dir)
+
+        # Determine delay: CLI arg overrides if provided, otherwise use settings
+        if self._args.static_delay_ms is not None:
+            delay = self._args.static_delay_ms
+        else:
+            delay = self._settings.static_delay_ms
+        self._client.set_static_delay_ms(delay)
+
         self._audio_handler = AudioStreamHandler(
-            audio_device=self._config.audio_device,
+            audio_device=self._args.audio_device,
             volume=self._settings.player_volume,
             muted=self._settings.player_muted,
         )
@@ -110,7 +118,7 @@ class SendspinDaemon:
 
             self._mpris.start()
 
-            await self._connection_loop(url, use_discovery=self._config.url is None)
+            await self._connection_loop(url, use_discovery=self._args.url is None)
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
