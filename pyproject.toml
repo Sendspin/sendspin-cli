@@ -15,6 +15,7 @@ classifiers = [
 ]
 dependencies = [
   "aiosendspin>=2.0.1",
+  "aiosendspin-mpris>=2.1.0",
   "av>=14.0.0",
   "numpy>=1.24.0",
   "qrcode>=8.0",
