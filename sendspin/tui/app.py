@@ -462,7 +462,7 @@ class SendspinApp:
         state = self._state
         ui = self._ui
         # Only clear metadata when actually switching to a different group
-        # Ensure we're switching TO a group (not leaving or first join)
+        # This detects switches between two non-null groups (not first join)
         group_changed = (
             payload.group_id is not None
             and state.group_id is not None

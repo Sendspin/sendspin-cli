@@ -15,6 +15,7 @@ from aiosendspin.models.core import (
 from aiosendspin.models.types import PlayerCommand, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
+from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import PCMFormat, SendspinClient
@@ -110,7 +111,7 @@ class AudioStreamHandler:
     def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
         # Only track group changes for volume persistence
-        # Ensure we're switching TO a group (not leaving)
+        # This detects switches between two non-null groups (not first join)
         group_changed = (
             payload.group_id is not None
             and self._current_group_id is not None
@@ -160,7 +161,7 @@ class AudioStreamHandler:
             )
 
         # Send state update back to server per spec
-        asyncio.create_task(
+        create_task(
             self._client.send_player_state(
                 state=PlayerStateType.SYNCHRONIZED,
                 volume=self.audio_player.volume,
