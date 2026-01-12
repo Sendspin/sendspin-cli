@@ -7,8 +7,12 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiosendspin.models.core import ServerCommandPayload, StreamStartMessage
-from aiosendspin.models.types import PlayerCommand, Roles
+from aiosendspin.models.core import (
+    GroupUpdateServerPayload,
+    ServerCommandPayload,
+    StreamStartMessage,
+)
+from aiosendspin.models.types import PlayerCommand, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 
@@ -36,6 +40,11 @@ class AudioStreamHandler:
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
+        # Track user's preferred volume to restore after group changes
+        self._saved_player_volume: int = 100
+        self._saved_player_muted: bool = False
+        self._pending_volume_restore: bool = False
+        self._current_group_id: str | None = None
 
     def attach_client(self, client: SendspinClient) -> list[Callable[[], None]]:
         """Attach to a SendspinClient and register listeners.
@@ -55,6 +64,7 @@ class AudioStreamHandler:
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
             client.add_server_command_listener(self._on_server_command),
+            client.add_group_update_listener(self._on_group_update),
         ]
 
     def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
@@ -97,17 +107,56 @@ class AudioStreamHandler:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream clear")
 
+    def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
+        """Handle group update messages."""
+        # Only track group changes for volume persistence
+        group_changed = payload.group_id is not None and payload.group_id != self._current_group_id
+        if group_changed:
+            self._current_group_id = payload.group_id
+            # Save current volume settings before group change
+            # and flag that we should restore after server command
+            if self.audio_player is not None:
+                self._saved_player_volume = self.audio_player.volume
+                self._saved_player_muted = self.audio_player.muted
+                self._pending_volume_restore = True
+                logger.debug(
+                    "Group changed, saved volume: %d (muted: %s)",
+                    self._saved_player_volume,
+                    self._saved_player_muted,
+                )
+
     def _on_server_command(self, payload: ServerCommandPayload) -> None:
         """Handle server commands for player volume/mute control."""
-        if payload.player is None or self.audio_player is None:
+        if payload.player is None or self.audio_player is None or self._client is None:
             return
 
         player_cmd = payload.player
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             self.audio_player.set_volume(player_cmd.volume, muted=self.audio_player.muted)
+            logger.debug("Server set player volume: %d", player_cmd.volume)
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             self.audio_player.set_volume(self.audio_player.volume, muted=player_cmd.mute)
+            logger.debug("Server %s player", "muted" if player_cmd.mute else "unmuted")
+
+        # If volume restore is pending (after group change), restore saved volume
+        if self._pending_volume_restore:
+            self._pending_volume_restore = False
+            self.audio_player.set_volume(self._saved_player_volume, muted=self._saved_player_muted)
+            logger.info(
+                "Restored player volume: %d (muted: %s)",
+                self._saved_player_volume,
+                self._saved_player_muted,
+            )
+
+        # Send state update back to server per spec
+        asyncio.create_task(
+            self._client.send_player_state(
+                state=PlayerStateType.SYNCHRONIZED,
+                volume=self.audio_player.volume,
+                muted=self.audio_player.muted,
+            )
+        )
 
     def clear_queue(self) -> None:
         """Clear the audio queue to prevent desync."""

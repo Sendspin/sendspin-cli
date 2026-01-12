@@ -54,6 +54,8 @@ class CommandHandler:
         """Adjust player (local) volume by delta."""
         target = max(0, min(100, self._state.player_volume + delta))
         self._state.player_volume = target
+        # Save user preference
+        self._state.saved_player_volume = target
         # Apply volume to audio player
         if self._audio_handler.audio_player is not None:
             self._audio_handler.audio_player.set_volume(
@@ -70,6 +72,8 @@ class CommandHandler:
     async def toggle_player_mute(self) -> None:
         """Toggle player (local) mute state."""
         self._state.player_muted = not self._state.player_muted
+        # Save user preference
+        self._state.saved_player_muted = self._state.player_muted
         # Apply mute to audio player
         if self._audio_handler.audio_player is not None:
             self._audio_handler.audio_player.set_volume(

@@ -63,6 +63,10 @@ class AppState:
     player_volume: int = 100
     player_muted: bool = False
     group_id: str | None = None
+    # Track user's preferred volume to restore after group changes
+    saved_player_volume: int = 100
+    saved_player_muted: bool = False
+    pending_volume_restore: bool = False
 
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
@@ -469,6 +473,11 @@ class SendspinApp:
             ui.set_metadata(title=None, artist=None, album=None)
             ui.clear_progress()
             ui.add_event(f"Group ID: {payload.group_id}")
+            # Save current volume settings before group change
+            # and flag that we should restore after server command
+            state.saved_player_volume = state.player_volume
+            state.saved_player_muted = state.player_muted
+            state.pending_volume_restore = True
 
         if payload.group_name:
             ui.add_event(f"Group name: {payload.group_name}")
@@ -518,6 +527,19 @@ class SendspinApp:
             ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
         # Send state update back to server per spec
+        # If volume restore is pending (after group change), restore saved volume
+        if state.pending_volume_restore:
+            state.pending_volume_restore = False
+            state.player_volume = state.saved_player_volume
+            state.player_muted = state.saved_player_muted
+            # Update audio player with restored volume
+            if self._audio_handler.audio_player is not None:
+                self._audio_handler.audio_player.set_volume(
+                    state.player_volume, muted=state.player_muted
+                )
+            ui.set_player_volume(state.player_volume, muted=state.player_muted)
+            ui.add_event(f"Restored player volume: {state.player_volume}%")
+
         create_task(
             self._client.send_player_state(
                 state=PlayerStateType.SYNCHRONIZED,
