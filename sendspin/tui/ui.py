@@ -58,7 +58,7 @@ class UIState:
     # Volume
     volume: int | None = None
     muted: bool = False
-    player_volume: int = 100
+    player_volume: int = 25 # Default player volume
     player_muted: bool = False
 
     # Delay
