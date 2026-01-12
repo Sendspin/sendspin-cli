@@ -519,14 +519,23 @@ class SendspinApp:
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             state.player_volume = player_cmd.volume
+            # Apply server's command to audio player
+            if self._audio_handler.audio_player is not None:
+                self._audio_handler.audio_player.set_volume(
+                    state.player_volume, muted=state.player_muted
+                )
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event(f"Server set player volume: {player_cmd.volume}%")
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             state.player_muted = player_cmd.mute
+            # Apply server's command to audio player
+            if self._audio_handler.audio_player is not None:
+                self._audio_handler.audio_player.set_volume(
+                    state.player_volume, muted=state.player_muted
+                )
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 
-        # Send state update back to server per spec
         # If volume restore is pending (after group change), restore saved volume
         if state.pending_volume_restore:
             state.pending_volume_restore = False
@@ -540,6 +549,7 @@ class SendspinApp:
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event(f"Restored player volume: {state.player_volume}%")
 
+        # Send state update back to server per spec
         create_task(
             self._client.send_player_state(
                 state=PlayerStateType.SYNCHRONIZED,
