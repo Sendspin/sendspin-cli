@@ -110,11 +110,17 @@ class AudioStreamHandler:
     def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
         # Only track group changes for volume persistence
-        group_changed = payload.group_id is not None and payload.group_id != self._current_group_id
+        # Ensure we're switching TO a group (not leaving)
+        group_changed = (
+            payload.group_id is not None
+            and self._current_group_id is not None
+            and payload.group_id != self._current_group_id
+        )
         if group_changed:
             self._current_group_id = payload.group_id
             # Save current volume settings before group change
             # and flag that we should restore after server command
+            # Only save if audio player exists to avoid restoring stale values
             if self.audio_player is not None:
                 self._saved_player_volume = self.audio_player.volume
                 self._saved_player_muted = self.audio_player.muted
@@ -124,6 +130,10 @@ class AudioStreamHandler:
                     self._saved_player_volume,
                     self._saved_player_muted,
                 )
+        elif payload.group_id is not None and self._current_group_id is None:
+            # First time joining a group - just track it, don't set restore flag
+            self._current_group_id = payload.group_id
+            logger.debug("Joined first group: %s", self._current_group_id)
 
     def _on_server_command(self, payload: ServerCommandPayload) -> None:
         """Handle server commands for player volume/mute control."""

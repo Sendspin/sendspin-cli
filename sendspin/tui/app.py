@@ -462,7 +462,12 @@ class SendspinApp:
         state = self._state
         ui = self._ui
         # Only clear metadata when actually switching to a different group
-        group_changed = payload.group_id is not None and payload.group_id != state.group_id
+        # Ensure we're switching TO a group (not leaving or first join)
+        group_changed = (
+            payload.group_id is not None
+            and state.group_id is not None
+            and payload.group_id != state.group_id
+        )
         if group_changed:
             state.group_id = payload.group_id
             state.title = None
@@ -478,6 +483,10 @@ class SendspinApp:
             state.saved_player_volume = state.player_volume
             state.saved_player_muted = state.player_muted
             state.pending_volume_restore = True
+        elif payload.group_id is not None and state.group_id is None:
+            # First time joining a group - just track it, don't set restore flag
+            state.group_id = payload.group_id
+            ui.add_event(f"Joined group: {payload.group_id}")
 
         if payload.group_name:
             ui.add_event(f"Group name: {payload.group_name}")
