@@ -7,8 +7,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiosendspin.models.core import ServerCommandPayload, StreamStartMessage
-from aiosendspin.models.types import PlayerCommand, Roles
+from aiosendspin.models.core import StreamStartMessage
+from aiosendspin.models.types import Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 
@@ -26,16 +26,40 @@ class AudioStreamHandler:
     format changes.
     """
 
-    def __init__(self, audio_device: AudioDevice) -> None:
+    def __init__(
+        self,
+        audio_device: AudioDevice,
+        *,
+        volume: int = 100,
+        muted: bool = False,
+    ) -> None:
         """Initialize the audio stream handler.
 
         Args:
             audio_device: Audio device to use for playback.
+            volume: Initial volume (0-100).
+            muted: Initial muted state.
         """
         self._audio_device = audio_device
+        self._volume = volume
+        self._muted = muted
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
+
+    def set_volume(self, volume: int, *, muted: bool) -> None:
+        """Set the volume and muted state.
+
+        Updates the cached values and applies to the audio player if active.
+
+        Args:
+            volume: Volume level (0-100).
+            muted: Muted state.
+        """
+        self._volume = volume
+        self._muted = muted
+        if self.audio_player is not None:
+            self.audio_player.set_volume(volume, muted=muted)
 
     def attach_client(self, client: SendspinClient) -> list[Callable[[], None]]:
         """Attach to a SendspinClient and register listeners.
@@ -54,7 +78,6 @@ class AudioStreamHandler:
             client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
-            client.add_server_command_listener(self._on_server_command),
         ]
 
     def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
@@ -73,9 +96,10 @@ class AudioStreamHandler:
             self.audio_player.set_format(fmt, device=self._audio_device)
             self._current_format = fmt
 
+            self.audio_player.set_volume(self._volume, muted=self._muted)
+
         # Submit audio chunk - AudioPlayer handles timing
-        if self.audio_player is not None:
-            self.audio_player.submit(server_timestamp_us, audio_data)
+        self.audio_player.submit(server_timestamp_us, audio_data)
 
     def _on_stream_start(self, _message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""
@@ -96,18 +120,6 @@ class AudioStreamHandler:
         if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream clear")
-
-    def _on_server_command(self, payload: ServerCommandPayload) -> None:
-        """Handle server commands for player volume/mute control."""
-        if payload.player is None or self.audio_player is None:
-            return
-
-        player_cmd = payload.player
-
-        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
-            self.audio_player.set_volume(player_cmd.volume, muted=self.audio_player.muted)
-        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
-            self.audio_player.set_volume(self.audio_player.volume, muted=player_cmd.mute)
 
     def clear_queue(self) -> None:
         """Clear the audio queue to prevent desync."""

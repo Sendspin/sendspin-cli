@@ -9,44 +9,47 @@ import signal
 from dataclasses import dataclass
 
 from aiohttp import ClientError
-from aiosendspin.client import SendspinClient
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
+from aiosendspin.client import SendspinClient
+from aiosendspin.models.core import ServerCommandPayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
-from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
+from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery
-from sendspin.utils import get_device_info
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DaemonConfig:
+class DaemonArgs:
     """Configuration for the Sendspin daemon."""
 
     audio_device: AudioDevice
     client_id: str
     client_name: str
     url: str | None = None
-    static_delay_ms: float = 0.0
+    static_delay_ms: float | None = None
+    settings_dir: str | None = None
 
 
 class SendspinDaemon:
     """Sendspin daemon - headless audio player mode."""
 
-    def __init__(self, config: DaemonConfig) -> None:
+    def __init__(self, args: DaemonArgs) -> None:
         """Initialize the daemon."""
-        self._config = config
+        self._args = args
 
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         self._client = SendspinClient(
-            client_id=config.client_id,
-            client_name=config.client_name,
+            client_id=args.client_id,
+            client_name=args.client_name,
             roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
@@ -61,16 +64,17 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=config.static_delay_ms,
+            static_delay_ms=0.0,  # Will be set after loading settings
         )
-        self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
+        self._audio_handler: AudioStreamHandler | None = None
+        self._settings: SettingsManager | None = None
         self._discovery = ServiceDiscovery()
         self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:
         """Run the daemon."""
         logger.info("Starting Sendspin daemon: %s", self._client._client_id)
-        url = self._config.url
+        url = self._args.url
         loop = asyncio.get_running_loop()
 
         # Store reference to current task so it can be cancelled on shutdown
@@ -88,6 +92,21 @@ class SendspinDaemon:
 
         await self._discovery.start()
 
+        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._args.settings_dir)
+
+        # Determine delay: CLI arg overrides if provided, otherwise use settings
+        if self._args.static_delay_ms is not None:
+            delay = self._args.static_delay_ms
+        else:
+            delay = self._settings.static_delay_ms
+        self._client.set_static_delay_ms(delay)
+
+        self._audio_handler = AudioStreamHandler(
+            audio_device=self._args.audio_device,
+            volume=self._settings.player_volume,
+            muted=self._settings.player_muted,
+        )
+
         try:
             if url is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
@@ -95,23 +114,28 @@ class SendspinDaemon:
                 url = server.url
 
             self._audio_handler.attach_client(self._client)
+            self._client.add_server_command_listener(self._handle_server_command)
 
             self._mpris.start()
 
-            await self._connection_loop(url, use_discovery=self._config.url is None)
+            await self._connection_loop(url, use_discovery=self._args.url is None)
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
             self._mpris.stop()
-            await self._audio_handler.cleanup()
+            if self._audio_handler:
+                await self._audio_handler.cleanup()
             await self._client.disconnect()
             await self._discovery.stop()
+            if self._settings:
+                await self._settings.flush()
             logger.info("Daemon stopped")
 
         return 0
 
     async def _connection_loop(self, initial_url: str, use_discovery: bool) -> None:
         """Run the connection loop with automatic reconnection."""
+        assert self._audio_handler is not None
         url = initial_url
         error_backoff = 1.0
         max_backoff = 300.0
@@ -160,3 +184,33 @@ class SendspinDaemon:
             except Exception:
                 logger.exception("Unexpected error during connection")
                 break
+
+    def _handle_server_command(self, payload: ServerCommandPayload) -> None:
+        """Handle server commands for player volume/mute control and save to settings."""
+        if payload.player is None or self._settings is None:
+            return
+
+        assert self._audio_handler is not None
+        player_cmd = payload.player
+
+        if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
+            self._settings.update(player_volume=player_cmd.volume)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server set player volume: %d%%", player_cmd.volume)
+        elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
+            self._settings.update(player_muted=player_cmd.mute)
+            self._audio_handler.set_volume(
+                self._settings.player_volume, muted=self._settings.player_muted
+            )
+            logger.info("Server %s player", "muted" if player_cmd.mute else "unmuted")
+
+        # Send state update back to server per spec
+        create_task(
+            self._client.send_player_state(
+                state=PlayerStateType.SYNCHRONIZED,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+            )
+        )
