@@ -13,12 +13,17 @@ from aiosendspin.client import ClientListener, SendspinClient
 from aiosendspin.models.core import (
     ClientGoodbyeMessage,
     ClientGoodbyePayload,
-    GoodbyeReason,
     ServerCommandPayload,
 )
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
-from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
+from aiosendspin.models.types import (
+    AudioCodec,
+    GoodbyeReason,
+    PlayerCommand,
+    PlayerStateType,
+    Roles,
+)
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
