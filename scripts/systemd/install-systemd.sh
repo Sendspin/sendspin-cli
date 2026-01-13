@@ -19,6 +19,33 @@ if [ ! -t 0 ]; then
     fi
 fi
 
+# Prompt for yes/no with default to yes
+# Usage: prompt_yn "question" && do_something
+prompt_yn() {
+    local question="$1"
+    if [ "$INTERACTIVE" = true ]; then
+        read -p "$question [Y/n] " -n1 -r REPLY </dev/tty; echo
+        [[ ! $REPLY =~ ^[Nn]$ ]]
+    else
+        echo "$question [auto: yes]"
+        return 0
+    fi
+}
+
+# Prompt for input with default value
+# Usage: VAR=$(prompt_input "prompt text" "default value")
+prompt_input() {
+    local prompt="$1"
+    local default="$2"
+    if [ "$INTERACTIVE" = true ]; then
+        read -p "$prompt [$default]: " REPLY </dev/tty
+        echo "${REPLY:-$default}"
+    else
+        echo "Using default for $prompt: $default"
+        echo "$default"
+    fi
+}
+
 # Check for root via sudo, detect original user to install properly.
 [[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
 USER=${SUDO_USER:-$(whoami)}
@@ -45,13 +72,7 @@ if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
         else
             CMD="$PKG_MGR install -y libportaudio2"
         fi
-        if [ "$INTERACTIVE" = true ]; then
-            read -p "Install now? ($CMD) [Y/n] " -n1 -r </dev/tty; echo
-        else
-            REPLY="y"
-            echo "Auto-installing libportaudio2"
-        fi
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if prompt_yn "Install now? ($CMD)"; then
             $CMD || { echo -e "${R}Failed${N}"; exit 1; }
         else
             echo -e "${R}Error:${N} libportaudio2 required. Install with: ${B}$CMD${N}"; exit 1
@@ -61,18 +82,33 @@ if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     fi
 fi
 
+# Check for and offer to install libopenblas0
+if ! ldconfig -p 2>/dev/null | grep -q libopenblas.so; then
+    echo -e "${Y}Missing:${N} libopenblas0"
+    if [[ -n "$PKG_MGR" ]]; then
+        if [[ "$PKG_MGR" == "pacman" ]]; then
+            CMD="pacman -S --noconfirm openblas"
+        elif [[ "$PKG_MGR" == "dnf" || "$PKG_MGR" == "yum" ]]; then
+            CMD="$PKG_MGR install -y openblas"
+        else
+            CMD="$PKG_MGR install -y libopenblas0"
+        fi
+        if prompt_yn "Install now? ($CMD)"; then
+            $CMD || { echo -e "${R}Failed${N}"; exit 1; }
+        else
+            echo -e "${R}Error:${N} libopenblas0 required. Install with: ${B}$CMD${N}"; exit 1
+        fi
+    else
+        echo -e "${R}Error:${N} libopenblas0 required. Install via your package manager."; exit 1
+    fi
+fi
+
 # Check for and offer to install uv if needed
 if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
    ! sudo -u "$USER" test -f "/home/$USER/.cargo/bin/uv" && \
    ! sudo -u "$USER" test -f "/home/$USER/.local/bin/uv"; then
     echo -e "${Y}Missing:${N} uv"
-    if [ "$INTERACTIVE" = true ]; then
-        read -p "Install now? (curl -LsSf https://astral.sh/uv/install.sh | sh) [Y/n] " -n1 -r </dev/tty; echo
-    else
-        REPLY="y"
-        echo "Auto-installing uv"
-    fi
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if prompt_yn "Install now? (curl -LsSf https://astral.sh/uv/install.sh | sh)"; then
         sudo -u "$USER" bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh" || { echo -e "${R}Failed${N}"; exit 1; }
         echo -e "${G}✓${N} uv installed"
     else
@@ -89,22 +125,31 @@ SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
 
 # Configure
 echo ""
-if [ "$INTERACTIVE" = true ]; then
-    read -p "Client name [$(hostname)]: " NAME </dev/tty
-else
-    NAME=$(hostname)
-    echo "Using default client name: $NAME"
-fi
-NAME=${NAME:-$(hostname)}
+NAME=$(prompt_input "Client name" "$(hostname)")
 
 echo -e "\n${D}Available audio devices:${N}"
-sudo -u "$USER" bash -c "$SENDSPIN_BIN --list-audio-devices" 2>&1 | head -n -2
-if [ "$INTERACTIVE" = true ]; then
-    read -p "Audio device [default]: " DEVICE </dev/tty
-else
-    DEVICE=""
-    echo "Using default audio device"
+# Detect user's session environment for accurate audio device listing
+USER_UID=$(id -u "$USER")
+USER_RUNTIME_DIR="/run/user/$USER_UID"
+USER_DBUS=""
+
+# Try to get DBUS address from user's session
+if [ -d "$USER_RUNTIME_DIR" ]; then
+    # Try to find dbus session from user's processes
+    USER_DBUS=$(ps -u "$USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
+    [ -z "$USER_DBUS" ] && USER_DBUS="unix:path=$USER_RUNTIME_DIR/bus"
 fi
+
+# Run with user's environment
+if [ -n "$USER_DBUS" ]; then
+    sudo -u "$USER" env XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$USER_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+else
+    echo -e "${Y}Warning:${N} Cannot detect user session environment. Audio devices may not be accurate."
+    sudo -u "$USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+fi
+
+DEVICE=$(prompt_input "Audio device" "default")
+[ "$DEVICE" = "default" ] && DEVICE=""
 
 # Save config
 cat > /etc/default/sendspin << EOF
@@ -155,24 +200,8 @@ systemctl daemon-reload
 
 # Enable and start
 echo ""
-if [ "$INTERACTIVE" = true ]; then
-    read -p "Enable on boot? [Y/n] " -n1 -r </dev/tty; echo
-else
-    REPLY="y"
-    echo "Auto-enabling service on boot"
-fi
-[[ ! $REPLY =~ ^[Nn]$ ]] && systemctl enable sendspin.service &>/dev/null
-
-if [ "$INTERACTIVE" = true ]; then
-    read -p "Start now? [Y/n] " -n1 -r </dev/tty; echo
-else
-    REPLY="y"
-    echo "Auto-starting service"
-fi
-if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-    systemctl start sendspin.service
-    echo -e "\n${G}✓${N} Service started"
-fi
+prompt_yn "Enable on boot?" && systemctl enable sendspin.service &>/dev/null
+prompt_yn "Start now?" && systemctl start sendspin.service && echo -e "\n${G}✓${N} Service started"
 
 # Summary
 echo -e "\n${B}Installation Complete${N}"
