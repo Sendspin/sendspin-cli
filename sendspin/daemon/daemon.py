@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
-from aiohttp import ClientError, web
-from aiosendspin.client import ClientListener, SendspinClient
+from aiohttp import web
+from aiosendspin.client import ClientListener
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
 
@@ -158,6 +158,7 @@ class SendspinDaemon:
         # Create a new client for this connection
         self._client = self._create_client()
         self._audio_handler.attach_client(self._client)
+        self._mpris = SendspinMpris(self._client)
 
         try:
             await self._client.attach_websocket(ws)
