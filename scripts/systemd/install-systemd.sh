@@ -2,8 +2,22 @@
 # Sendspin systemd service installation
 set -e
 
+# Ensure output is visible even when piped
+exec 2>&1
+
 # Colors
 C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; D='\033[2m'; N='\033[0m'
+
+# Detect if running interactively
+INTERACTIVE=true
+if [ ! -t 0 ]; then
+    # stdin is not a terminal (piped)
+    if [ ! -c /dev/tty ]; then
+        # No TTY available - fully non-interactive
+        INTERACTIVE=false
+        echo "Running in non-interactive mode - using defaults" >&2
+    fi
+fi
 
 # Check for root via sudo, detect original user to install properly.
 [[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
@@ -27,15 +41,20 @@ if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     echo -e "${Y}Missing:${N} libportaudio2"
     if [[ -n "$PKG_MGR" ]]; then
         if [[ "$PKG_MGR" == "pacman" ]]; then
-            CMD="pacman -S portaudio"
+            CMD="pacman -S --noconfirm portaudio"
         else
-            CMD="$PKG_MGR install libportaudio2"
+            CMD="$PKG_MGR install -y libportaudio2"
         fi
-        read -p "Install now? (sudo $CMD) [Y/n] " -n1 -r; echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-            sudo $CMD || { echo -e "${R}Failed${N}"; exit 1; }
+        if [ "$INTERACTIVE" = true ]; then
+            read -p "Install now? ($CMD) [Y/n] " -n1 -r </dev/tty; echo
         else
-            echo -e "${R}Error:${N} libportaudio2 required. Install with: ${B}sudo $CMD${N}"; exit 1
+            REPLY="y"
+            echo "Auto-installing libportaudio2"
+        fi
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            $CMD || { echo -e "${R}Failed${N}"; exit 1; }
+        else
+            echo -e "${R}Error:${N} libportaudio2 required. Install with: ${B}$CMD${N}"; exit 1
         fi
     else
         echo -e "${R}Error:${N} libportaudio2 required. Install via your package manager."; exit 1
@@ -47,7 +66,12 @@ if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
    ! sudo -u "$USER" test -f "/home/$USER/.cargo/bin/uv" && \
    ! sudo -u "$USER" test -f "/home/$USER/.local/bin/uv"; then
     echo -e "${Y}Missing:${N} uv"
-    read -p "Install now? (curl -LsSf https://astral.sh/uv/install.sh | sh) [Y/n] " -n1 -r; echo
+    if [ "$INTERACTIVE" = true ]; then
+        read -p "Install now? (curl -LsSf https://astral.sh/uv/install.sh | sh) [Y/n] " -n1 -r </dev/tty; echo
+    else
+        REPLY="y"
+        echo "Auto-installing uv"
+    fi
     if [[ ! $REPLY =~ ^[Nn]$ ]]; then
         sudo -u "$USER" bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh" || { echo -e "${R}Failed${N}"; exit 1; }
         echo -e "${G}✓${N} uv installed"
@@ -65,12 +89,22 @@ SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
 
 # Configure
 echo ""
-read -p "Client name [$(hostname)]: " NAME
+if [ "$INTERACTIVE" = true ]; then
+    read -p "Client name [$(hostname)]: " NAME </dev/tty
+else
+    NAME=$(hostname)
+    echo "Using default client name: $NAME"
+fi
 NAME=${NAME:-$(hostname)}
 
 echo -e "\n${D}Available audio devices:${N}"
 sudo -u "$USER" bash -c "$SENDSPIN_BIN --list-audio-devices" 2>&1 | head -n -2
-read -p "Audio device [default]: " DEVICE
+if [ "$INTERACTIVE" = true ]; then
+    read -p "Audio device [default]: " DEVICE </dev/tty
+else
+    DEVICE=""
+    echo "Using default audio device"
+fi
 
 # Save config
 cat > /etc/default/sendspin << EOF
@@ -121,10 +155,20 @@ systemctl daemon-reload
 
 # Enable and start
 echo ""
-read -p "Enable on boot? [Y/n] " -n1 -r; echo
+if [ "$INTERACTIVE" = true ]; then
+    read -p "Enable on boot? [Y/n] " -n1 -r </dev/tty; echo
+else
+    REPLY="y"
+    echo "Auto-enabling service on boot"
+fi
 [[ ! $REPLY =~ ^[Nn]$ ]] && systemctl enable sendspin.service &>/dev/null
 
-read -p "Start now? [Y/n] " -n1 -r; echo
+if [ "$INTERACTIVE" = true ]; then
+    read -p "Start now? [Y/n] " -n1 -r </dev/tty; echo
+else
+    REPLY="y"
+    echo "Auto-starting service"
+fi
 if [[ ! $REPLY =~ ^[Nn]$ ]]; then
     systemctl start sendspin.service
     echo -e "\n${G}✓${N} Service started"
