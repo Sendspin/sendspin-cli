@@ -85,17 +85,6 @@ class SendspinDaemon:
             static_delay_ms=static_delay_ms,
         )
 
-    async def _send_goodbye(self, reason: GoodbyeReason) -> None:
-        """Send a client/goodbye message to the server before disconnecting."""
-        if self._client is None or not self._client.connected:
-            return
-        payload = ClientGoodbyePayload(reason=reason)
-        message = ClientGoodbyeMessage(payload=payload)
-        try:
-            await self._client._send_message(message.to_json())  # noqa: SLF001
-        except Exception:
-            logger.debug("Failed to send goodbye message", exc_info=True)
-
     async def run(self) -> int:
         """Run the daemon."""
         logger.info("Starting Sendspin daemon: %s", self._args.client_id)
@@ -199,7 +188,14 @@ class SendspinDaemon:
             if self._mpris is not None:
                 self._mpris.stop()
             await self._audio_handler.cleanup()
-            await self._send_goodbye(GoodbyeReason.ANOTHER_SERVER)
+            if self._client.connected:
+                goodbye = ClientGoodbyeMessage(
+                    payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
+                )
+                try:
+                    await self._client._send_message(goodbye.to_json())  # noqa: SLF001
+                except Exception:
+                    logger.debug("Failed to send goodbye message", exc_info=True)
             await self._client.disconnect()
 
         # Create a new client for this connection
