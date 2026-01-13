@@ -128,7 +128,26 @@ echo ""
 NAME=$(prompt_input "Client name" "$(hostname)")
 
 echo -e "\n${D}Available audio devices:${N}"
-sudo -u "$USER" bash -c "$SENDSPIN_BIN --list-audio-devices" 2>&1 | head -n -2
+# Detect user's session environment for accurate audio device listing
+USER_UID=$(id -u "$USER")
+USER_RUNTIME_DIR="/run/user/$USER_UID"
+USER_DBUS=""
+
+# Try to get DBUS address from user's session
+if [ -d "$USER_RUNTIME_DIR" ]; then
+    # Try to find dbus session from user's processes
+    USER_DBUS=$(ps -u "$USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
+    [ -z "$USER_DBUS" ] && USER_DBUS="unix:path=$USER_RUNTIME_DIR/bus"
+fi
+
+# Run with user's environment
+if [ -n "$USER_DBUS" ]; then
+    sudo -u "$USER" env XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$USER_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+else
+    echo -e "${Y}Warning:${N} Cannot detect user session environment. Audio devices may not be accurate."
+    sudo -u "$USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+fi
+
 DEVICE=$(prompt_input "Audio device" "default")
 [ "$DEVICE" = "default" ] && DEVICE=""
 
