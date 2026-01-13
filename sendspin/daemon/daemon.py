@@ -10,7 +10,12 @@ from dataclasses import dataclass
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
-from aiosendspin.models.core import ServerCommandPayload
+from aiosendspin.models.core import (
+    ClientGoodbyeMessage,
+    ClientGoodbyePayload,
+    GoodbyeReason,
+    ServerCommandPayload,
+)
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
@@ -79,6 +84,17 @@ class SendspinDaemon:
             ),
             static_delay_ms=static_delay_ms,
         )
+
+    async def _send_goodbye(self, reason: GoodbyeReason) -> None:
+        """Send a client/goodbye message to the server before disconnecting."""
+        if self._client is None or not self._client.connected:
+            return
+        payload = ClientGoodbyePayload(reason=reason)
+        message = ClientGoodbyeMessage(payload=payload)
+        try:
+            await self._client._send_message(message.to_json())  # noqa: SLF001
+        except Exception:
+            logger.debug("Failed to send goodbye message", exc_info=True)
 
     async def run(self) -> int:
         """Run the daemon."""
@@ -179,10 +195,11 @@ class SendspinDaemon:
 
         # Clean up any previous client
         if self._client is not None:
-            logger.info("Disconnecting from previous server")
+            logger.info("Disconnecting from previous server (another_server)")
             if self._mpris is not None:
                 self._mpris.stop()
             await self._audio_handler.cleanup()
+            await self._send_goodbye(GoodbyeReason.ANOTHER_SERVER)
             await self._client.disconnect()
 
         # Create a new client for this connection
