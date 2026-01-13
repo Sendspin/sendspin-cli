@@ -82,6 +82,27 @@ if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     fi
 fi
 
+# Check for and offer to install libopenblas0
+if ! ldconfig -p 2>/dev/null | grep -q libopenblas.so; then
+    echo -e "${Y}Missing:${N} libopenblas0"
+    if [[ -n "$PKG_MGR" ]]; then
+        if [[ "$PKG_MGR" == "pacman" ]]; then
+            CMD="pacman -S --noconfirm openblas"
+        elif [[ "$PKG_MGR" == "dnf" || "$PKG_MGR" == "yum" ]]; then
+            CMD="$PKG_MGR install -y openblas"
+        else
+            CMD="$PKG_MGR install -y libopenblas0"
+        fi
+        if prompt_yn "Install now? ($CMD)"; then
+            $CMD || { echo -e "${R}Failed${N}"; exit 1; }
+        else
+            echo -e "${R}Error:${N} libopenblas0 required. Install with: ${B}$CMD${N}"; exit 1
+        fi
+    else
+        echo -e "${R}Error:${N} libopenblas0 required. Install via your package manager."; exit 1
+    fi
+fi
+
 # Check for and offer to install uv if needed
 if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
    ! sudo -u "$USER" test -f "/home/$USER/.cargo/bin/uv" && \
