@@ -163,7 +163,7 @@ async def run_server(config: ServeConfig) -> int:
         for client_url in config.clients:
             try:
                 print(f"Connecting to client: {client_url}")
-                await server.connect_to_client(client_url)
+                server.connect_to_client(client_url)
             except Exception as e:
                 logger.warning("Failed to connect to client %s: %s", client_url, e)
                 print(f"Warning: Failed to connect to client {client_url}: {e}")
