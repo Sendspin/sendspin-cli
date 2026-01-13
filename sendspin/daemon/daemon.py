@@ -49,6 +49,7 @@ class SendspinDaemon:
         self._audio_handler = AudioStreamHandler(audio_device=config.audio_device)
         self._client: SendspinClient | None = None
         self._listener: ClientListener | None = None
+        self._mpris: SendspinMpris | None = None
 
     def _create_client(self) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -104,7 +105,8 @@ class SendspinDaemon:
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
-            self._mpris.stop()
+            if self._mpris is not None:
+                self._mpris.stop()
             await self._audio_handler.cleanup()
             if self._client is not None:
                 await self._client.disconnect()
@@ -121,6 +123,7 @@ class SendspinDaemon:
         assert self._config.url is not None
         self._client = self._create_client()
         self._mpris = SendspinMpris(self._client)
+        self._mpris.start()
         self._audio_handler.attach_client(self._client)
         await self._connection_loop(self._config.url)
 
@@ -152,6 +155,8 @@ class SendspinDaemon:
         # Clean up any previous client
         if self._client is not None:
             logger.info("Disconnecting from previous server")
+            if self._mpris is not None:
+                self._mpris.stop()
             await self._audio_handler.cleanup()
             await self._client.disconnect()
 
@@ -159,6 +164,7 @@ class SendspinDaemon:
         self._client = self._create_client()
         self._audio_handler.attach_client(self._client)
         self._mpris = SendspinMpris(self._client)
+        self._mpris.start()
 
         try:
             await self._client.attach_websocket(ws)
