@@ -94,6 +94,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level to use",
     )
+    serve_parser.add_argument(
+        "--client",
+        action="append",
+        dest="clients",
+        default=[],
+        help="Client URL to connect to (can be specified multiple times)",
+    )
 
     # Daemon subcommand
     daemon_parser = subparsers.add_parser(
@@ -341,6 +348,7 @@ def main() -> int:
             source=source,
             port=args.port,
             name=args.name,
+            clients=args.clients if args.clients else None,
         )
         try:
             return asyncio.run(run_server(serve_config))
