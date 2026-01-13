@@ -10,10 +10,20 @@ from dataclasses import dataclass
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
-from aiosendspin.models.core import ServerCommandPayload
+from aiosendspin.models.core import (
+    ClientGoodbyeMessage,
+    ClientGoodbyePayload,
+    ServerCommandPayload,
+)
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
-from aiosendspin.models.types import AudioCodec, PlayerCommand, PlayerStateType, Roles
+from aiosendspin.models.types import (
+    AudioCodec,
+    GoodbyeReason,
+    PlayerCommand,
+    PlayerStateType,
+    Roles,
+)
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
@@ -183,6 +193,15 @@ class SendspinDaemon:
             if self._mpris is not None:
                 self._mpris.stop()
             await self._audio_handler.cleanup()
+            if self._client.connected:
+                try:
+                    await self._client._send_message(  # noqa: SLF001
+                        ClientGoodbyeMessage(
+                            payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
+                        ).to_json()
+                    )
+                except Exception:
+                    logger.debug("Failed to send goodbye message", exc_info=True)
             await self._client.disconnect()
 
         # Create a new client for this connection
