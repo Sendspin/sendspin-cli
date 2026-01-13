@@ -184,7 +184,7 @@ class SendspinDaemon:
 
         # Clean up any previous client
         if self._client is not None:
-            logger.info("Disconnecting from previous server (another_server)")
+            logger.info("Disconnecting from previous server")
             if self._mpris is not None:
                 self._mpris.stop()
             await self._audio_handler.cleanup()
