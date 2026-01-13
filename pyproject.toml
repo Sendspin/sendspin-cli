@@ -14,8 +14,8 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aiosendspin>=2.1.0",
-  "aiosendspin-mpris>=2.1.0",
+  "aiosendspin~=2.1",
+  "aiosendspin-mpris~=2.1",
   "av>=14.0.0",
   "numpy>=1.24.0",
   "qrcode>=8.0",
