@@ -189,11 +189,12 @@ class SendspinDaemon:
                 self._mpris.stop()
             await self._audio_handler.cleanup()
             if self._client.connected:
-                goodbye = ClientGoodbyeMessage(
-                    payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
-                )
                 try:
-                    await self._client._send_message(goodbye.to_json())  # noqa: SLF001
+                    await self._client._send_message(  # noqa: SLF001
+                        ClientGoodbyeMessage(
+                            payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
+                        ).to_json()
+                    )
                 except Exception:
                     logger.debug("Failed to send goodbye message", exc_info=True)
             await self._client.disconnect()
