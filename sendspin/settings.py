@@ -43,7 +43,7 @@ class SettingsMode(Enum):
 class Settings:
     """All persistent settings for the Sendspin CLI."""
 
-    player_volume: int = 100
+    player_volume: int = 25
     player_muted: bool = False
     static_delay_ms: float = 0.0
     last_server_url: str | None = None
@@ -61,7 +61,7 @@ class Settings:
     def from_dict(cls, data: dict[str, Any]) -> Settings:
         """Create settings from a dictionary."""
         return cls(
-            player_volume=data.get("player_volume", 100),
+            player_volume=data.get("player_volume", 25),
             player_muted=data.get("player_muted", False),
             static_delay_ms=data.get("static_delay_ms", 0.0),
             last_server_url=data.get("last_server_url"),
