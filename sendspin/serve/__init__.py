@@ -58,6 +58,7 @@ class ServeConfig:
     source: str
     port: int = 8927
     name: str = "Sendspin Server"
+    clients: list[str] | None = None
 
 
 def _windows_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
@@ -156,6 +157,16 @@ async def run_server(config: ServeConfig) -> int:
         raise OSError(f"Could not find available port after {max_attempts} attempts")
 
     await server.start_server(port=port, discover_clients=False)
+
+    # Connect to specified clients
+    if config.clients:
+        for client_url in config.clients:
+            try:
+                print(f"Connecting to client: {client_url}")
+                server.connect_to_client(client_url)
+            except Exception as e:
+                logger.warning("Failed to connect to client %s: %s", client_url, e)
+                print(f"Warning: Failed to connect to client {client_url}: {e}")
 
     local_ip = get_local_ip()
     url = f"http://{local_ip}:{port}/"

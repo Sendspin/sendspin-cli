@@ -201,4 +201,6 @@ sendspin serve /path/to/media.mp3
 sendspin serve https://retro.dancewave.online/retrodance.mp3
 # Without pre-installing Sendspin
 uvx sendspin serve /path/to/media.mp3
+# Connect to specific clients
+sendspin serve --demo --client ws://192.168.1.50:8927/sendspin --client ws://192.168.1.51:8927/sendspin
 ```
