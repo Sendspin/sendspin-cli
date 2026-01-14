@@ -39,7 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
-from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.settings import SettingsManager
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -194,6 +194,7 @@ class AppArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
+    settings: SettingsManager
     url: str | None = None
     static_delay_ms: float | None = None
 
@@ -262,7 +263,7 @@ class SendspinApp:
             main_task.cancel()
 
         try:
-            self._settings = await get_settings_manager(SettingsMode.TUI)
+            self._settings = self._args.settings
             self._state.player_volume = self._settings.player_volume
             self._state.player_muted = self._settings.player_muted
 

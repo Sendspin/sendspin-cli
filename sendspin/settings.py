@@ -47,6 +47,14 @@ class Settings:
     player_muted: bool = False
     static_delay_ms: float = 0.0
     last_server_url: str | None = None
+    # Client identification
+    client_name: str | None = None
+    client_id: str | None = None
+    # Audio and logging
+    audio_device: str | None = None
+    log_level: str | None = None
+    # Daemon-only settings
+    listen_port: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert settings to a dictionary for serialization."""
@@ -55,6 +63,11 @@ class Settings:
             "player_muted": self.player_muted,
             "static_delay_ms": self.static_delay_ms,
             "last_server_url": self.last_server_url,
+            "client_name": self.client_name,
+            "client_id": self.client_id,
+            "audio_device": self.audio_device,
+            "log_level": self.log_level,
+            "listen_port": self.listen_port,
         }
 
     @classmethod
@@ -65,6 +78,11 @@ class Settings:
             player_muted=data.get("player_muted", False),
             static_delay_ms=data.get("static_delay_ms", 0.0),
             last_server_url=data.get("last_server_url"),
+            client_name=data.get("client_name"),
+            client_id=data.get("client_id"),
+            audio_device=data.get("audio_device"),
+            log_level=data.get("log_level"),
+            listen_port=data.get("listen_port"),
         )
 
 
@@ -110,6 +128,31 @@ class SettingsManager:
         """Get the last connected server URL."""
         return self._settings.last_server_url
 
+    @property
+    def client_name(self) -> str | None:
+        """Get the client name."""
+        return self._settings.client_name
+
+    @property
+    def client_id(self) -> str | None:
+        """Get the client ID."""
+        return self._settings.client_id
+
+    @property
+    def audio_device(self) -> str | None:
+        """Get the audio device specifier."""
+        return self._settings.audio_device
+
+    @property
+    def log_level(self) -> str | None:
+        """Get the log level."""
+        return self._settings.log_level
+
+    @property
+    def listen_port(self) -> int | None:
+        """Get the listen port (daemon mode)."""
+        return self._settings.listen_port
+
     def update(
         self,
         *,
@@ -117,6 +160,11 @@ class SettingsManager:
         player_muted: bool | _UndefinedType = UNDEFINED,
         static_delay_ms: float | _UndefinedType = UNDEFINED,
         last_server_url: str | None | _UndefinedType = UNDEFINED,
+        client_name: str | None | _UndefinedType = UNDEFINED,
+        client_id: str | None | _UndefinedType = UNDEFINED,
+        audio_device: str | None | _UndefinedType = UNDEFINED,
+        log_level: str | None | _UndefinedType = UNDEFINED,
+        listen_port: int | None | _UndefinedType = UNDEFINED,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save.
 
@@ -125,6 +173,11 @@ class SettingsManager:
             player_muted: New player muted state, or UNDEFINED to keep current.
             static_delay_ms: New static delay in ms, or UNDEFINED to keep current.
             last_server_url: New last server URL, or UNDEFINED to keep current.
+            client_name: New client name, or UNDEFINED to keep current.
+            client_id: New client ID, or UNDEFINED to keep current.
+            audio_device: New audio device specifier, or UNDEFINED to keep current.
+            log_level: New log level, or UNDEFINED to keep current.
+            listen_port: New listen port (daemon mode), or UNDEFINED to keep current.
         """
         changed = False
 
@@ -140,6 +193,11 @@ class SettingsManager:
             "player_muted": player_muted,
             "static_delay_ms": static_delay_ms,
             "last_server_url": last_server_url,
+            "client_name": client_name,
+            "client_id": client_id,
+            "audio_device": audio_device,
+            "log_level": log_level,
+            "listen_port": listen_port,
         }
         for name, value in fields.items():
             if not isinstance(value, _UndefinedType):

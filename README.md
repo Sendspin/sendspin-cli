@@ -69,6 +69,45 @@ The player will automatically connect to a Sendspin server on your local network
 
 ## Configuration Options
 
+Sendspin stores settings in JSON configuration files that persist between sessions. All command-line arguments can also be set in the config file, with CLI arguments taking precedence over stored settings.
+
+### Configuration File
+
+Settings are stored in `~/.config/sendspin/`:
+- `settings-tui.json` - Settings for the interactive TUI client
+- `settings-daemon.json` - Settings for daemon mode
+
+**Example configuration file:**
+```json
+{
+  "player_volume": 50,
+  "player_muted": false,
+  "static_delay_ms": -100.0,
+  "last_server_url": "ws://192.168.1.100:8927/sendspin",
+  "client_name": "Living Room",
+  "client_id": "sendspin-living-room",
+  "audio_device": "2",
+  "log_level": "INFO",
+  "listen_port": 8927
+}
+```
+
+**Available settings:**
+
+| Setting | Type | Description |
+|---------|------|-------------|
+| `player_volume` | integer (0-100) | Player output volume percentage |
+| `player_muted` | boolean | Whether the player is muted |
+| `static_delay_ms` | float | Extra playback delay in milliseconds |
+| `last_server_url` | string | Server URL (used as default for `--url`) |
+| `client_name` | string | Friendly name for this client (`--name`) |
+| `client_id` | string | Unique client identifier (`--id`) |
+| `audio_device` | string | Audio device index or name prefix (`--audio-device`) |
+| `log_level` | string | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
+| `listen_port` | integer | Listen port for daemon mode (`--port`) |
+
+Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
+
 ### Server Connection
 
 By default, the player automatically discovers Sendspin servers on your local network using mDNS. You can also connect directly to a specific server:
@@ -156,7 +195,6 @@ This provides detailed information about time synchronization. The output can be
 This player is highly experimental and has several known limitations:
 
 - **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
-- **Configuration Persistence**: Settings are not persistently stored; delay must be reconfigured on each restart using the `--static-delay-ms` option
 
 ## Install as Daemon (systemd, Linux)
 

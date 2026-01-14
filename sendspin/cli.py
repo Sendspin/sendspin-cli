@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import socket
 import sys
+import traceback
 from collections.abc import Sequence
 from importlib.metadata import version
-import socket
 from typing import TYPE_CHECKING
+
+from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
 
 if TYPE_CHECKING:
     from sendspin.audio import AudioDevice
@@ -123,7 +126,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     daemon_parser.add_argument(
         "--port",
         type=int,
-        default=8927,
+        default=None,
         help="Port to listen on for incoming server connections (default: 8927)",
     )
     daemon_parser.add_argument(
@@ -138,9 +141,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     daemon_parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level to use",
+        help="Logging level to use (default: INFO)",
     )
     daemon_parser.add_argument(
         "--static-delay-ms",
@@ -182,9 +185,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level to use",
+        help="Logging level to use (default: INFO)",
     )
     parser.add_argument(
         "--static-delay-ms",
@@ -248,6 +251,50 @@ class CLIError(Exception):
         self.exit_code = exit_code
 
 
+def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager) -> None:
+    """Apply settings as defaults for CLI arguments that weren't provided.
+
+    CLI arguments take precedence over settings. Settings take precedence over
+    hard-coded defaults.
+
+    Args:
+        args: Parsed CLI arguments (modified in place).
+        settings: Loaded settings manager to use as defaults.
+    """
+    # URL defaults to last_server_url from settings
+    if args.url is None and settings.last_server_url is not None:
+        args.url = settings.last_server_url
+
+    # Client identification
+    if args.name is None and settings.client_name is not None:
+        args.name = settings.client_name
+    if args.id is None and settings.client_id is not None:
+        args.id = settings.client_id
+
+    # Audio device
+    if args.audio_device is None and settings.audio_device is not None:
+        args.audio_device = settings.audio_device
+
+    # Static delay
+    if args.static_delay_ms is None and settings.static_delay_ms != 0.0:
+        args.static_delay_ms = settings.static_delay_ms
+
+    # Log level (default to INFO if neither CLI nor settings provide it)
+    if args.log_level is None:
+        if settings.log_level is not None:
+            args.log_level = settings.log_level
+        else:
+            args.log_level = "INFO"
+
+    # Daemon-only: listen port (default to 8927)
+    if hasattr(args, "port") and args.command == "daemon":
+        if args.port is None:
+            if settings.listen_port is not None:
+                args.port = settings.listen_port
+            else:
+                args.port = 8927
+
+
 def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
     """Resolve audio device from CLI argument.
 
@@ -302,7 +349,7 @@ def _resolve_client_info(client_id: str | None, client_name: str | None) -> tupl
     return client_id, client_name
 
 
-async def _run_daemon_mode(args: argparse.Namespace) -> int:
+async def _run_daemon_mode(args: argparse.Namespace, settings: SettingsManager) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
@@ -313,9 +360,9 @@ async def _run_daemon_mode(args: argparse.Namespace) -> int:
         url=args.url,
         client_id=client_id,
         client_name=client_name,
+        settings=settings,
         static_delay_ms=args.static_delay_ms,
         listen_port=args.port,
-        settings_dir=args.settings_dir,
     )
 
     daemon = SendspinDaemon(daemon_args)
@@ -324,14 +371,15 @@ async def _run_daemon_mode(args: argparse.Namespace) -> int:
 
 def main() -> int:
     """Run the CLI client."""
-    import logging
-
     args = parse_args(sys.argv[1:])
 
-    logging.basicConfig(level=getattr(logging, args.log_level))
-
-    # Handle serve subcommand
+    # Handle serve subcommand (doesn't use settings)
     if args.command == "serve":
+        # Apply default log level for serve command
+        if args.log_level is None:
+            args.log_level = "INFO"
+        logging.basicConfig(level=getattr(logging, args.log_level))
+
         from sendspin.serve import ServeConfig, run_server
 
         # Determine audio source
@@ -356,8 +404,6 @@ def main() -> int:
             return 0
         except Exception as e:
             print(f"Server error: {e}")
-            import traceback
-
             traceback.print_exc()
             return 1
 
@@ -384,15 +430,27 @@ def main() -> int:
 
 async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
+    # Determine mode and load settings
+    is_daemon = args.command == "daemon" or getattr(args, "headless", False)
+    mode = SettingsMode.DAEMON if is_daemon else SettingsMode.TUI
+    settings_dir = getattr(args, "settings_dir", None)
+    settings = await get_settings_manager(mode, settings_dir)
+
+    # Apply settings as defaults for CLI arguments
+    _apply_settings_defaults(args, settings)
+
+    # Set up logging with resolved log level
+    logging.basicConfig(level=getattr(logging, args.log_level))
+
     # Handle daemon subcommand
     if args.command == "daemon":
-        return await _run_daemon_mode(args)
+        return await _run_daemon_mode(args, settings)
 
     # Handle deprecated --headless flag
     if args.headless:
         print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
         print("Routing to daemon mode...\n")
-        return await _run_daemon_mode(args)
+        return await _run_daemon_mode(args, settings)
 
     from sendspin.tui.app import AppArgs, SendspinApp
 
@@ -403,6 +461,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         url=args.url,
         client_id=client_id,
         client_name=client_name,
+        settings=settings,
         static_delay_ms=args.static_delay_ms,
     )
 
