@@ -378,7 +378,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
         source=source,
         port=args.port,
         name=args.name,
-        clients=args.clients or None,
+        clients=args.clients or settings.clients,
     )
     return await run_server(serve_config)
 

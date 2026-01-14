@@ -193,6 +193,7 @@ class ServeSettings(BaseSettings):
     """Settings for serve mode."""
 
     source: str | None = None
+    clients: list[str] | None = None
 
     def update(
         self,
@@ -201,6 +202,7 @@ class ServeSettings(BaseSettings):
         log_level: str | None = None,
         listen_port: int | None = None,
         source: str | None = None,
+        clients: list[str] | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = self._update_fields(
@@ -209,6 +211,7 @@ class ServeSettings(BaseSettings):
                 "log_level": log_level,
                 "listen_port": listen_port,
                 "source": source,
+                "clients": clients,
             }
         )
 
@@ -227,6 +230,7 @@ class ServeSettings(BaseSettings):
             self.log_level = data.get("log_level")
             self.listen_port = data.get("listen_port")
             self.source = data.get("source")
+            self.clients = data.get("clients")
             logger.info("Loaded settings from %s", self._settings_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
