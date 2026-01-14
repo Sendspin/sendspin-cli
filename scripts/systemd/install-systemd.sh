@@ -118,7 +118,7 @@ fi
 
 # Install sendspin
 echo -e "\n${D}Installing sendspin...${N}"
-sudo -u "$USER" bash -l -c "uv tool install sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+sudo -u "$USER" bash -l -c "uv tool install --upgrade sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
 
 # Grab the proper bin path from uv (in case it's non-standard)
 SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
