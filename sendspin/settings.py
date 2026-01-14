@@ -261,7 +261,7 @@ class SettingsManager:
 
 
 async def get_settings_manager(
-    mode: SettingsMode, config_dir: Path | str | None = None
+    mode: SettingsMode, config_dir: str | None = None
 ) -> SettingsManager:
     """Create and load a settings manager for the given mode.
 
@@ -275,11 +275,8 @@ async def get_settings_manager(
     Returns:
         A new SettingsManager instance with settings loaded from disk.
     """
-    if config_dir is None:
-        config_dir = Path.home() / ".config" / "sendspin"
-    elif isinstance(config_dir, str):
-        config_dir = Path(config_dir)
-    settings_file = config_dir / f"settings-{mode.value}.json"
+    config_path = Path(config_dir) if config_dir else Path.home() / ".config" / "sendspin"
+    settings_file = config_path / f"settings-{mode.value}.json"
     manager = SettingsManager(settings_file)
     await manager.load()
     return manager

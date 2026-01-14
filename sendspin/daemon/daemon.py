@@ -110,11 +110,12 @@ class SendspinDaemon:
 
         self._settings = self._args.settings
 
-        # Determine delay: CLI arg overrides if provided, otherwise use settings
-        if self._args.static_delay_ms is not None:
-            delay = self._args.static_delay_ms
-        else:
-            delay = self._settings.static_delay_ms
+        # CLI arg overrides settings for static delay
+        delay = (
+            self._args.static_delay_ms
+            if self._args.static_delay_ms is not None
+            else self._settings.static_delay_ms
+        )
 
         self._audio_handler = AudioStreamHandler(
             audio_device=self._args.audio_device,
@@ -176,11 +177,8 @@ class SendspinDaemon:
         await self._listener.start()
 
         # Keep running until cancelled
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(3600)
 
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""

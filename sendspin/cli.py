@@ -261,38 +261,25 @@ def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager
         args: Parsed CLI arguments (modified in place).
         settings: Loaded settings manager to use as defaults.
     """
-    # URL defaults to last_server_url from settings
-    if args.url is None and settings.last_server_url is not None:
+    # Apply settings as defaults for unset CLI arguments
+    if args.url is None:
         args.url = settings.last_server_url
-
-    # Client identification
-    if args.name is None and settings.client_name is not None:
+    if args.name is None:
         args.name = settings.client_name
-    if args.id is None and settings.client_id is not None:
+    if args.id is None:
         args.id = settings.client_id
-
-    # Audio device
-    if args.audio_device is None and settings.audio_device is not None:
+    if args.audio_device is None:
         args.audio_device = settings.audio_device
-
-    # Static delay
     if args.static_delay_ms is None and settings.static_delay_ms != 0.0:
         args.static_delay_ms = settings.static_delay_ms
 
-    # Log level (default to INFO if neither CLI nor settings provide it)
+    # Log level defaults to settings value or INFO
     if args.log_level is None:
-        if settings.log_level is not None:
-            args.log_level = settings.log_level
-        else:
-            args.log_level = "INFO"
+        args.log_level = settings.log_level or "INFO"
 
-    # Daemon-only: listen port (default to 8927)
-    if hasattr(args, "port") and args.command == "daemon":
-        if args.port is None:
-            if settings.listen_port is not None:
-                args.port = settings.listen_port
-            else:
-                args.port = 8927
+    # Daemon-only: listen port defaults to settings value or 8927
+    if args.command == "daemon" and args.port is None:
+        args.port = settings.listen_port or 8927
 
 
 def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
@@ -311,42 +298,36 @@ def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
 
     devices = query_devices()
 
+    # Find device by: default, index, or name prefix
     if device_arg is None:
         device = next((d for d in devices if d.is_default), None)
     elif device_arg.isnumeric():
         device_id = int(device_arg)
         device = next((d for d in devices if d.index == device_id), None)
     else:
-        # Find first output device whose name starts with the prefix
         device = next((d for d in devices if d.name.startswith(device_arg)), None)
 
     if device is None:
-        dev_type = "Default" if device_arg is None else "Specified"
-        raise CLIError(f"{dev_type} audio device not found.")
+        kind = "Default" if device_arg is None else "Specified"
+        raise CLIError(f"{kind} audio device not found.")
 
-    LOGGER.info(
-        "Using audio device %d: %s",
-        device.index,
-        device.name,
-    )
-
+    LOGGER.info("Using audio device %d: %s", device.index, device.name)
     return device
 
 
 def _resolve_client_info(client_id: str | None, client_name: str | None) -> tuple[str, str]:
-    """Determine client ID and name."""
-    # Get hostname for defaults if needed
-    if client_id is None or client_name is None:
-        hostname = socket.gethostname()
-        if not hostname:
-            raise CLIError("Unable to determine hostname. Please specify --id and/or --name", 1)
-        # Auto-generate client ID and name from hostname
-        if client_id is None:
-            client_id = f"sendspin-cli-{hostname}"
-        if client_name is None:
-            client_name = hostname
+    """Determine client ID and name, using hostname as fallback."""
+    if client_id is not None and client_name is not None:
+        return client_id, client_name
 
-    return client_id, client_name
+    hostname = socket.gethostname()
+    if not hostname:
+        raise CLIError("Unable to determine hostname. Please specify --id and/or --name", 1)
+
+    return (
+        client_id or f"sendspin-cli-{hostname}",
+        client_name or hostname,
+    )
 
 
 async def _run_daemon_mode(args: argparse.Namespace, settings: SettingsManager) -> int:
@@ -375,10 +356,7 @@ def main() -> int:
 
     # Handle serve subcommand (doesn't use settings)
     if args.command == "serve":
-        # Apply default log level for serve command
-        if args.log_level is None:
-            args.log_level = "INFO"
-        logging.basicConfig(level=getattr(logging, args.log_level))
+        logging.basicConfig(level=getattr(logging, args.log_level or "INFO"))
 
         from sendspin.serve import ServeConfig, run_server
 
@@ -396,7 +374,7 @@ def main() -> int:
             source=source,
             port=args.port,
             name=args.name,
-            clients=args.clients if args.clients else None,
+            clients=args.clients or None,
         )
         try:
             return asyncio.run(run_server(serve_config))

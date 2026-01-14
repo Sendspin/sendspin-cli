@@ -68,30 +68,32 @@ class AppState:
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
         changed = False
+
+        # Update simple metadata fields
         for attr in ("title", "artist", "album"):
             value = getattr(metadata, attr)
-            if isinstance(value, UndefinedField):
-                continue
-            if getattr(self, attr) != value:
+            if not isinstance(value, UndefinedField) and getattr(self, attr) != value:
                 setattr(self, attr, value)
                 changed = True
 
         # Update progress fields from nested progress object
-        if not isinstance(metadata.progress, UndefinedField):
-            if metadata.progress is None:
-                # Clear progress fields
-                if self.track_progress is not None or self.track_duration is not None:
-                    self.track_progress = None
-                    self.track_duration = None
-                    changed = True
-            else:
-                # Update from nested progress object
-                if self.track_progress != metadata.progress.track_progress:
-                    self.track_progress = metadata.progress.track_progress
-                    changed = True
-                if self.track_duration != metadata.progress.track_duration:
-                    self.track_duration = metadata.progress.track_duration
-                    changed = True
+        if isinstance(metadata.progress, UndefinedField):
+            return changed
+
+        if metadata.progress is None:
+            # Clear progress fields
+            if self.track_progress is not None or self.track_duration is not None:
+                self.track_progress = None
+                self.track_duration = None
+                changed = True
+        else:
+            # Update from nested progress object
+            if self.track_progress != metadata.progress.track_progress:
+                self.track_progress = metadata.progress.track_progress
+                changed = True
+            if self.track_duration != metadata.progress.track_duration:
+                self.track_duration = metadata.progress.track_duration
+                changed = True
 
         return changed
 
@@ -267,11 +269,12 @@ class SendspinApp:
             self._state.player_volume = self._settings.player_volume
             self._state.player_muted = self._settings.player_muted
 
-            # Determine delay: CLI arg overrides if provided, otherwise use settings
-            if args.static_delay_ms is not None:
-                delay = args.static_delay_ms
-            else:
-                delay = self._settings.static_delay_ms
+            # CLI arg overrides settings for static delay
+            delay = (
+                args.static_delay_ms
+                if args.static_delay_ms is not None
+                else self._settings.static_delay_ms
+            )
             self._client.set_static_delay_ms(delay)
 
             self._ui = SendspinUI(
@@ -325,8 +328,7 @@ class SendspinApp:
 
             # Get initial server URL
             if args.url:
-                # URL provided via CLI - selected_server already set in __init__
-                pass
+                pass  # URL provided via CLI - selected_server already set in __init__
             elif self._settings.last_server_url:
                 # Try last known server first
                 last_url = self._settings.last_server_url
