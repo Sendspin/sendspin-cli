@@ -205,6 +205,9 @@ async def run_server(config: ServeConfig) -> int:
                 await play_media_task
             except asyncio.CancelledError:
                 pass
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                return 1
             except Exception as e:
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)
