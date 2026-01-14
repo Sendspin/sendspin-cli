@@ -83,19 +83,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     serve_parser.add_argument(
         "--port",
         type=int,
-        default=8927,
+        default=None,
         help="Port to listen on (default: 8927)",
     )
     serve_parser.add_argument(
         "--name",
-        default="Sendspin Server",
-        help="Server name for mDNS discovery",
+        default=None,
+        help="Server name for mDNS discovery (default: Sendspin Server)",
     )
     serve_parser.add_argument(
         "--log-level",
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Logging level to use",
+        help="Logging level to use (default: INFO)",
     )
     serve_parser.add_argument(
         "--client",
@@ -275,7 +275,7 @@ def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager
     if args.url is None:
         args.url = settings.last_server_url
     if args.name is None:
-        args.name = settings.client_name
+        args.name = settings.name
     if args.id is None:
         args.id = settings.client_id
     if args.audio_device is None:
@@ -343,6 +343,46 @@ def _resolve_client_info(client_id: str | None, client_name: str | None) -> tupl
     )
 
 
+async def _run_serve_mode(args: argparse.Namespace) -> int:
+    """Run the server mode."""
+    from sendspin.serve import ServeConfig, run_server
+
+    # Load settings for serve mode
+    settings = await get_settings_manager(SettingsMode.SERVE)
+
+    # Apply settings defaults
+    if args.port is None:
+        args.port = settings.listen_port or 8927
+    if args.name is None:
+        args.name = settings.name or "Sendspin Server"
+    if args.log_level is None:
+        args.log_level = settings.log_level or "INFO"
+
+    # Set up logging
+    logging.basicConfig(level=getattr(logging, args.log_level))
+
+    # Determine audio source: CLI > --demo > settings
+    if args.demo:
+        source = "http://retro.dancewave.online/retrodance.mp3"
+        print(f"Demo mode enabled, serving URL {source}")
+    elif args.source:
+        source = args.source
+    elif settings.serve_source:
+        source = settings.serve_source
+        print(f"Using source from settings: {source}")
+    else:
+        print("Error: either provide a source or use --demo")
+        return 1
+
+    serve_config = ServeConfig(
+        source=source,
+        port=args.port,
+        name=args.name,
+        clients=args.clients or None,
+    )
+    return await run_server(serve_config)
+
+
 async def _run_daemon_mode(args: argparse.Namespace, settings: SettingsManager) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
@@ -368,30 +408,10 @@ def main() -> int:
     """Run the CLI client."""
     args = parse_args(sys.argv[1:])
 
-    # Handle serve subcommand (doesn't use settings)
+    # Handle serve subcommand
     if args.command == "serve":
-        logging.basicConfig(level=getattr(logging, args.log_level or "INFO"))
-
-        from sendspin.serve import ServeConfig, run_server
-
-        # Determine audio source
-        if args.demo:
-            source = "http://retro.dancewave.online/retrodance.mp3"
-            print(f"Demo mode enabled, serving URL {source}")
-        elif args.source:
-            source = args.source
-        else:
-            print("Error: either provide a source or use --demo")
-            return 1
-
-        serve_config = ServeConfig(
-            source=source,
-            port=args.port,
-            name=args.name,
-            clients=args.clients or None,
-        )
         try:
-            return asyncio.run(run_server(serve_config))
+            return asyncio.run(_run_serve_mode(args))
         except KeyboardInterrupt:
             return 0
         except Exception as e:

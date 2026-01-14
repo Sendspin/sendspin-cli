@@ -76,15 +76,16 @@ Sendspin stores settings in JSON configuration files that persist between sessio
 Settings are stored in `~/.config/sendspin/`:
 - `settings-tui.json` - Settings for the interactive TUI client
 - `settings-daemon.json` - Settings for daemon mode
+- `settings-serve.json` - Settings for serve mode
 
-**Example configuration file:**
+**Example configuration file (TUI/daemon):**
 ```json
 {
   "player_volume": 50,
   "player_muted": false,
   "static_delay_ms": -100.0,
   "last_server_url": "ws://192.168.1.100:8927/sendspin",
-  "client_name": "Living Room",
+  "name": "Living Room",
   "client_id": "sendspin-living-room",
   "audio_device": "2",
   "log_level": "INFO",
@@ -93,20 +94,31 @@ Settings are stored in `~/.config/sendspin/`:
 }
 ```
 
+**Example configuration file (serve):**
+```json
+{
+  "log_level": "INFO",
+  "listen_port": 8927,
+  "name": "My Sendspin Server",
+  "serve_source": "/path/to/music.mp3"
+}
+```
+
 **Available settings:**
 
-| Setting | Type | Description |
-|---------|------|-------------|
-| `player_volume` | integer (0-100) | Player output volume percentage |
-| `player_muted` | boolean | Whether the player is muted |
-| `static_delay_ms` | float | Extra playback delay in milliseconds |
-| `last_server_url` | string | Server URL (used as default for `--url`) |
-| `client_name` | string | Friendly name for this client (`--name`) |
-| `client_id` | string | Unique client identifier (`--id`) |
-| `audio_device` | string | Audio device index or name prefix (`--audio-device`) |
-| `log_level` | string | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
-| `listen_port` | integer | Listen port for daemon mode (`--port`) |
-| `use_mpris` | boolean | Enable MPRIS integration (default: true) |
+| Setting | Type | Mode | Description |
+|---------|------|------|-------------|
+| `player_volume` | integer (0-100) | TUI/daemon | Player output volume percentage |
+| `player_muted` | boolean | TUI/daemon | Whether the player is muted |
+| `static_delay_ms` | float | TUI/daemon | Extra playback delay in milliseconds |
+| `last_server_url` | string | TUI/daemon | Server URL (used as default for `--url`) |
+| `name` | string | All | Friendly name for client or server (`--name`) |
+| `client_id` | string | TUI/daemon | Unique client identifier (`--id`) |
+| `audio_device` | string | TUI/daemon | Audio device index or name prefix (`--audio-device`) |
+| `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
+| `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
+| `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
+| `serve_source` | string | serve | Default audio source (file path or URL) |
 
 Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
 

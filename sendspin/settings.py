@@ -37,6 +37,7 @@ class SettingsMode(Enum):
 
     TUI = "tui"
     DAEMON = "daemon"
+    SERVE = "serve"
 
 
 @dataclass
@@ -47,16 +48,18 @@ class Settings:
     player_muted: bool = False
     static_delay_ms: float = 0.0
     last_server_url: str | None = None
-    # Client identification
-    client_name: str | None = None
+    # Identification
+    name: str | None = None
     client_id: str | None = None
     # Audio and logging
     audio_device: str | None = None
     log_level: str | None = None
-    # Daemon-only settings
+    # Network
     listen_port: int | None = None
     # Integration settings
     use_mpris: bool = True
+    # Serve-only settings
+    serve_source: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert settings to a dictionary for serialization."""
@@ -65,12 +68,13 @@ class Settings:
             "player_muted": self.player_muted,
             "static_delay_ms": self.static_delay_ms,
             "last_server_url": self.last_server_url,
-            "client_name": self.client_name,
+            "name": self.name,
             "client_id": self.client_id,
             "audio_device": self.audio_device,
             "log_level": self.log_level,
             "listen_port": self.listen_port,
             "use_mpris": self.use_mpris,
+            "serve_source": self.serve_source,
         }
 
     @classmethod
@@ -81,12 +85,13 @@ class Settings:
             player_muted=data.get("player_muted", False),
             static_delay_ms=data.get("static_delay_ms", 0.0),
             last_server_url=data.get("last_server_url"),
-            client_name=data.get("client_name"),
+            name=data.get("name"),
             client_id=data.get("client_id"),
             audio_device=data.get("audio_device"),
             log_level=data.get("log_level"),
             listen_port=data.get("listen_port"),
             use_mpris=data.get("use_mpris", True),
+            serve_source=data.get("serve_source"),
         )
 
 
@@ -133,9 +138,9 @@ class SettingsManager:
         return self._settings.last_server_url
 
     @property
-    def client_name(self) -> str | None:
-        """Get the client name."""
-        return self._settings.client_name
+    def name(self) -> str | None:
+        """Get the name (client name or server name)."""
+        return self._settings.name
 
     @property
     def client_id(self) -> str | None:
@@ -154,13 +159,18 @@ class SettingsManager:
 
     @property
     def listen_port(self) -> int | None:
-        """Get the listen port (daemon mode)."""
+        """Get the listen port."""
         return self._settings.listen_port
 
     @property
     def use_mpris(self) -> bool:
         """Get whether MPRIS integration is enabled."""
         return self._settings.use_mpris
+
+    @property
+    def serve_source(self) -> str | None:
+        """Get the default serve source."""
+        return self._settings.serve_source
 
     def update(
         self,
@@ -169,12 +179,13 @@ class SettingsManager:
         player_muted: bool | _UndefinedType = UNDEFINED,
         static_delay_ms: float | _UndefinedType = UNDEFINED,
         last_server_url: str | None | _UndefinedType = UNDEFINED,
-        client_name: str | None | _UndefinedType = UNDEFINED,
+        name: str | None | _UndefinedType = UNDEFINED,
         client_id: str | None | _UndefinedType = UNDEFINED,
         audio_device: str | None | _UndefinedType = UNDEFINED,
         log_level: str | None | _UndefinedType = UNDEFINED,
         listen_port: int | None | _UndefinedType = UNDEFINED,
         use_mpris: bool | _UndefinedType = UNDEFINED,
+        serve_source: str | None | _UndefinedType = UNDEFINED,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save.
 
@@ -183,12 +194,13 @@ class SettingsManager:
             player_muted: New player muted state, or UNDEFINED to keep current.
             static_delay_ms: New static delay in ms, or UNDEFINED to keep current.
             last_server_url: New last server URL, or UNDEFINED to keep current.
-            client_name: New client name, or UNDEFINED to keep current.
+            name: New name (client or server), or UNDEFINED to keep current.
             client_id: New client ID, or UNDEFINED to keep current.
             audio_device: New audio device specifier, or UNDEFINED to keep current.
             log_level: New log level, or UNDEFINED to keep current.
-            listen_port: New listen port (daemon mode), or UNDEFINED to keep current.
+            listen_port: New listen port, or UNDEFINED to keep current.
             use_mpris: New MPRIS integration state, or UNDEFINED to keep current.
+            serve_source: New serve source, or UNDEFINED to keep current.
         """
         changed = False
 
@@ -204,17 +216,18 @@ class SettingsManager:
             "player_muted": player_muted,
             "static_delay_ms": static_delay_ms,
             "last_server_url": last_server_url,
-            "client_name": client_name,
+            "name": name,
             "client_id": client_id,
             "audio_device": audio_device,
             "log_level": log_level,
             "listen_port": listen_port,
             "use_mpris": use_mpris,
+            "serve_source": serve_source,
         }
-        for name, value in fields.items():
+        for field_name, value in fields.items():
             if not isinstance(value, _UndefinedType):
-                if getattr(self._settings, name) != value:
-                    setattr(self._settings, name, value)
+                if getattr(self._settings, field_name) != value:
+                    setattr(self._settings, field_name, value)
                     changed = True
 
         if changed:
