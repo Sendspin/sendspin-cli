@@ -261,40 +261,6 @@ class CLIError(Exception):
         self.exit_code = exit_code
 
 
-def _apply_settings_defaults(args: argparse.Namespace, settings: ClientSettings) -> None:
-    """Apply settings as defaults for CLI arguments that weren't provided.
-
-    CLI arguments take precedence over settings. Settings take precedence over
-    hard-coded defaults.
-
-    Args:
-        args: Parsed CLI arguments (modified in place).
-        settings: Loaded settings to use as defaults.
-    """
-    # Apply settings as defaults for unset CLI arguments
-    if args.url is None:
-        args.url = settings.last_server_url
-    if args.name is None:
-        args.name = settings.name
-    if args.id is None:
-        args.id = settings.client_id
-    if args.audio_device is None:
-        args.audio_device = settings.audio_device
-    if args.static_delay_ms is None and settings.static_delay_ms != 0.0:
-        args.static_delay_ms = settings.static_delay_ms
-
-    # Log level defaults to settings value or INFO
-    if args.log_level is None:
-        args.log_level = settings.log_level or "INFO"
-
-    # Daemon-only: listen port defaults to settings value or 8927
-    if args.command == "daemon" and args.port is None:
-        args.port = settings.listen_port or 8927
-
-    # MPRIS: CLI flag overrides config
-    args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
-
-
 def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
     """Resolve audio device from CLI argument.
 
@@ -447,8 +413,22 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     settings_dir = getattr(args, "settings_dir", None)
     settings = await get_client_settings("daemon" if is_daemon else "tui", settings_dir)
 
-    # Apply settings as defaults for CLI arguments
-    _apply_settings_defaults(args, settings)
+    # Apply settings as defaults for CLI arguments (CLI > settings > hard-coded)
+    if args.url is None:
+        args.url = settings.last_server_url
+    if args.name is None:
+        args.name = settings.name
+    if args.id is None:
+        args.id = settings.client_id
+    if args.audio_device is None:
+        args.audio_device = settings.audio_device
+    if args.static_delay_ms is None and settings.static_delay_ms != 0.0:
+        args.static_delay_ms = settings.static_delay_ms
+    if args.log_level is None:
+        args.log_level = settings.log_level or "INFO"
+    if args.command == "daemon" and args.port is None:
+        args.port = settings.listen_port or 8927
+    args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
 
     # Set up logging with resolved log level
     logging.basicConfig(level=getattr(logging, args.log_level))
