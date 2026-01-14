@@ -27,7 +27,7 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.settings import ClientSettings
 from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,11 @@ class DaemonArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
+    settings: ClientSettings
     url: str | None = None
     static_delay_ms: float | None = None
     listen_port: int = 8927
-    settings_dir: str | None = None
+    use_mpris: bool = True
 
 
 class SendspinDaemon:
@@ -60,14 +61,14 @@ class SendspinDaemon:
         self._client: SendspinClient | None = None
         self._listener: ClientListener | None = None
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: SettingsManager | None = None
+        self._settings: ClientSettings | None = None
         self._mpris: SendspinMpris | None = None
         self._static_delay_ms: float = 0.0
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
         client_roles = [Roles.PLAYER]
-        if MPRIS_AVAILABLE:
+        if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         return SendspinClient(
@@ -108,13 +109,14 @@ class SendspinDaemon:
             loop.add_signal_handler(signal.SIGINT, signal_handler)
             loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
-        self._settings = await get_settings_manager(SettingsMode.DAEMON, self._args.settings_dir)
+        self._settings = self._args.settings
 
-        # Determine delay: CLI arg overrides if provided, otherwise use settings
-        if self._args.static_delay_ms is not None:
-            delay = self._args.static_delay_ms
-        else:
-            delay = self._settings.static_delay_ms
+        # CLI arg overrides settings for static delay
+        delay = (
+            self._args.static_delay_ms
+            if self._args.static_delay_ms is not None
+            else self._settings.static_delay_ms
+        )
 
         self._audio_handler = AudioStreamHandler(
             audio_device=self._args.audio_device,
@@ -153,8 +155,9 @@ class SendspinDaemon:
         assert self._args.url is not None
         assert self._audio_handler is not None
         self._client = self._create_client(static_delay_ms)
-        self._mpris = SendspinMpris(self._client)
-        self._mpris.start()
+        if MPRIS_AVAILABLE and self._args.use_mpris:
+            self._mpris = SendspinMpris(self._client)
+            self._mpris.start()
         self._audio_handler.attach_client(self._client)
         self._client.add_server_command_listener(self._handle_server_command)
         await self._connection_loop(self._args.url)
@@ -176,11 +179,8 @@ class SendspinDaemon:
         await self._listener.start()
 
         # Keep running until cancelled
-        try:
-            while True:
-                await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(3600)
 
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""
@@ -208,8 +208,9 @@ class SendspinDaemon:
         self._client = self._create_client(self._static_delay_ms)
         self._audio_handler.attach_client(self._client)
         self._client.add_server_command_listener(self._handle_server_command)
-        self._mpris = SendspinMpris(self._client)
-        self._mpris.start()
+        if MPRIS_AVAILABLE and self._args.use_mpris:
+            self._mpris = SendspinMpris(self._client)
+            self._mpris.start()
 
         try:
             await self._client.attach_websocket(ws)

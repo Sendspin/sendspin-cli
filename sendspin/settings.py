@@ -9,146 +9,59 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
-from enum import Enum
+from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 logger = logging.getLogger(__name__)
-
-
-class _UndefinedType:
-    """Singleton for undefined/not-passed values."""
-
-    __slots__ = ()
-
-    def __repr__(self) -> str:
-        return "UNDEFINED"
-
-
-UNDEFINED = _UndefinedType()
 
 # Debounce delay for saving settings
 SAVE_DEBOUNCE_SECONDS = 60.0
 
 
-class SettingsMode(Enum):
-    """Mode for settings file selection."""
-
-    TUI = "tui"
-    DAEMON = "daemon"
-
-
 @dataclass
-class Settings:
-    """All persistent settings for the Sendspin CLI."""
-
-    player_volume: int = 25
-    player_muted: bool = False
-    static_delay_ms: float = 0.0
-    last_server_url: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert settings to a dictionary for serialization."""
-        return {
-            "player_volume": self.player_volume,
-            "player_muted": self.player_muted,
-            "static_delay_ms": self.static_delay_ms,
-            "last_server_url": self.last_server_url,
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Settings:
-        """Create settings from a dictionary."""
-        return cls(
-            player_volume=data.get("player_volume", 25),
-            player_muted=data.get("player_muted", False),
-            static_delay_ms=data.get("static_delay_ms", 0.0),
-            last_server_url=data.get("last_server_url"),
-        )
-
-
-class SettingsManager:
-    """Manages settings with debounced disk persistence.
+class BaseSettings:
+    """Base class for settings with persistence support.
 
     Changes are debounced and saved after 60 seconds of inactivity,
     or immediately on flush().
     """
 
-    def __init__(self, settings_file: Path) -> None:
-        """Initialize the settings manager.
+    # Common fields
+    name: str | None = None
+    log_level: str | None = None
+    listen_port: int | None = None
 
-        Args:
-            settings_file: Path to the settings file.
-        """
-        self._settings_file = settings_file
-        self._settings = Settings()
-        self._debounce_save_handle: asyncio.TimerHandle | None = None
+    # Internal state (not serialized)
+    _settings_file: Path | None = field(default=None, repr=False, compare=False)
+    _debounce_save_handle: asyncio.TimerHandle | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    # Fields to exclude from serialization
+    _internal_fields: ClassVar[set[str]] = {"_settings_file", "_debounce_save_handle"}
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert settings to a dictionary for serialization."""
+        return {
+            f.name: getattr(self, f.name)
+            for f in fields(self)
+            if f.name not in self._internal_fields
+        }
+
+    def _update_fields(self, updates: dict[str, Any]) -> bool:
+        """Update fields and return whether any changed."""
+        changed = False
+        for field_name, value in updates.items():
+            if value is not None and getattr(self, field_name) != value:
+                setattr(self, field_name, value)
+                changed = True
+        return changed
 
     async def load(self) -> None:
         """Load settings from disk."""
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._load)
-
-    @property
-    def player_volume(self) -> int:
-        """Get the player volume (0-100)."""
-        return self._settings.player_volume
-
-    @property
-    def player_muted(self) -> bool:
-        """Get the player muted state."""
-        return self._settings.player_muted
-
-    @property
-    def static_delay_ms(self) -> float:
-        """Get the static delay in milliseconds."""
-        return self._settings.static_delay_ms
-
-    @property
-    def last_server_url(self) -> str | None:
-        """Get the last connected server URL."""
-        return self._settings.last_server_url
-
-    def update(
-        self,
-        *,
-        player_volume: int | _UndefinedType = UNDEFINED,
-        player_muted: bool | _UndefinedType = UNDEFINED,
-        static_delay_ms: float | _UndefinedType = UNDEFINED,
-        last_server_url: str | None | _UndefinedType = UNDEFINED,
-    ) -> None:
-        """Update settings fields. Only changed fields trigger a save.
-
-        Args:
-            player_volume: New player volume (0-100), or UNDEFINED to keep current.
-            player_muted: New player muted state, or UNDEFINED to keep current.
-            static_delay_ms: New static delay in ms, or UNDEFINED to keep current.
-            last_server_url: New last server URL, or UNDEFINED to keep current.
-        """
-        changed = False
-
-        # Handle player_volume separately due to clamping
-        if not isinstance(player_volume, _UndefinedType):
-            player_volume = max(0, min(100, player_volume))
-            if self._settings.player_volume != player_volume:
-                self._settings.player_volume = player_volume
-                changed = True
-
-        # Handle other fields generically
-        fields = {
-            "player_muted": player_muted,
-            "static_delay_ms": static_delay_ms,
-            "last_server_url": last_server_url,
-        }
-        for name, value in fields.items():
-            if not isinstance(value, _UndefinedType):
-                if getattr(self._settings, name) != value:
-                    setattr(self._settings, name, value)
-                    changed = True
-
-        if changed:
-            self._schedule_save()
 
     async def flush(self) -> None:
         """Immediately save any pending changes to disk."""
@@ -160,7 +73,6 @@ class SettingsManager:
 
     def _schedule_save(self) -> None:
         """Schedule a debounced save operation."""
-        # Cancel existing timer if any
         if self._debounce_save_handle is not None:
             self._debounce_save_handle.cancel()
 
@@ -176,52 +88,182 @@ class SettingsManager:
 
     def _load(self) -> None:
         """Load settings from the settings file (blocking I/O)."""
-        if not self._settings_file.exists():
-            logger.debug("Settings file does not exist: %s", self._settings_file)
-            return
-
-        try:
-            data = json.loads(self._settings_file.read_text())
-            self._settings = Settings.from_dict(data)
-            logger.info(
-                "Loaded settings from %s: volume=%d%%, muted=%s",
-                self._settings_file,
-                self._settings.player_volume,
-                self._settings.player_muted,
-            )
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+        raise NotImplementedError
 
     def _save(self) -> None:
         """Save settings to the settings file (blocking I/O)."""
+        if self._settings_file is None:
+            return
         try:
             self._settings_file.parent.mkdir(parents=True, exist_ok=True)
-            self._settings_file.write_text(json.dumps(self._settings.to_dict(), indent=2) + "\n")
+            self._settings_file.write_text(json.dumps(self.to_dict(), indent=2) + "\n")
             logger.debug("Saved settings to %s", self._settings_file)
         except OSError as e:
             logger.warning("Failed to save settings to %s: %s", self._settings_file, e)
 
 
-async def get_settings_manager(
-    mode: SettingsMode, config_dir: Path | str | None = None
-) -> SettingsManager:
-    """Create and load a settings manager for the given mode.
+@dataclass
+class ClientSettings(BaseSettings):
+    """Settings for TUI and daemon modes."""
 
-    This should only be called once at startup. Pass the returned instance
-    to components that need it.
+    player_volume: int = 25
+    player_muted: bool = False
+    static_delay_ms: float = 0.0
+    last_server_url: str | None = None
+    client_id: str | None = None
+    audio_device: str | None = None
+    use_mpris: bool = True
+
+    def update(
+        self,
+        *,
+        player_volume: int | None = None,
+        player_muted: bool | None = None,
+        static_delay_ms: float | None = None,
+        last_server_url: str | None = None,
+        name: str | None = None,
+        client_id: str | None = None,
+        audio_device: str | None = None,
+        log_level: str | None = None,
+        listen_port: int | None = None,
+        use_mpris: bool | None = None,
+    ) -> None:
+        """Update settings fields. Only changed fields trigger a save."""
+        changed = False
+
+        # Handle player_volume separately due to clamping
+        if player_volume is not None:
+            player_volume = max(0, min(100, player_volume))
+            if self.player_volume != player_volume:
+                self.player_volume = player_volume
+                changed = True
+
+        # Handle other fields generically
+        changed = (
+            self._update_fields(
+                {
+                    "player_muted": player_muted,
+                    "static_delay_ms": static_delay_ms,
+                    "last_server_url": last_server_url,
+                    "name": name,
+                    "client_id": client_id,
+                    "audio_device": audio_device,
+                    "log_level": log_level,
+                    "listen_port": listen_port,
+                    "use_mpris": use_mpris,
+                }
+            )
+            or changed
+        )
+
+        if changed:
+            self._schedule_save()
+
+    def _load(self) -> None:
+        """Load settings from the settings file (blocking I/O)."""
+        if self._settings_file is None or not self._settings_file.exists():
+            logger.debug("Settings file does not exist: %s", self._settings_file)
+            return
+
+        try:
+            data = json.loads(self._settings_file.read_text())
+            # Update fields from loaded data
+            self.name = data.get("name")
+            self.log_level = data.get("log_level")
+            self.listen_port = data.get("listen_port")
+            self.player_volume = data.get("player_volume", 25)
+            self.player_muted = data.get("player_muted", False)
+            self.static_delay_ms = data.get("static_delay_ms", 0.0)
+            self.last_server_url = data.get("last_server_url")
+            self.client_id = data.get("client_id")
+            self.audio_device = data.get("audio_device")
+            self.use_mpris = data.get("use_mpris", True)
+            logger.info(
+                "Loaded settings from %s: volume=%d%%, muted=%s",
+                self._settings_file,
+                self.player_volume,
+                self.player_muted,
+            )
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+
+
+@dataclass
+class ServeSettings(BaseSettings):
+    """Settings for serve mode."""
+
+    source: str | None = None
+    clients: list[str] | None = None
+
+    def update(
+        self,
+        *,
+        name: str | None = None,
+        log_level: str | None = None,
+        listen_port: int | None = None,
+        source: str | None = None,
+        clients: list[str] | None = None,
+    ) -> None:
+        """Update settings fields. Only changed fields trigger a save."""
+        changed = self._update_fields(
+            {
+                "name": name,
+                "log_level": log_level,
+                "listen_port": listen_port,
+                "source": source,
+                "clients": clients,
+            }
+        )
+
+        if changed:
+            self._schedule_save()
+
+    def _load(self) -> None:
+        """Load settings from the settings file (blocking I/O)."""
+        if self._settings_file is None or not self._settings_file.exists():
+            logger.debug("Settings file does not exist: %s", self._settings_file)
+            return
+
+        try:
+            data = json.loads(self._settings_file.read_text())
+            self.name = data.get("name")
+            self.log_level = data.get("log_level")
+            self.listen_port = data.get("listen_port")
+            self.source = data.get("source")
+            self.clients = data.get("clients")
+            logger.info("Loaded settings from %s", self._settings_file)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+
+
+async def get_client_settings(
+    mode: Literal["tui", "daemon"], config_dir: str | None = None
+) -> ClientSettings:
+    """Create and load client settings for TUI or daemon mode.
 
     Args:
-        mode: The settings mode (TUI or DAEMON).
+        mode: The client mode ("tui" or "daemon").
         config_dir: Optional directory to store settings. Defaults to ~/.config/sendspin.
 
     Returns:
-        A new SettingsManager instance with settings loaded from disk.
+        ClientSettings instance with settings loaded from disk.
     """
-    if config_dir is None:
-        config_dir = Path.home() / ".config" / "sendspin"
-    elif isinstance(config_dir, str):
-        config_dir = Path(config_dir)
-    settings_file = config_dir / f"settings-{mode.value}.json"
-    manager = SettingsManager(settings_file)
-    await manager.load()
-    return manager
+    config_path = Path(config_dir) if config_dir else Path.home() / ".config" / "sendspin"
+    settings = ClientSettings(_settings_file=config_path / f"settings-{mode}.json")
+    await settings.load()
+    return settings
+
+
+async def get_serve_settings(config_dir: str | None = None) -> ServeSettings:
+    """Create and load serve settings.
+
+    Args:
+        config_dir: Optional directory to store settings. Defaults to ~/.config/sendspin.
+
+    Returns:
+        ServeSettings instance with settings loaded from disk.
+    """
+    config_path = Path(config_dir) if config_dir else Path.home() / ".config" / "sendspin"
+    settings = ServeSettings(_settings_file=config_path / "settings-serve.json")
+    await settings.load()
+    return settings

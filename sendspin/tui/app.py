@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
-from aiosendspin_mpris import SendspinMpris
+from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
@@ -39,7 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
-from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -68,30 +68,32 @@ class AppState:
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
         changed = False
+
+        # Update simple metadata fields
         for attr in ("title", "artist", "album"):
             value = getattr(metadata, attr)
-            if isinstance(value, UndefinedField):
-                continue
-            if getattr(self, attr) != value:
+            if not isinstance(value, UndefinedField) and getattr(self, attr) != value:
                 setattr(self, attr, value)
                 changed = True
 
         # Update progress fields from nested progress object
-        if not isinstance(metadata.progress, UndefinedField):
-            if metadata.progress is None:
-                # Clear progress fields
-                if self.track_progress is not None or self.track_duration is not None:
-                    self.track_progress = None
-                    self.track_duration = None
-                    changed = True
-            else:
-                # Update from nested progress object
-                if self.track_progress != metadata.progress.track_progress:
-                    self.track_progress = metadata.progress.track_progress
-                    changed = True
-                if self.track_duration != metadata.progress.track_duration:
-                    self.track_duration = metadata.progress.track_duration
-                    changed = True
+        if isinstance(metadata.progress, UndefinedField):
+            return changed
+
+        if metadata.progress is None:
+            # Clear progress fields
+            if self.track_progress is not None or self.track_duration is not None:
+                self.track_progress = None
+                self.track_duration = None
+                changed = True
+        else:
+            # Update from nested progress object
+            if self.track_progress != metadata.progress.track_progress:
+                self.track_progress = metadata.progress.track_progress
+                changed = True
+            if self.track_duration != metadata.progress.track_duration:
+                self.track_duration = metadata.progress.track_duration
+                changed = True
 
         return changed
 
@@ -194,8 +196,10 @@ class AppArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
+    settings: ClientSettings
     url: str | None = None
     static_delay_ms: float | None = None
+    use_mpris: bool = True
 
 
 class SendspinApp:
@@ -232,10 +236,12 @@ class SendspinApp:
         )
 
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: SettingsManager | None = None
+        self._settings: ClientSettings | None = None
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
-        self._mpris = SendspinMpris(self._client)
+        self._mpris: SendspinMpris | None = None
+        if MPRIS_AVAILABLE and args.use_mpris:
+            self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -262,15 +268,16 @@ class SendspinApp:
             main_task.cancel()
 
         try:
-            self._settings = await get_settings_manager(SettingsMode.TUI)
+            self._settings = self._args.settings
             self._state.player_volume = self._settings.player_volume
             self._state.player_muted = self._settings.player_muted
 
-            # Determine delay: CLI arg overrides if provided, otherwise use settings
-            if args.static_delay_ms is not None:
-                delay = args.static_delay_ms
-            else:
-                delay = self._settings.static_delay_ms
+            # CLI arg overrides settings for static delay
+            delay = (
+                args.static_delay_ms
+                if args.static_delay_ms is not None
+                else self._settings.static_delay_ms
+            )
             self._client.set_static_delay_ms(delay)
 
             self._ui = SendspinUI(
@@ -296,7 +303,8 @@ class SendspinApp:
             self._client.add_server_command_listener(self._handle_server_command)
             self._audio_handler.attach_client(self._client)
 
-            self._mpris.start()
+            if self._mpris:
+                self._mpris.start()
 
             # Start keyboard loop for interactive control
             create_task(
@@ -324,8 +332,7 @@ class SendspinApp:
 
             # Get initial server URL
             if args.url:
-                # URL provided via CLI - selected_server already set in __init__
-                pass
+                pass  # URL provided via CLI - selected_server already set in __init__
             elif self._settings.last_server_url:
                 # Try last known server first
                 last_url = self._settings.last_server_url
@@ -359,7 +366,8 @@ class SendspinApp:
         except asyncio.CancelledError:
             logger.debug("Connection loop cancelled")
         finally:
-            self._mpris.stop()
+            if self._mpris:
+                self._mpris.stop()
             if self._ui:
                 self._ui.stop()
             if self._audio_handler:

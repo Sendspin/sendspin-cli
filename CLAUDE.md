@@ -141,3 +141,37 @@ uv run mypy sendspin         # Type check
 1. Check if `MediaCommand` enum in aiosendspin supports it
 2. Add command alias in `CommandHandler.execute()` in `tui/keyboard.py`
 3. Command is sent via `client.send_group_command(MediaCommand.XXX)`
+
+### Adding a new configuration option (CLI + settings file)
+Options should be configurable via both CLI flags and the settings file, with CLI taking precedence.
+
+1. **Add to `Settings` dataclass** in `sendspin/settings.py`:
+   - Add field with default value (e.g., `use_mpris: bool = True`)
+   - Add to `to_dict()` return value
+   - Add to `from_dict()` with `data.get("field_name", default)`
+
+2. **Add property to `SettingsManager`** in `sendspin/settings.py`:
+   - Add `@property` that returns `self._settings.field_name`
+   - Optionally add to `update()` method if it should be changeable at runtime
+
+3. **Add CLI argument** in `sendspin/cli.py` `parse_args()`:
+   - Add to both `daemon_parser` and main `parser` if applicable to both modes
+   - Use `action="store_true"` for boolean flags
+
+4. **Apply settings default** in `_apply_settings_defaults()`:
+   - Compute final value: `args.option = <cli_value> or settings.option`
+   - For disable flags: `args.use_x = not args.disable_x and settings.use_x`
+
+5. **Add to Args dataclasses**:
+   - Add field to `DaemonArgs` in `daemon/daemon.py`
+   - Add field to `AppArgs` in `tui/app.py`
+
+6. **Pass to apps** in `cli.py`:
+   - Add `option=args.option` when creating `DaemonArgs` and `AppArgs`
+
+7. **Use in daemon/TUI**:
+   - Access via `self._args.option`
+
+8. **Document** in `README.md`:
+   - Add to example config JSON
+   - Add to settings table
