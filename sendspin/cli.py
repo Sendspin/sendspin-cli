@@ -166,6 +166,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Directory to store settings (default: ~/.config/sendspin)",
     )
+    daemon_parser.add_argument(
+        "--disable-mpris",
+        action="store_true",
+        help="Disable MPRIS integration",
+    )
 
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
@@ -213,6 +218,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--list-servers",
         action="store_true",
         help="Discover and list available Sendspin servers on the network",
+    )
+    parser.add_argument(
+        "--disable-mpris",
+        action="store_true",
+        help="Disable MPRIS integration",
     )
     parser.add_argument(
         "--headless",
@@ -281,6 +291,9 @@ def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager
     if args.command == "daemon" and args.port is None:
         args.port = settings.listen_port or 8927
 
+    # MPRIS: CLI flag overrides config
+    args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
+
 
 def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
     """Resolve audio device from CLI argument.
@@ -344,6 +357,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: SettingsManager) 
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         listen_port=args.port,
+        use_mpris=args.use_mpris,
     )
 
     daemon = SendspinDaemon(daemon_args)
@@ -441,6 +455,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         client_name=client_name,
         settings=settings,
         static_delay_ms=args.static_delay_ms,
+        use_mpris=args.use_mpris,
     )
 
     app = SendspinApp(app_args)

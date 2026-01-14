@@ -44,6 +44,7 @@ class DaemonArgs:
     url: str | None = None
     static_delay_ms: float | None = None
     listen_port: int = 8927
+    use_mpris: bool = True
 
 
 class SendspinDaemon:
@@ -67,7 +68,7 @@ class SendspinDaemon:
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
         client_roles = [Roles.PLAYER]
-        if MPRIS_AVAILABLE:
+        if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         return SendspinClient(
@@ -154,8 +155,9 @@ class SendspinDaemon:
         assert self._args.url is not None
         assert self._audio_handler is not None
         self._client = self._create_client(static_delay_ms)
-        self._mpris = SendspinMpris(self._client)
-        self._mpris.start()
+        if MPRIS_AVAILABLE and self._args.use_mpris:
+            self._mpris = SendspinMpris(self._client)
+            self._mpris.start()
         self._audio_handler.attach_client(self._client)
         self._client.add_server_command_listener(self._handle_server_command)
         await self._connection_loop(self._args.url)
@@ -206,8 +208,9 @@ class SendspinDaemon:
         self._client = self._create_client(self._static_delay_ms)
         self._audio_handler.attach_client(self._client)
         self._client.add_server_command_listener(self._handle_server_command)
-        self._mpris = SendspinMpris(self._client)
-        self._mpris.start()
+        if MPRIS_AVAILABLE and self._args.use_mpris:
+            self._mpris = SendspinMpris(self._client)
+            self._mpris.start()
 
         try:
             await self._client.attach_websocket(ws)

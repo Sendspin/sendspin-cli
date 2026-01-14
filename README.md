@@ -88,7 +88,8 @@ Settings are stored in `~/.config/sendspin/`:
   "client_id": "sendspin-living-room",
   "audio_device": "2",
   "log_level": "INFO",
-  "listen_port": 8927
+  "listen_port": 8927,
+  "use_mpris": true
 }
 ```
 
@@ -105,6 +106,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `audio_device` | string | Audio device index or name prefix (`--audio-device`) |
 | `log_level` | string | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | Listen port for daemon mode (`--port`) |
+| `use_mpris` | boolean | Enable MPRIS integration (default: true) |
 
 Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
 

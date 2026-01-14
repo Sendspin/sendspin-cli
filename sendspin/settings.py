@@ -55,6 +55,8 @@ class Settings:
     log_level: str | None = None
     # Daemon-only settings
     listen_port: int | None = None
+    # Integration settings
+    use_mpris: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         """Convert settings to a dictionary for serialization."""
@@ -68,6 +70,7 @@ class Settings:
             "audio_device": self.audio_device,
             "log_level": self.log_level,
             "listen_port": self.listen_port,
+            "use_mpris": self.use_mpris,
         }
 
     @classmethod
@@ -83,6 +86,7 @@ class Settings:
             audio_device=data.get("audio_device"),
             log_level=data.get("log_level"),
             listen_port=data.get("listen_port"),
+            use_mpris=data.get("use_mpris", True),
         )
 
 
@@ -153,6 +157,11 @@ class SettingsManager:
         """Get the listen port (daemon mode)."""
         return self._settings.listen_port
 
+    @property
+    def use_mpris(self) -> bool:
+        """Get whether MPRIS integration is enabled."""
+        return self._settings.use_mpris
+
     def update(
         self,
         *,
@@ -165,6 +174,7 @@ class SettingsManager:
         audio_device: str | None | _UndefinedType = UNDEFINED,
         log_level: str | None | _UndefinedType = UNDEFINED,
         listen_port: int | None | _UndefinedType = UNDEFINED,
+        use_mpris: bool | _UndefinedType = UNDEFINED,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save.
 
@@ -178,6 +188,7 @@ class SettingsManager:
             audio_device: New audio device specifier, or UNDEFINED to keep current.
             log_level: New log level, or UNDEFINED to keep current.
             listen_port: New listen port (daemon mode), or UNDEFINED to keep current.
+            use_mpris: New MPRIS integration state, or UNDEFINED to keep current.
         """
         changed = False
 
@@ -198,6 +209,7 @@ class SettingsManager:
             "audio_device": audio_device,
             "log_level": log_level,
             "listen_port": listen_port,
+            "use_mpris": use_mpris,
         }
         for name, value in fields.items():
             if not isinstance(value, _UndefinedType):
