@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
-from sendspin.settings import SettingsManager, SettingsMode, get_settings_manager
+from sendspin.settings import ClientSettings, get_client_settings, get_serve_settings
 
 if TYPE_CHECKING:
     from sendspin.audio import AudioDevice
@@ -261,7 +261,7 @@ class CLIError(Exception):
         self.exit_code = exit_code
 
 
-def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager) -> None:
+def _apply_settings_defaults(args: argparse.Namespace, settings: ClientSettings) -> None:
     """Apply settings as defaults for CLI arguments that weren't provided.
 
     CLI arguments take precedence over settings. Settings take precedence over
@@ -269,7 +269,7 @@ def _apply_settings_defaults(args: argparse.Namespace, settings: SettingsManager
 
     Args:
         args: Parsed CLI arguments (modified in place).
-        settings: Loaded settings manager to use as defaults.
+        settings: Loaded settings to use as defaults.
     """
     # Apply settings as defaults for unset CLI arguments
     if args.url is None:
@@ -348,7 +348,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
     from sendspin.serve import ServeConfig, run_server
 
     # Load settings for serve mode
-    settings = await get_settings_manager(SettingsMode.SERVE)
+    settings = await get_serve_settings()
 
     # Apply settings defaults
     if args.port is None:
@@ -367,8 +367,8 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
         print(f"Demo mode enabled, serving URL {source}")
     elif args.source:
         source = args.source
-    elif settings.serve_source:
-        source = settings.serve_source
+    elif settings.source:
+        source = settings.source
         print(f"Using source from settings: {source}")
     else:
         print("Error: either provide a source or use --demo")
@@ -383,7 +383,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
     return await run_server(serve_config)
 
 
-async def _run_daemon_mode(args: argparse.Namespace, settings: SettingsManager) -> int:
+async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
@@ -444,9 +444,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
     # Determine mode and load settings
     is_daemon = args.command == "daemon" or getattr(args, "headless", False)
-    mode = SettingsMode.DAEMON if is_daemon else SettingsMode.TUI
     settings_dir = getattr(args, "settings_dir", None)
-    settings = await get_settings_manager(mode, settings_dir)
+    settings = await get_client_settings("daemon" if is_daemon else "tui", settings_dir)
 
     # Apply settings as defaults for CLI arguments
     _apply_settings_defaults(args, settings)

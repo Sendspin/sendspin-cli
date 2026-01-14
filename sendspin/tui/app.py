@@ -39,7 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
-from sendspin.settings import SettingsManager
+from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -196,7 +196,7 @@ class AppArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
-    settings: SettingsManager
+    settings: ClientSettings
     url: str | None = None
     static_delay_ms: float | None = None
     use_mpris: bool = True
@@ -236,7 +236,7 @@ class SendspinApp:
         )
 
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: SettingsManager | None = None
+        self._settings: ClientSettings | None = None
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
         self._mpris: SendspinMpris | None = None

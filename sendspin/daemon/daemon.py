@@ -27,7 +27,7 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.settings import SettingsManager
+from sendspin.settings import ClientSettings
 from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class DaemonArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
-    settings: SettingsManager
+    settings: ClientSettings
     url: str | None = None
     static_delay_ms: float | None = None
     listen_port: int = 8927
@@ -61,7 +61,7 @@ class SendspinDaemon:
         self._client: SendspinClient | None = None
         self._listener: ClientListener | None = None
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: SettingsManager | None = None
+        self._settings: ClientSettings | None = None
         self._mpris: SendspinMpris | None = None
         self._static_delay_ms: float = 0.0
 

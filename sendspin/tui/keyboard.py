@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
 
     from sendspin.audio_connector import AudioStreamHandler
-    from sendspin.settings import SettingsManager
+    from sendspin.settings import ClientSettings
     from sendspin.tui.app import AppState
     from sendspin.tui.ui import SendspinUI
 
@@ -30,7 +30,7 @@ class CommandHandler:
         state: AppState,
         audio_handler: AudioStreamHandler,
         ui: SendspinUI,
-        settings: SettingsManager,
+        settings: ClientSettings,
     ) -> None:
         """Initialize the command handler."""
         self._client = client
@@ -96,7 +96,7 @@ async def keyboard_loop(
     state: AppState,
     audio_handler: AudioStreamHandler,
     ui: SendspinUI,
-    settings: SettingsManager,
+    settings: ClientSettings,
     show_server_selector: Callable[[], None],
     on_server_selected: Callable[[], Awaitable[None]],
     request_shutdown: Callable[[], None],

@@ -100,7 +100,7 @@ Settings are stored in `~/.config/sendspin/`:
   "log_level": "INFO",
   "listen_port": 8927,
   "name": "My Sendspin Server",
-  "serve_source": "/path/to/music.mp3"
+  "source": "/path/to/music.mp3"
 }
 ```
 
@@ -118,7 +118,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
-| `serve_source` | string | serve | Default audio source (file path or URL) |
+| `source` | string | serve | Default audio source (file path or URL) |
 
 Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
 
