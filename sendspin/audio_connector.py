@@ -8,12 +8,13 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiosendspin.models.core import StreamStartMessage
-from aiosendspin.models.types import Roles
+from aiosendspin.models.types import AudioCodec, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
+from sendspin.decoder import FlacDecoder
 
 if TYPE_CHECKING:
-    from aiosendspin.client import PCMFormat, SendspinClient
+    from aiosendspin.client import AudioFormat, SendspinClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ class AudioStreamHandler:
 
     This handler connects to a SendspinClient and manages audio playback
     by listening for audio chunks, stream start/end events, and handling
-    format changes.
+    format changes. Supports PCM and FLAC codecs.
     """
 
     def __init__(
@@ -48,8 +49,8 @@ class AudioStreamHandler:
         self._on_format_change = on_format_change
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
-        self._current_format: PCMFormat | None = None
-        self._current_codec: str | None = None
+        self._current_format: AudioFormat | None = None
+        self._flac_decoder: FlacDecoder | None = None
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
@@ -84,9 +85,17 @@ class AudioStreamHandler:
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
 
-    def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
-        """Handle incoming audio chunks."""
+    def _on_audio_chunk(
+        self, server_timestamp_us: int, audio_data: bytes, fmt: AudioFormat
+    ) -> None:
+        """Handle incoming audio chunks.
+
+        For PCM codec, audio_data is passed directly to the player.
+        For FLAC codec, audio_data is decoded to PCM first.
+        """
         assert self._client is not None, "Received audio chunk but client is not attached"
+
+        pcm_format = fmt.pcm_format
 
         # Initialize or reconfigure audio player if format changed
         if self.audio_player is None or self._current_format != fmt:
@@ -97,28 +106,44 @@ class AudioStreamHandler:
             self.audio_player = AudioPlayer(
                 loop, self._client.compute_play_time, self._client.compute_server_time
             )
-            self.audio_player.set_format(fmt, device=self._audio_device)
+            self.audio_player.set_format(pcm_format, device=self._audio_device)
             self._current_format = fmt
+
+            # Initialize FLAC decoder if needed
+            if fmt.codec == AudioCodec.FLAC:
+                self._flac_decoder = FlacDecoder(fmt)
+                logger.info(
+                    "Initialized FLAC decoder for %dHz/%d-bit/%dch",
+                    pcm_format.sample_rate,
+                    pcm_format.bit_depth,
+                    pcm_format.channels,
+                )
+            else:
+                self._flac_decoder = None
 
             self.audio_player.set_volume(self._volume, muted=self._muted)
 
             if self._on_format_change is not None:
                 self._on_format_change(
-                    self._current_codec,
-                    fmt.sample_rate,
-                    fmt.bit_depth,
-                    fmt.channels,
+                    fmt.codec.value,
+                    pcm_format.sample_rate,
+                    pcm_format.bit_depth,
+                    pcm_format.channels,
                 )
+
+        # Decode FLAC to PCM if needed
+        if fmt.codec == AudioCodec.FLAC and self._flac_decoder is not None:
+            pcm_data = self._flac_decoder.decode(audio_data)
+            if not pcm_data:
+                logger.debug("FLAC decode returned empty, skipping chunk")
+                return
+            audio_data = pcm_data
 
         # Submit audio chunk - AudioPlayer handles timing
         self.audio_player.submit(server_timestamp_us, audio_data)
 
     def _on_stream_start(self, message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""
-        # Capture codec from stream start message for UI display
-        if message.payload.player is not None:
-            self._current_codec = message.payload.player.codec.value
-
         if self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream start")
@@ -148,3 +173,4 @@ class AudioStreamHandler:
             await self.audio_player.stop()
             self.audio_player = None
         self._current_format = None
+        self._flac_decoder = None
