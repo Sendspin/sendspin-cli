@@ -86,8 +86,11 @@ pip install --upgrade sendspin
 The systemd daemon preserves your configuration during updates. Simply upgrade the package:
 
 ```bash
-# Upgrade sendspin
+# Upgrade sendspin (the daemon installer uses uv by default)
 uv tool upgrade sendspin
+
+# Or if you installed with pip
+pip install --upgrade sendspin
 
 # Restart the service to use the new version
 sudo systemctl restart sendspin
