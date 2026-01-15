@@ -32,6 +32,7 @@ class AudioStreamHandler:
         *,
         volume: int = 100,
         muted: bool = False,
+        on_format_change: Callable[[str | None, int, int, int], None] | None = None,
     ) -> None:
         """Initialize the audio stream handler.
 
@@ -39,13 +40,16 @@ class AudioStreamHandler:
             audio_device: Audio device to use for playback.
             volume: Initial volume (0-100).
             muted: Initial muted state.
+            on_format_change: Callback for format changes (codec, sample_rate, bit_depth, channels).
         """
         self._audio_device = audio_device
         self._volume = volume
         self._muted = muted
+        self._on_format_change = on_format_change
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: PCMFormat | None = None
+        self._current_codec: str | None = None
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
@@ -98,11 +102,23 @@ class AudioStreamHandler:
 
             self.audio_player.set_volume(self._volume, muted=self._muted)
 
+            if self._on_format_change is not None:
+                self._on_format_change(
+                    self._current_codec,
+                    fmt.sample_rate,
+                    fmt.bit_depth,
+                    fmt.channels,
+                )
+
         # Submit audio chunk - AudioPlayer handles timing
         self.audio_player.submit(server_timestamp_us, audio_data)
 
-    def _on_stream_start(self, _message: StreamStartMessage) -> None:
+    def _on_stream_start(self, message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""
+        # Capture codec from stream start message for UI display
+        if message.payload.player is not None:
+            self._current_codec = message.payload.player.codec.value
+
         if self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream start")
