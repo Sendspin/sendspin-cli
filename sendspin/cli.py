@@ -138,6 +138,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "Use --list-audio-devices to see available devices."
         ),
     )
+    daemon_parser.add_argument(
+        "--port",
+        type=int,
+        default=8928,
+        help=(
+            "Port to listen on for server-initiated connections (default: 8928). "
+            "See https://github.com/Sendspin/spec/issues/60"
+        ),
+    )
 
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
@@ -289,6 +298,7 @@ async def _run_daemon_mode(args: argparse.Namespace) -> int:
         client_id=client_id,
         client_name=client_name,
         static_delay_ms=args.static_delay_ms,
+        port=args.port,
     )
 
     daemon = SendspinDaemon(daemon_config)
