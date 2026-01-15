@@ -84,7 +84,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
-        help="Port to listen on (default: 8927)",
+        help="Port to listen on (default: 8928)",
     )
     serve_parser.add_argument(
         "--name",
@@ -127,7 +127,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
-        help="Port to listen on for incoming server connections (default: 8927)",
+        help="Port to listen on for incoming server connections (default: 8928)",
     )
     daemon_parser.add_argument(
         "--name",
@@ -318,7 +318,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
 
     # Apply settings defaults
     if args.port is None:
-        args.port = settings.listen_port or 8927
+        args.port = settings.listen_port or 8928
     if args.name is None:
         args.name = settings.name or "Sendspin Server"
     if args.log_level is None:
@@ -427,7 +427,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     if args.log_level is None:
         args.log_level = settings.log_level or "INFO"
     if args.command == "daemon" and args.port is None:
-        args.port = settings.listen_port or 8927
+        args.port = settings.listen_port or 8928
     args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
 
     # Set up logging with resolved log level
