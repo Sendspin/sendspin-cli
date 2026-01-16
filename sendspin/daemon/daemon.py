@@ -189,12 +189,6 @@ class SendspinDaemon:
         if self._audio_handler is not None:
             await self._audio_handler.cleanup()
 
-    async def _cleanup_failed_connection(self, client: SendspinClient) -> None:
-        """Clean up resources after a failed connection attempt."""
-        await self._stop_mpris_and_audio()
-        if self._client is client:
-            self._client = None
-
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""
         logger.info("Server connected")
@@ -234,11 +228,15 @@ class SendspinDaemon:
                 await client.attach_websocket(ws)
             except TimeoutError:
                 logger.warning("Handshake with server timed out")
-                await self._cleanup_failed_connection(client)
+                await self._stop_mpris_and_audio()
+                if self._client is client:
+                    self._client = None
                 return
             except Exception:
                 logger.exception("Error during server handshake")
-                await self._cleanup_failed_connection(client)
+                await self._stop_mpris_and_audio()
+                if self._client is client:
+                    self._client = None
                 return
 
         # Handshake complete, release lock so new connections can proceed
