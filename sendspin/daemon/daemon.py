@@ -135,10 +135,7 @@ class SendspinDaemon:
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
-            if self._mpris is not None:
-                self._mpris.stop()
-            if self._audio_handler is not None:
-                await self._audio_handler.cleanup()
+            await self._stop_mpris_and_audio()
             if self._client is not None:
                 await self._client.disconnect()
                 self._client = None
@@ -184,13 +181,17 @@ class SendspinDaemon:
         while True:
             await asyncio.sleep(3600)
 
-    async def _cleanup_failed_connection(self, client: SendspinClient) -> None:
-        """Clean up resources after a failed connection attempt."""
-        assert self._audio_handler is not None
+    async def _stop_mpris_and_audio(self) -> None:
+        """Stop MPRIS and cleanup audio handler."""
         if self._mpris is not None:
             self._mpris.stop()
             self._mpris = None
-        await self._audio_handler.cleanup()
+        if self._audio_handler is not None:
+            await self._audio_handler.cleanup()
+
+    async def _cleanup_failed_connection(self, client: SendspinClient) -> None:
+        """Clean up resources after a failed connection attempt."""
+        await self._stop_mpris_and_audio()
         if self._client is client:
             self._client = None
 
