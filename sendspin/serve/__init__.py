@@ -110,7 +110,7 @@ async def run_server(config: ServeConfig) -> int:
     with suppress(NotImplementedError):
         event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
-    async def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
+    def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
         nonlocal active_group
 
         if isinstance(event, ClientAddedEvent):
@@ -124,7 +124,7 @@ async def run_server(config: ServeConfig) -> int:
                 client_connected.set()
                 return
 
-            await active_group.add_client(client)
+            create_task(active_group.add_client(client))
 
         if isinstance(event, ClientRemovedEvent):
             if active_group is None:
