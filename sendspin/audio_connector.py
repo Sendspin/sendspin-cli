@@ -106,7 +106,7 @@ class AudioStreamHandler:
             self.audio_player = AudioPlayer(
                 loop, self._client.compute_play_time, self._client.compute_server_time
             )
-            self.audio_player.set_format(pcm_format, device=self._audio_device)
+            self.audio_player.set_format(fmt, device=self._audio_device)
             self._current_format = fmt
 
             # Initialize FLAC decoder if needed
