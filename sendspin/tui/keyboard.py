@@ -123,8 +123,8 @@ async def keyboard_loop(
         "m": ("mute", handler.toggle_player_mute),
         "g": ("switch", lambda: handler.send_media_command(MediaCommand.SWITCH)),
         # Delay adjustment
-        "[": ("delay-", lambda: handler.adjust_delay(-10)),
-        "]": ("delay+", lambda: handler.adjust_delay(10)),
+        ",": ("delay-", lambda: handler.adjust_delay(-10)),
+        ".": ("delay+", lambda: handler.adjust_delay(10)),
         # Arrow keys
         readchar.key.LEFT: (
             "prev",

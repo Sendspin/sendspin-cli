@@ -140,9 +140,9 @@ class SendspinUI:
             content.add_row(line2)
             line3 = Text()
             line3.append("Press ", style="dim")
-            line3.append("[", style="bold cyan")
+            line3.append(",", style="bold cyan")
             line3.append(" and ", style="dim")
-            line3.append("]", style="bold cyan")
+            line3.append(".", style="bold cyan")
             line3.append(" to adjust audio delay", style="dim")
             content.add_row(line3)
             content.add_row("")
@@ -392,9 +392,9 @@ class SendspinUI:
 
         # Right side: delay shortcuts + server selector + quit shortcut
         right = Text()
-        right.append("[", style=self._shortcut_style("delay-"))
+        right.append(",", style=self._shortcut_style("delay-"))
         right.append("/", style="dim")
-        right.append("]", style=self._shortcut_style("delay+"))
+        right.append(".", style=self._shortcut_style("delay+"))
         right.append(" delay  ", style="dim")
         right.append("s", style=self._shortcut_style("server"))
         right.append(" server  ", style="dim")
