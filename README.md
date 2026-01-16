@@ -67,6 +67,39 @@ sendspin
 
 The player will automatically connect to a Sendspin server on your local network and be available for playback.
 
+## Updating
+
+To update to the latest version of Sendspin:
+
+**If installed with uv:**
+```bash
+uv tool upgrade sendspin
+```
+
+**If installed with pip:**
+```bash
+pip install --upgrade sendspin
+```
+
+**If installed as systemd daemon:**
+
+The systemd daemon preserves your configuration during updates. Simply upgrade the package:
+
+```bash
+# Upgrade sendspin (the daemon installer uses uv by default)
+uv tool upgrade sendspin
+
+# Or if you installed with pip
+pip install --upgrade sendspin
+
+# Restart the service to use the new version
+sudo systemctl restart sendspin
+```
+
+Your client name, audio device selection, and other settings in `/etc/default/sendspin` are preserved during the update.
+
+> **Note:** You do **not** need to uninstall and reinstall when updating. Your configuration (client name, audio device, delay settings) is stored separately and will be preserved.
+
 ## Configuration Options
 
 Sendspin stores settings in JSON configuration files that persist between sessions. All command-line arguments can also be set in the config file, with CLI arguments taking precedence over stored settings.

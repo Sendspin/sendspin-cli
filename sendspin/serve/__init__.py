@@ -56,7 +56,7 @@ class ServeConfig:
     """Configuration for the serve command."""
 
     source: str
-    port: int = 8927
+    port: int = 8928
     name: str = "Sendspin Server"
     clients: list[str] | None = None
 
@@ -110,7 +110,7 @@ async def run_server(config: ServeConfig) -> int:
     with suppress(NotImplementedError):
         event_loop.add_signal_handler(signal.SIGINT, handle_sigint)
 
-    async def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
+    def on_server_event(server: SendspinServer, event: SendspinEvent) -> None:
         nonlocal active_group
 
         if isinstance(event, ClientAddedEvent):
@@ -124,7 +124,7 @@ async def run_server(config: ServeConfig) -> int:
                 client_connected.set()
                 return
 
-            await active_group.add_client(client)
+            create_task(active_group.add_client(client))
 
         if isinstance(event, ClientRemovedEvent):
             if active_group is None:
@@ -163,7 +163,7 @@ async def run_server(config: ServeConfig) -> int:
         for client_url in config.clients:
             try:
                 print(f"Connecting to client: {client_url}")
-                server.connect_to_client(client_url)
+                await server.connect_to_client(client_url)
             except Exception as e:
                 logger.warning("Failed to connect to client %s: %s", client_url, e)
                 print(f"Warning: Failed to connect to client {client_url}: {e}")
@@ -205,6 +205,9 @@ async def run_server(config: ServeConfig) -> int:
                 await play_media_task
             except asyncio.CancelledError:
                 pass
+            except FileNotFoundError as e:
+                print(f"Error: {e}")
+                return 1
             except Exception as e:
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)
