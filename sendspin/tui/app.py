@@ -213,6 +213,8 @@ class SendspinApp:
         server: DiscoveredServer | None = None
         if args.url:
             server = DiscoveredServer.from_url("Command-line argument", args.url)
+        elif args.settings.last_server_url:
+            server = DiscoveredServer.from_url("Last used", args.settings.last_server_url)
 
         self._state = AppState(selected_server=server)
         self._client = SendspinClient(
@@ -486,8 +488,11 @@ class SendspinApp:
     def _show_server_selector(self) -> None:
         assert self._ui is not None
         servers = self._discovery.get_servers()
-        if self._state.selected_server and self._state.selected_server not in servers:
-            servers.insert(0, self._state.selected_server)
+        # Add selected server to list only if not already present (by host)
+        if self._state.selected_server:
+            selected_host = self._state.selected_server.host
+            if not any(s.host == selected_host for s in servers):
+                servers.insert(0, self._state.selected_server)
         self._ui.show_server_selector(servers)
 
     async def _on_server_selected(self) -> None:
