@@ -47,6 +47,10 @@ from sendspin.utils import create_task, get_device_info
 logger = logging.getLogger(__name__)
 
 
+class ServerSwitchRequested(Exception):
+    """Raised when a connection attempt is cancelled due to server switch."""
+
+
 @dataclass
 class AppState:
     """Holds state mirrored from the server for CLI presentation."""
@@ -239,6 +243,7 @@ class SendspinApp:
         self._settings: ClientSettings | None = None
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
+        self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
         if MPRIS_AVAILABLE and args.use_mpris:
             self._mpris = SendspinMpris(self._client)
@@ -338,7 +343,7 @@ class SendspinApp:
                 last_url = self._settings.last_server_url
                 self._ui.add_event(f"Trying last server at {last_url}...")
                 try:
-                    await self._client.connect(last_url)
+                    await self._connect_cancellable(last_url)
                     # Success - create server entry
                     self._state.selected_server = DiscoveredServer.from_url(
                         "Last connected", last_url
@@ -349,6 +354,8 @@ class SendspinApp:
                     # Run connection loop starting from wait-for-disconnect
                     await self._connection_loop(already_connected=True)
                     return 0
+                except ServerSwitchRequested:
+                    pass  # New server already set in state, fall through to connection loop
                 except (TimeoutError, OSError, ClientError):
                     # Last server unavailable, fall through to discovery
                     self._ui.add_event("Last server unavailable, searching...")
@@ -379,6 +386,44 @@ class SendspinApp:
 
         return 0
 
+    async def _connect_cancellable(self, url: str) -> None:
+        """Connect to server. Can be cancelled by _cancel_connect().
+
+        Wraps the connection in a tracked task so server selection can
+        cancel in-progress connection attempts.
+
+        Raises:
+            ServerSwitchRequested: If cancelled due to server switch. The new
+                server is already set in state; caller should continue to use it.
+        """
+        # Create a task for the connection so it can be cancelled
+        self._connect_task = asyncio.create_task(self._client.connect(url))
+        try:
+            await self._connect_task
+        except asyncio.CancelledError:
+            # Check if cancelled due to server switch
+            pending = self._connection_manager.consume_pending_server()
+            if pending:
+                self._state.selected_server = pending
+                self._connection_manager.reset_backoff()
+                if self._ui:
+                    self._ui.add_event(f"Switching to {pending.url}...")
+                    self._ui.set_disconnected(f"Switching to {pending.url}...")
+                raise ServerSwitchRequested from None
+            raise
+        finally:
+            self._connect_task = None
+
+    def _cancel_connect(self) -> bool:
+        """Cancel any in-progress connection attempt.
+
+        Returns True if a connection was cancelled, False if no connection was in progress.
+        """
+        if self._connect_task and not self._connect_task.done():
+            self._connect_task.cancel()
+            return True
+        return False
+
     async def _connection_loop(self, *, already_connected: bool = False) -> None:
         """
         Run the connection loop with automatic reconnection on disconnect.
@@ -408,7 +453,12 @@ class SendspinApp:
                 if skip_connect:
                     skip_connect = False
                 else:
-                    await self._client.connect(url)
+                    try:
+                        await self._connect_cancellable(url)
+                    except ServerSwitchRequested:
+                        # New server already set in state, update local url and retry
+                        url = self._state.selected_server.url
+                        continue
                     ui.add_event(f"Connected to {url}")
                     ui.set_connected(url)
                     manager.reset_backoff()
@@ -503,6 +553,11 @@ class SendspinApp:
             return
 
         self._connection_manager.set_pending_server(server)
+        # Cancel in-progress connection attempt if any
+        if self._cancel_connect():
+            # Connection task was cancelled, the CancelledError handler
+            # will pick up the pending server and switch to it
+            return
         # Force disconnect to trigger reconnect with new URL
         await self._client.disconnect()
 
