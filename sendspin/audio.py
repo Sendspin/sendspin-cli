@@ -24,7 +24,7 @@ from aiosendspin.client.time_sync import SendspinTimeFilter
 from sounddevice import CallbackFlags
 
 if TYPE_CHECKING:
-    from aiosendspin.client import PCMFormat
+    from aiosendspin.client import AudioFormat, PCMFormat
 
 logger = logging.getLogger(__name__)
 
@@ -264,13 +264,14 @@ class AudioPlayer:
         # Thread-safe flag for deferred operations (audio thread → main thread)
         self._clear_requested: bool = False
 
-    def set_format(self, pcm_format: PCMFormat, device: AudioDevice) -> None:
+    def set_format(self, audio_format: AudioFormat, device: AudioDevice) -> None:
         """Configure the audio output format.
 
         Args:
             pcm_format: PCM audio format specification.
             device: Audio device to use.
         """
+        pcm_format = audio_format.pcm_format
         self._format = pcm_format
         self._close_stream()
 

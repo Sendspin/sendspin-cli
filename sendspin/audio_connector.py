@@ -13,7 +13,7 @@ from aiosendspin.models.types import Roles
 from sendspin.audio import AudioDevice, AudioPlayer
 
 if TYPE_CHECKING:
-    from aiosendspin.client import PCMFormat, SendspinClient
+    from aiosendspin.client import AudioFormat, SendspinClient
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ class AudioStreamHandler:
         self._muted = muted
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
-        self._current_format: PCMFormat | None = None
+        self._current_format: AudioFormat | None = None
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
@@ -80,7 +80,9 @@ class AudioStreamHandler:
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
 
-    def _on_audio_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: PCMFormat) -> None:
+    def _on_audio_chunk(
+        self, server_timestamp_us: int, audio_data: bytes, fmt: AudioFormat
+    ) -> None:
         """Handle incoming audio chunks."""
         assert self._client is not None, "Received audio chunk but client is not attached"
 
