@@ -43,7 +43,7 @@ class DaemonArgs:
     settings: ClientSettings
     url: str | None = None
     static_delay_ms: float | None = None
-    listen_port: int = 8927
+    listen_port: int = 8928
     use_mpris: bool = True
 
 

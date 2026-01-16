@@ -56,7 +56,7 @@ class ServeConfig:
     """Configuration for the serve command."""
 
     source: str
-    port: int = 8927
+    port: int = 8928
     name: str = "Sendspin Server"
     clients: list[str] | None = None
 
