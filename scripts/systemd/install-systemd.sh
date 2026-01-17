@@ -19,16 +19,24 @@ if [ ! -t 0 ]; then
     fi
 fi
 
-# Prompt for yes/no with default to yes
-# Usage: prompt_yn "question" && do_something
+# Prompt for yes/no with configurable default
+# Usage: prompt_yn "question" [default]
+# default can be "yes" (default) or "no"
 prompt_yn() {
     local question="$1"
+    local default="${2:-yes}"
+    
     if [ "$INTERACTIVE" = true ]; then
-        read -p "$question [Y/n] " -n1 -r REPLY </dev/tty; echo
-        [[ ! $REPLY =~ ^[Nn]$ ]]
+        if [ "$default" = "no" ]; then
+            read -p "$question [y/N] " -n1 -r REPLY </dev/tty; echo
+            [[ $REPLY =~ ^[Yy]$ ]]
+        else
+            read -p "$question [Y/n] " -n1 -r REPLY </dev/tty; echo
+            [[ ! $REPLY =~ ^[Nn]$ ]]
+        fi
     else
-        echo "$question [auto: yes]"
-        return 0
+        echo "$question [auto: $default]"
+        [ "$default" = "yes" ]
     fi
 }
 
@@ -43,6 +51,39 @@ prompt_input() {
     else
         echo "Using default for $prompt: $default"
         echo "$default"
+    fi
+}
+
+# Install a package using the detected package manager
+# Usage: install_package "canonical-package-name"
+# Handles package name mapping for different distros
+install_package() {
+    local canonical_name="$1"
+    local pkg_name="$canonical_name"  # default to canonical name
+    
+    # Map canonical package names to distro-specific names
+    case "$PKG_MGR:$canonical_name" in
+        pacman:libportaudio2) pkg_name="portaudio" ;;
+        pacman:libopenblas0) pkg_name="openblas" ;;
+        dnf:libopenblas0|yum:libopenblas0) pkg_name="openblas" ;;
+        # Additional mappings can be added here as needed
+    esac
+    
+    # Construct install command for the package manager
+    local CMD=""
+    case "$PKG_MGR" in
+        pacman) CMD="pacman -S --noconfirm $pkg_name" ;;
+        dnf|yum) CMD="$PKG_MGR install -y $pkg_name" ;;
+        apt-get) CMD="$PKG_MGR install -y $pkg_name" ;;
+        *) CMD="$PKG_MGR install -y $pkg_name" ;;
+    esac
+    
+    if prompt_yn "Install now? ($CMD)"; then
+        $CMD || { echo -e "${R}Failed${N}"; return 1; }
+        return 0
+    else
+        echo -e "${R}Error:${N} Package required. Install with: ${B}$CMD${N}"
+        return 1
     fi
 }
 
@@ -67,18 +108,10 @@ echo -e "${D}Checking dependencies...${N}"
 if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
     echo -e "${Y}Missing:${N} libportaudio2"
     if [[ -n "$PKG_MGR" ]]; then
-        if [[ "$PKG_MGR" == "pacman" ]]; then
-            CMD="pacman -S --noconfirm portaudio"
-        else
-            CMD="$PKG_MGR install -y libportaudio2"
-        fi
-        if prompt_yn "Install now? ($CMD)"; then
-            $CMD || { echo -e "${R}Failed${N}"; exit 1; }
-        else
-            echo -e "${R}Error:${N} libportaudio2 required. Install with: ${B}$CMD${N}"; exit 1
-        fi
+        install_package "libportaudio2" || exit 1
     else
-        echo -e "${R}Error:${N} libportaudio2 required. Install via your package manager."; exit 1
+        echo -e "${R}Error:${N} libportaudio2 required. Install via your package manager."
+        exit 1
     fi
 fi
 
@@ -86,20 +119,10 @@ fi
 if ! ldconfig -p 2>/dev/null | grep -q libopenblas.so; then
     echo -e "${Y}Missing:${N} libopenblas0"
     if [[ -n "$PKG_MGR" ]]; then
-        if [[ "$PKG_MGR" == "pacman" ]]; then
-            CMD="pacman -S --noconfirm openblas"
-        elif [[ "$PKG_MGR" == "dnf" || "$PKG_MGR" == "yum" ]]; then
-            CMD="$PKG_MGR install -y openblas"
-        else
-            CMD="$PKG_MGR install -y libopenblas0"
-        fi
-        if prompt_yn "Install now? ($CMD)"; then
-            $CMD || { echo -e "${R}Failed${N}"; exit 1; }
-        else
-            echo -e "${R}Error:${N} libopenblas0 required. Install with: ${B}$CMD${N}"; exit 1
-        fi
+        install_package "libopenblas0" || exit 1
     else
-        echo -e "${R}Error:${N} libopenblas0 required. Install via your package manager."; exit 1
+        echo -e "${R}Error:${N} libopenblas0 required. Install via your package manager."
+        exit 1
     fi
 fi
 
@@ -166,12 +189,7 @@ echo -e "${D}MPRIS (Media Player Remote Interfacing Specification) enables playb
 echo -e "(play/pause/next/prev) from input devices and system controllers.${N}"
 echo -e "${D}Generally disabled for headless endpoints unless they have controls.${N}"
 USE_MPRIS=false
-if [ "$INTERACTIVE" = true ]; then
-    read -p "Enable MPRIS? [y/N] " -n1 -r REPLY </dev/tty; echo
-    [[ $REPLY =~ ^[Yy]$ ]] && USE_MPRIS=true
-else
-    echo "Enable MPRIS? [auto: no]"
-fi
+prompt_yn "Enable MPRIS?" "no" && USE_MPRIS=true
 
 # Create config directory
 CONFIG_DIR="/home/$USER/.config/sendspin"
