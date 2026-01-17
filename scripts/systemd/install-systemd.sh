@@ -94,12 +94,53 @@ install_package() {
     fi
 }
 
-# Check for root via sudo, detect original user to install properly.
-[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
-USER=${SUDO_USER:-$(whoami)}
-[[ -z "$USER" || "$USER" == "root" ]] && { echo -e "${R}Error:${N} Cannot determine user (installing as root is not recommended; log in as a user and run with sudo)"; exit 1; }
+# Check for root
+[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo or as root"; exit 1; }
 
 echo -e "\n${B}${C}Sendspin Service Installation${N}\n"
+
+# Determine user setup: if run as root directly, use dedicated user automatically
+# If run via sudo, offer choice
+USE_DEDICATED_USER=true
+DAEMON_USER="sendspin"
+DAEMON_HOME="/home/sendspin"
+
+if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
+    # Run via sudo - offer choice
+    echo -e "${C}User Setup${N}"
+    echo -e "${D}You can run sendspin as a dedicated 'sendspin' user (recommended)"
+    echo -e "or as your current user ($SUDO_USER).${N}"
+    echo ""
+    
+    if prompt_yn "Use dedicated 'sendspin' user?" "yes"; then
+        DAEMON_USER="sendspin"
+        DAEMON_HOME="/home/sendspin"
+    else
+        USE_DEDICATED_USER=false
+        DAEMON_USER="$SUDO_USER"
+        DAEMON_HOME="/home/$SUDO_USER"
+    fi
+else
+    # Run as root directly - use dedicated user automatically
+    echo -e "${C}User Setup${N}"
+    echo -e "${D}Running as root - will use dedicated 'sendspin' user${N}"
+fi
+
+# Create sendspin user if using dedicated user and it doesn't exist
+if [ "$USE_DEDICATED_USER" = true ] && ! id -u sendspin &>/dev/null; then
+    echo -e "${D}Creating sendspin system user...${N}"
+    useradd -r -m -d "$DAEMON_HOME" -s /bin/bash -c "Sendspin Daemon" sendspin || \
+        { echo -e "${R}Failed to create user${N}"; exit 1; }
+    
+    # Add to audio group for audio device access
+    usermod -a -G audio sendspin 2>/dev/null || true
+    
+    echo -e "${G}✓${N} Created sendspin system user"
+elif [ "$USE_DEDICATED_USER" = true ]; then
+    echo -e "${D}User 'sendspin' already exists${N}"
+fi
+
+echo -e "${D}Daemon will run as: ${B}$DAEMON_USER${N}"
 
 # Detect package manager
 PKG_MGR=""
@@ -134,29 +175,29 @@ if ! ldconfig -p 2>/dev/null | grep -q libopenblas.so; then
 fi
 
 # Check for and offer to install uv if needed
-if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
-   ! sudo -u "$USER" test -f "/home/$USER/.cargo/bin/uv" && \
-   ! sudo -u "$USER" test -f "/home/$USER/.local/bin/uv"; then
+if ! sudo -u "$DAEMON_USER" bash -l -c "command -v uv" &>/dev/null && \
+   ! sudo -u "$DAEMON_USER" test -f "$DAEMON_HOME/.cargo/bin/uv" && \
+   ! sudo -u "$DAEMON_USER" test -f "$DAEMON_HOME/.local/bin/uv"; then
     echo -e "${Y}Missing:${N} uv"
     if prompt_yn "Install now? (curl -LsSf https://astral.sh/uv/install.sh | sh)"; then
-        sudo -u "$USER" bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh" || { echo -e "${R}Failed${N}"; exit 1; }
+        sudo -u "$DAEMON_USER" bash -c "curl -LsSf https://astral.sh/uv/install.sh | sh" || { echo -e "${R}Failed${N}"; exit 1; }
         echo -e "${G}✓${N} uv installed"
     else
         echo -e "${R}Error:${N} uv required. Install with: ${B}curl -LsSf https://astral.sh/uv/install.sh | sh${N}"; exit 1
     fi
 fi
 
-# Install or update sendspin
+# Install or upgrade sendspin
 echo -e "\n${C}Installing Sendspin...${N}"
-if sudo -u "$USER" bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
-    echo -e "${D}Sendspin already installed, updating...${N}"
-    sudo -u "$USER" bash -l -c "uv tool update sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+if sudo -u "$DAEMON_USER" bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
+    echo -e "${D}Sendspin already installed, upgrading...${N}"
+    sudo -u "$DAEMON_USER" bash -l -c "uv tool upgrade sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
 else
-    sudo -u "$USER" bash -l -c "uv tool install sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+    sudo -u "$DAEMON_USER" bash -l -c "uv tool install sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
 fi
 
 # Grab the proper bin path from uv (in case it's non-standard)
-SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
+SENDSPIN_BIN="$(sudo -u "$DAEMON_USER" bash -l -c "uv tool dir --bin")/sendspin"
 
 # Function to generate client_id from name (convert to snake-case)
 # e.g., "Kitchen Music Player" -> "kitchen-music-player"
@@ -187,42 +228,38 @@ NAME=$(prompt_input "Client name" "${OLD_NAME:-$(hostname)}")
 CLIENT_ID=$(generate_client_id "$NAME")
 
 echo -e "\n${C}Audio Devices${N}"
-# Detect user's session environment for accurate audio device listing
-USER_UID=$(id -u "$USER")
-USER_RUNTIME_DIR="/run/user/$USER_UID"
-USER_DBUS=""
+# List audio devices - try to detect session environment for accuracy
+DAEMON_USER_UID=$(id -u "$DAEMON_USER")
+DAEMON_RUNTIME_DIR="/run/user/$DAEMON_USER_UID"
+DAEMON_DBUS=""
 
-# Try to get DBUS address from user's session
-if [ -d "$USER_RUNTIME_DIR" ]; then
-    # Try to find dbus session from user's processes
-    USER_DBUS=$(ps -u "$USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
-    [ -z "$USER_DBUS" ] && USER_DBUS="unix:path=$USER_RUNTIME_DIR/bus"
-fi
-
-# Run with user's environment
-if [ -n "$USER_DBUS" ]; then
-    sudo -u "$USER" env XDG_RUNTIME_DIR="$USER_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$USER_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+# For dedicated user, session might not exist yet, so just list without DBUS
+if [ "$USE_DEDICATED_USER" = true ]; then
+    sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2 || echo -e "${D}(Audio devices will be detected when daemon starts)${N}"
 else
-    echo -e "${Y}Warning:${N} Cannot detect user session environment. Audio devices may not be accurate."
-    sudo -u "$USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+    # Try to get DBUS address from user's session
+    if [ -d "$DAEMON_RUNTIME_DIR" ]; then
+        DAEMON_DBUS=$(ps -u "$DAEMON_USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
+        [ -z "$DAEMON_DBUS" ] && DAEMON_DBUS="unix:path=$DAEMON_RUNTIME_DIR/bus"
+    fi
+    
+    if [ -n "$DAEMON_DBUS" ]; then
+        sudo -u "$DAEMON_USER" env XDG_RUNTIME_DIR="$DAEMON_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DAEMON_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+    else
+        sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+    fi
 fi
 
 DEVICE=$(prompt_input "Audio device" "${OLD_DEVICE:-default}")
 [ "$DEVICE" = "default" ] && DEVICE=""
 
-# Ask about MPRIS support
-echo ""
-echo -e "${C}MPRIS Support${N}"
-echo -e "${D}MPRIS (Media Player Remote Interfacing Specification) enables playback control"
-echo -e "(play/pause/next/prev) from input devices and system controllers."
-echo -e "Generally disabled for headless endpoints unless they have controls.${N}"
+# MPRIS disabled by default (user can enable manually in config if needed)
 USE_MPRIS=false
-prompt_yn "Enable MPRIS?" "no" && USE_MPRIS=true
 
 # Create config directory
-CONFIG_DIR="/home/$USER/.config/sendspin"
+CONFIG_DIR="$DAEMON_HOME/.config/sendspin"
 CONFIG_FILE="$CONFIG_DIR/settings-daemon.json"
-sudo -u "$USER" mkdir -p "$CONFIG_DIR"
+sudo -u "$DAEMON_USER" mkdir -p "$CONFIG_DIR"
 
 # Save config in new JSON format
 # Create JSON with conditional fields (null if empty)
@@ -232,7 +269,7 @@ DEVICE_JSON="null"
 # Use old delay value if it was set
 DELAY_VALUE="${OLD_DELAY:-0.0}"
 
-sudo -u "$USER" tee "$CONFIG_FILE" > /dev/null << EOF
+sudo -u "$DAEMON_USER" tee "$CONFIG_FILE" > /dev/null << EOF
 {
   "name": "$NAME",
   "log_level": null,
@@ -262,7 +299,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=$USER
+User=$DAEMON_USER
 ExecStart=$SENDSPIN_BIN daemon
 Restart=on-failure
 RestartSec=10
@@ -272,6 +309,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
+SupplementaryGroups=audio
 
 [Install]
 WantedBy=multi-user.target
