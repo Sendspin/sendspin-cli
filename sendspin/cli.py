@@ -220,6 +220,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Discover and list available Sendspin servers on the network",
     )
     parser.add_argument(
+        "--list-clients",
+        type=str,
+        metavar="SERVER_URL",
+        default=None,
+        help="List clients connected to a specific Sendspin server (e.g., http://localhost:8928)",
+    )
+    parser.add_argument(
         "--disable-mpris",
         action="store_true",
         help="Disable MPRIS integration",
@@ -250,6 +257,71 @@ async def list_servers() -> None:
             print(f"    Host: {server.host}:{server.port}")
     except Exception as e:  # noqa: BLE001
         print(f"Error discovering servers: {e}")
+        sys.exit(1)
+
+
+async def list_clients(server_url: str) -> None:
+    """List all clients connected to a Sendspin server."""
+    import aiohttp
+
+    # Normalize URL: ensure it's an HTTP URL and strip any trailing /sendspin path
+    url = server_url
+    if url.startswith("ws://"):
+        url = url.replace("ws://", "http://", 1)
+    elif url.startswith("wss://"):
+        url = url.replace("wss://", "https://", 1)
+
+    # Remove /sendspin path if present
+    if url.endswith("/sendspin"):
+        url = url.rstrip("/sendspin")
+
+    # Ensure we have a clean base URL
+    url = url.rstrip("/")
+
+    # Build API endpoint URL
+    api_url = f"{url}/api/clients"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=5.0)) as response:
+                if response.status != 200:
+                    print(f"Error: Server returned status {response.status}")
+                    sys.exit(1)
+
+                data = await response.json()
+                clients = data.get("clients", [])
+
+                if not clients:
+                    print("No clients connected to this server.")
+                    return
+
+                print(f"\nFound {len(clients)} client(s) connected to {server_url}:")
+                print()
+                for client in clients:
+                    print(f"  {client['name']}")
+                    print(f"    ID:    {client['client_id']}")
+                    if client.get("group"):
+                        print(f"    Group: {client['group']}")
+                    if client.get("device_info"):
+                        device = client["device_info"]
+                        if device.get("manufacturer") or device.get("product_name"):
+                            device_str = " / ".join(
+                                filter(None, [device.get("manufacturer"), device.get("product_name")])
+                            )
+                            print(f"    Device: {device_str}")
+                        if device.get("software_version"):
+                            print(f"    Version: {device['software_version']}")
+                    print()
+
+    except aiohttp.ClientConnectorError:
+        print(f"Error: Could not connect to server at {url}")
+        print("Make sure the server is running and the URL is correct.")
+        sys.exit(1)
+    except asyncio.TimeoutError:
+        print(f"Error: Connection to {url} timed out")
+        sys.exit(1)
+    except Exception as e:  # noqa: BLE001
+        print(f"Error listing clients: {e}")
         sys.exit(1)
 
 
@@ -392,6 +464,10 @@ def main() -> int:
 
     if args.list_servers:
         asyncio.run(list_servers())
+        return 0
+
+    if args.list_clients:
+        asyncio.run(list_clients(args.list_clients))
         return 0
 
     try:
