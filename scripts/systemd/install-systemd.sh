@@ -139,9 +139,14 @@ if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
     fi
 fi
 
-# Install sendspin
+# Install or update sendspin
 echo -e "\n${D}Installing sendspin...${N}"
-sudo -u "$USER" bash -l -c "uv tool install --upgrade sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+if sudo -u "$USER" bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
+    echo -e "${D}Sendspin already installed, updating...${N}"
+    sudo -u "$USER" bash -l -c "uv tool update sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+else
+    sudo -u "$USER" bash -l -c "uv tool install sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
+fi
 
 # Grab the proper bin path from uv (in case it's non-standard)
 SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
@@ -154,9 +159,24 @@ generate_client_id() {
     echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g' | sed 's/^-\+\|-\+$//g'
 }
 
+# Load old config if it exists (for migration)
+OLD_CONFIG="/etc/default/sendspin"
+OLD_NAME=""
+OLD_DEVICE=""
+OLD_DELAY="0"
+
+if [ -f "$OLD_CONFIG" ]; then
+    echo -e "${D}Found existing config at $OLD_CONFIG, migrating...${N}"
+    # Source the old config to get values
+    source "$OLD_CONFIG"
+    OLD_NAME="$SENDSPIN_CLIENT_NAME"
+    OLD_DEVICE="$SENDSPIN_AUDIO_DEVICE"
+    OLD_DELAY="${SENDSPIN_STATIC_DELAY_MS:-0}"
+fi
+
 # Configure
 echo ""
-NAME=$(prompt_input "Client name" "$(hostname)")
+NAME=$(prompt_input "Client name" "${OLD_NAME:-$(hostname)}")
 CLIENT_ID=$(generate_client_id "$NAME")
 
 echo -e "\n${D}Available audio devices:${N}"
@@ -180,7 +200,7 @@ else
     sudo -u "$USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
 fi
 
-DEVICE=$(prompt_input "Audio device" "default")
+DEVICE=$(prompt_input "Audio device" "${OLD_DEVICE:-default}")
 [ "$DEVICE" = "default" ] && DEVICE=""
 
 # Ask about MPRIS support
@@ -201,6 +221,9 @@ sudo -u "$USER" mkdir -p "$CONFIG_DIR"
 DEVICE_JSON="null"
 [ -n "$DEVICE" ] && DEVICE_JSON="\"$DEVICE\""
 
+# Use old delay value if it was set
+DELAY_VALUE="${OLD_DELAY:-0.0}"
+
 sudo -u "$USER" tee "$CONFIG_FILE" > /dev/null << EOF
 {
   "name": "$NAME",
@@ -208,13 +231,19 @@ sudo -u "$USER" tee "$CONFIG_FILE" > /dev/null << EOF
   "listen_port": null,
   "player_volume": 25,
   "player_muted": false,
-  "static_delay_ms": 0.0,
+  "static_delay_ms": $DELAY_VALUE,
   "last_server_url": null,
   "client_id": "$CLIENT_ID",
   "audio_device": $DEVICE_JSON,
   "use_mpris": $USE_MPRIS
 }
 EOF
+
+# Clean up old config file if it exists
+if [ -f "$OLD_CONFIG" ]; then
+    echo -e "${D}Removing old config file: $OLD_CONFIG${N}"
+    rm -f "$OLD_CONFIG"
+fi
 
 # Install service
 cat > /etc/systemd/system/sendspin.service << EOF
