@@ -287,6 +287,15 @@ if [ -f "$OLD_CONFIG" ]; then
     rm -f "$OLD_CONFIG"
 fi
 
+# Check if service is currently running (to determine if we need to restart)
+SERVICE_WAS_RUNNING=false
+if systemctl is-active --quiet sendspin.service 2>/dev/null; then
+    SERVICE_WAS_RUNNING=true
+    echo -e "\n${C}Service Update${N}"
+    echo -e "${D}Service is currently running, stopping for update...${N}"
+    systemctl stop sendspin.service
+fi
+
 # Install service
 cat > /etc/systemd/system/sendspin.service << EOF
 [Unit]
@@ -313,12 +322,40 @@ WantedBy=multi-user.target
 EOF
 
 chmod 644 /etc/systemd/system/sendspin.service
+
+# Reload systemd to pick up service changes
 systemctl daemon-reload
 
-# Enable and start
+# Enable and start/restart
 echo -e "\n${C}Service Setup${N}"
-prompt_yn "Enable on boot?" && systemctl enable sendspin.service &>/dev/null
-prompt_yn "Start now?" && systemctl start sendspin.service && echo -e "\n${G}✓${N} Service started"
+
+# Check if service is enabled
+SERVICE_ENABLED=false
+if systemctl is-enabled --quiet sendspin.service 2>/dev/null; then
+    SERVICE_ENABLED=true
+fi
+
+# Offer to enable on boot if not already enabled
+if [ "$SERVICE_ENABLED" = false ]; then
+    if prompt_yn "Enable on boot?"; then
+        systemctl enable sendspin.service &>/dev/null
+        echo -e "${D}Service enabled${N}"
+    fi
+else
+    echo -e "${D}Service already enabled on boot${N}"
+fi
+
+# Start or restart the service
+if [ "$SERVICE_WAS_RUNNING" = true ]; then
+    echo -e "${D}Restarting service...${N}"
+    systemctl restart sendspin.service
+    echo -e "${G}✓${N} Service restarted"
+else
+    if prompt_yn "Start now?"; then
+        systemctl start sendspin.service
+        echo -e "${G}✓${N} Service started"
+    fi
+fi
 
 # Summary
 echo -e "\n${B}${G}Installation Complete!${N}\n"
