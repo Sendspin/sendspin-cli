@@ -95,7 +95,7 @@ function disconnect() {
 
 // Set up Cast link with server URL
 elements.castLink.href = `https://sendspin.github.io/cast/?host=${encodeURIComponent(
-  location.hostname,
+  serverUrl,
 )}`;
 
 if (["localhost", "127.0.0.1"].includes(location.hostname)) {
