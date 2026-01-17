@@ -64,6 +64,7 @@ class SendspinDaemon:
         self._settings: ClientSettings | None = None
         self._mpris: SendspinMpris | None = None
         self._static_delay_ms: float = 0.0
+        self._connection_lock: asyncio.Lock | None = None
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -134,10 +135,7 @@ class SendspinDaemon:
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
-            if self._mpris is not None:
-                self._mpris.stop()
-            if self._audio_handler is not None:
-                await self._audio_handler.cleanup()
+            await self._stop_mpris_and_audio()
             if self._client is not None:
                 await self._client.disconnect()
                 self._client = None
@@ -170,6 +168,7 @@ class SendspinDaemon:
         )
 
         self._static_delay_ms = static_delay_ms  # Store for use in connection handler
+        self._connection_lock = asyncio.Lock()
 
         self._listener = ClientListener(
             client_id=self._args.client_id,
@@ -182,52 +181,76 @@ class SendspinDaemon:
         while True:
             await asyncio.sleep(3600)
 
+    async def _stop_mpris_and_audio(self) -> None:
+        """Stop MPRIS and cleanup audio handler."""
+        if self._mpris is not None:
+            self._mpris.stop()
+            self._mpris = None
+        if self._audio_handler is not None:
+            await self._audio_handler.cleanup()
+
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""
         logger.info("Server connected")
         assert self._audio_handler is not None
+        assert self._connection_lock is not None
 
-        # Clean up any previous client
-        if self._client is not None:
-            logger.info("Disconnecting from previous server")
-            if self._mpris is not None:
-                self._mpris.stop()
-            await self._audio_handler.cleanup()
-            if self._client.connected:
-                try:
-                    await self._client._send_message(  # noqa: SLF001
-                        ClientGoodbyeMessage(
-                            payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
-                        ).to_json()
-                    )
-                except Exception:
-                    logger.debug("Failed to send goodbye message", exc_info=True)
-            await self._client.disconnect()
+        # Lock ensures we wait for any in-progress handshake to complete
+        # before disconnecting the previous server
+        async with self._connection_lock:
+            # Clean up any previous client
+            if self._client is not None:
+                logger.info("Disconnecting from previous server")
+                await self._stop_mpris_and_audio()
+                if self._client.connected:
+                    try:
+                        await self._client._send_message(  # noqa: SLF001
+                            ClientGoodbyeMessage(
+                                payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
+                            ).to_json()
+                        )
+                    except Exception:
+                        logger.debug("Failed to send goodbye message", exc_info=True)
+                await self._client.disconnect()
 
-        # Create a new client for this connection
-        self._client = self._create_client(self._static_delay_ms)
-        self._audio_handler.attach_client(self._client)
-        self._client.add_server_command_listener(self._handle_server_command)
-        if MPRIS_AVAILABLE and self._args.use_mpris:
-            self._mpris = SendspinMpris(self._client)
-            self._mpris.start()
+            # Create a new client for this connection
+            client = self._create_client(self._static_delay_ms)
+            self._client = client
+            self._audio_handler.attach_client(client)
+            client.add_server_command_listener(self._handle_server_command)
+            if MPRIS_AVAILABLE and self._args.use_mpris:
+                self._mpris = SendspinMpris(client)
+                self._mpris.start()
 
+            try:
+                await client.attach_websocket(ws)
+            except TimeoutError:
+                logger.warning("Handshake with server timed out")
+                await self._stop_mpris_and_audio()
+                if self._client is client:
+                    self._client = None
+                return
+            except Exception:
+                logger.exception("Error during server handshake")
+                await self._stop_mpris_and_audio()
+                if self._client is client:
+                    self._client = None
+                return
+
+        # Handshake complete, release lock so new connections can proceed
+        # Now wait for disconnect (outside the lock)
         try:
-            await self._client.attach_websocket(ws)
-
-            # Wait for disconnect
             disconnect_event = asyncio.Event()
-            unsubscribe = self._client.add_disconnect_listener(disconnect_event.set)
+            unsubscribe = client.add_disconnect_listener(disconnect_event.set)
             await disconnect_event.wait()
             unsubscribe()
-
             logger.info("Server disconnected")
-        except TimeoutError:
-            logger.warning("Handshake with server timed out")
         except Exception:
-            logger.exception("Error during server connection")
+            logger.exception("Error waiting for server disconnect")
         finally:
-            await self._audio_handler.cleanup()
+            # Only cleanup if we're still the active client (not replaced by new connection)
+            if self._client is client:
+                await self._stop_mpris_and_audio()
 
     async def _connection_loop(self, url: str) -> None:
         """Run the connection loop with automatic reconnection (client-initiated mode)."""
