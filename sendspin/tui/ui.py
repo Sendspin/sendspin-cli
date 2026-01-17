@@ -64,6 +64,12 @@ class UIState:
     # Delay
     delay_ms: float = 0.0
 
+    # Audio format
+    audio_codec: str | None = None
+    audio_sample_rate: int | None = None
+    audio_bit_depth: int | None = None
+    audio_channels: int | None = None
+
     # Shortcut highlight
     highlighted_shortcut: str | None = None
     highlight_time: float = 0.0
@@ -368,7 +374,7 @@ class SendspinUI:
 
     def _build_status_line(self) -> Table:
         """Build the status line at the bottom."""
-        # Left side: connection status + delay
+        # Left side: connection status + audio format + delay
         left = Text()
         left.append("  ")  # Align with panel content
         if self._state.connected and self._state.server_url:
@@ -381,6 +387,13 @@ class SendspinUI:
                 left.append(f"Connected to {self._state.group_name} at {host}", style="dim")
             else:
                 left.append(f"Connected to {host}", style="dim")
+            # Add audio format info
+            if self._state.audio_sample_rate:
+                rate_khz = self._state.audio_sample_rate / 1000
+                depth = self._state.audio_bit_depth or 16
+                channels = "stereo" if self._state.audio_channels == 2 else "mono"
+                codec = self._state.audio_codec or "PCM"
+                left.append(f" · {codec} {rate_khz:.1f}kHz/{depth}bit {channels}", style="dim")
             # Add delay info
             delay = self._state.delay_ms
             if delay >= 0:
@@ -496,6 +509,20 @@ class SendspinUI:
     def set_delay(self, delay_ms: float) -> None:
         """Update the delay display."""
         self._state.delay_ms = delay_ms
+        self.refresh()
+
+    def set_audio_format(
+        self,
+        codec: str | None,
+        sample_rate: int | None,
+        bit_depth: int | None,
+        channels: int | None,
+    ) -> None:
+        """Update the audio format display."""
+        self._state.audio_codec = codec
+        self._state.audio_sample_rate = sample_rate
+        self._state.audio_bit_depth = bit_depth
+        self._state.audio_channels = channels
         self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:

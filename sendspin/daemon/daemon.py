@@ -15,17 +15,16 @@ from aiosendspin.models.core import (
     ClientGoodbyePayload,
     ServerCommandPayload,
 )
-from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
+from aiosendspin.models.player import ClientHelloPlayerSupport
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
-    AudioCodec,
     GoodbyeReason,
     PlayerCommand,
     PlayerStateType,
     Roles,
 )
 
-from sendspin.audio import AudioDevice
+from sendspin.audio import AudioDevice, detect_supported_audio_formats
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.settings import ClientSettings
 from sendspin.utils import create_task, get_device_info
@@ -72,20 +71,15 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
+        supported_formats = detect_supported_audio_formats(self._args.audio_device.index)
+
         return SendspinClient(
             client_id=self._args.client_id,
             client_name=self._args.client_name,
             roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
-                supported_formats=[
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
-                    ),
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
-                    ),
-                ],
+                supported_formats=supported_formats,
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
@@ -123,6 +117,7 @@ class SendspinDaemon:
             audio_device=self._args.audio_device,
             volume=self._settings.player_volume,
             muted=self._settings.player_muted,
+            on_format_change=self._handle_format_change,
         )
 
         try:
@@ -318,4 +313,22 @@ class SendspinDaemon:
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
             )
+        )
+
+    def _handle_format_change(
+        self,
+        codec: str | None,
+        sample_rate: int,
+        bit_depth: int,
+        channels: int,
+    ) -> None:
+        """Handle audio format changes."""
+        channels_str = "stereo" if channels == 2 else "mono"
+        codec_str = codec or "PCM"
+        logger.info(
+            "Audio format: %s %dkHz/%dbit %s",
+            codec_str,
+            sample_rate // 1000,
+            bit_depth,
+            channels_str,
         )

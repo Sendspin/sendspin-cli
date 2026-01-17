@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 import numpy as np
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
+from aiosendspin.models.player import SupportedAudioFormat
+from aiosendspin.models.types import AudioCodec
 from sounddevice import CallbackFlags
 
 if TYPE_CHECKING:
@@ -71,6 +73,83 @@ def query_devices() -> list[AudioDevice]:
                 )
             )
     return result
+
+
+def _check_format(device: int | None, rate: int, channels: int, dtype: str) -> bool:
+    """Check if a specific audio format is supported by the device."""
+    try:
+        sounddevice.check_output_settings(
+            device=device, samplerate=rate, channels=channels, dtype=dtype
+        )
+        return True
+    except sounddevice.PortAudioError:
+        return False
+
+
+def detect_supported_audio_formats(
+    device: int | None = None,
+) -> list[SupportedAudioFormat]:
+    """Detect supported audio formats by testing dimensions independently.
+
+    Tests sample rates, bit depths, and channels separately then creates the
+    cartesian product. This assumes that if individual dimensions work, their
+    combinations will too (valid for PulseAudio/PipeWire which handle conversion).
+
+    Returns formats for both PCM (raw) and FLAC (compressed) codecs. FLAC formats
+    are preferred and listed first since they reduce bandwidth. FLAC decoding is
+    done client-side before playback.
+
+    Args:
+        device: Audio device ID. None for default device.
+
+    Returns:
+        List of supported audio formats, with FLAC formats first (preferred).
+    """
+    sample_rates = [48000, 44100, 96000, 192000]
+    bit_depths = [16, 24]
+    channel_counts = [2]
+    dtype_map = {8: "uint8", 16: "int16", 24: "int24", 32: "int32"}
+
+    # Test each dimension independently (6 probes)
+    supported_rates = [r for r in sample_rates if _check_format(device, r, 2, "int16")]
+    supported_depths = [d for d in bit_depths if _check_format(device, 48000, 2, dtype_map[d])]
+    supported_channels = [c for c in channel_counts if _check_format(device, 48000, c, "int16")]
+
+    # Build formats for both FLAC (preferred) and PCM
+    # FLAC is preferred as it reduces bandwidth while maintaining lossless quality
+    supported: list[SupportedAudioFormat] = []
+
+    # Add FLAC formats first (preferred)
+    for rate in supported_rates:
+        for depth in supported_depths:
+            for ch in supported_channels:
+                supported.append(
+                    SupportedAudioFormat(
+                        codec=AudioCodec.FLAC, channels=ch, sample_rate=rate, bit_depth=depth
+                    )
+                )
+
+    # Add PCM formats as fallback
+    for rate in supported_rates:
+        for depth in supported_depths:
+            for ch in supported_channels:
+                supported.append(
+                    SupportedAudioFormat(
+                        codec=AudioCodec.PCM, channels=ch, sample_rate=rate, bit_depth=depth
+                    )
+                )
+
+    if not supported:
+        logger.warning("Could not detect supported formats, using safe defaults")
+        supported = [
+            SupportedAudioFormat(
+                codec=AudioCodec.FLAC, channels=2, sample_rate=44100, bit_depth=16
+            ),
+            SupportedAudioFormat(codec=AudioCodec.PCM, channels=2, sample_rate=44100, bit_depth=16),
+        ]
+
+    logger.info("Detected %d supported audio formats (FLAC + PCM)", len(supported))
+    return supported
 
 
 class AudioTimeInfo(Protocol):
@@ -279,20 +358,29 @@ class AudioPlayer:
         self._stream_started = False
         self._first_real_chunk = True
 
+        # Map bit depth to sounddevice dtype
+        # Note: 8-bit uses unsigned (u8 from server), others are signed
+        # sounddevice int24 uses packed 3-byte samples matching wire format
+        dtype_map = {8: "uint8", 16: "int16", 24: "int24", 32: "int32"}
+        dtype = dtype_map.get(pcm_format.bit_depth, "int16")
+
         # Low latency settings for accurate playback (chunks arrive 5+ seconds early)
         self._stream = sounddevice.RawOutputStream(
             samplerate=pcm_format.sample_rate,
             channels=pcm_format.channels,
-            dtype="int16",
+            dtype=dtype,
             blocksize=self._BLOCKSIZE,
             callback=self._audio_callback,
             latency="high",
             device=device.index,
         )
         logger.info(
-            "Audio stream configured: blocksize=%d, latency=high, device=%s",
+            "Audio stream configured: %d-bit %dHz %dch, blocksize=%d, latency=high, device=%s",
+            pcm_format.bit_depth,
+            pcm_format.sample_rate,
+            pcm_format.channels,
             self._BLOCKSIZE,
-            device,
+            device.name,
         )
 
     @property
@@ -315,6 +403,23 @@ class AudioPlayer:
         """
         self._volume = max(0, min(100, volume))
         self._muted = muted
+
+    @property
+    def _output_bytes_per_sample(self) -> int:
+        """Bytes per sample for sounddevice output.
+
+        Note: sounddevice int24 uses 3 bytes per sample (packed format).
+        """
+        if self._format is None:
+            return 2
+        return self._format.bit_depth // 8
+
+    @property
+    def _output_frame_size(self) -> int:
+        """Bytes per frame for sounddevice output."""
+        if self._format is None:
+            return 4
+        return self._output_bytes_per_sample * self._format.channels
 
     async def stop(self) -> None:
         """Stop playback and release resources."""
@@ -385,7 +490,9 @@ class AudioPlayer:
 
         assert self._format is not None
 
-        bytes_needed = frames * self._format.frame_size
+        # Use output frame size for sounddevice buffer (may differ from wire format)
+        output_frame_size = self._output_frame_size
+        bytes_needed = frames * output_frame_size
         output_buffer = memoryview(outdata).cast("B")
 
         if status:
@@ -416,8 +523,6 @@ class AudioPlayer:
                     self._fill_silence(output_buffer, bytes_written, silence_bytes)
                     bytes_written += silence_bytes
             else:
-                frame_size = self._format.frame_size
-
                 # Thread-safe snapshot of correction schedule (prevent mid-callback changes)
                 insert_every_n = self._insert_every_n_frames
                 drop_every_n = self._drop_every_n_frames
@@ -427,8 +532,11 @@ class AudioPlayer:
                     # Bulk read all frames at once - 15-25x faster than frame-by-frame
                     frames_data = self._read_input_frames_bulk(frames)
                     frames_bytes = len(frames_data)
-                    output_buffer[bytes_written : bytes_written + frames_bytes] = frames_data
+                    self._copy_to_buffer(output_buffer, bytes_written, frames_data)
                     bytes_written += frames_bytes
+                    # Save last frame for potential duplication in sync corrections
+                    if frames_bytes >= output_frame_size:
+                        self._last_output_frame = frames_data[-output_frame_size:]
                 else:
                     # Slow path: sync corrections active - process in optimized segments
                     # Reset cadence counters if needed
@@ -438,7 +546,7 @@ class AudioPlayer:
                         self._frames_until_next_drop = drop_every_n
 
                     if not self._last_output_frame:
-                        self._last_output_frame = b"\x00" * frame_size
+                        self._last_output_frame = b"\x00" * output_frame_size
 
                     insert_counter = self._frames_until_next_insert
                     drop_counter = self._frames_until_next_drop
@@ -462,13 +570,14 @@ class AudioPlayer:
                             # Bulk read segment of normal frames
                             segment_data = self._read_input_frames_bulk(next_event_in)
                             segment_bytes = len(segment_data)
-                            output_buffer[bytes_written : bytes_written + segment_bytes] = (
-                                segment_data
-                            )
+                            self._copy_to_buffer(output_buffer, bytes_written, segment_data)
                             bytes_written += segment_bytes
                             frames_remaining -= next_event_in
                             insert_counter -= next_event_in
                             drop_counter -= next_event_in
+                            # Update last output frame for potential duplication
+                            if segment_bytes >= output_frame_size:
+                                self._last_output_frame = segment_data[-output_frame_size:]
 
                         # Handle correction event if at boundary
                         if frames_remaining > 0:
@@ -479,10 +588,10 @@ class AudioPlayer:
                                 drop_counter = drop_every_n
                                 self._frames_dropped_since_log += 1
                                 # Output last frame instead (don't output either frame we read)
-                                output_buffer[bytes_written : bytes_written + frame_size] = (
-                                    self._last_output_frame
+                                self._copy_to_buffer(
+                                    output_buffer, bytes_written, self._last_output_frame
                                 )
-                                bytes_written += frame_size
+                                bytes_written += output_frame_size
                                 frames_remaining -= 1
                                 insert_counter -= 1
                             elif insert_counter <= 0 and insert_every_n > 0:
@@ -490,10 +599,10 @@ class AudioPlayer:
                                 # This makes playback catch up to cursor (cursor doesn't advance)
                                 insert_counter = insert_every_n
                                 self._frames_inserted_since_log += 1
-                                output_buffer[bytes_written : bytes_written + frame_size] = (
-                                    self._last_output_frame
+                                self._copy_to_buffer(
+                                    output_buffer, bytes_written, self._last_output_frame
                                 )
-                                bytes_written += frame_size
+                                bytes_written += output_frame_size
                                 frames_remaining -= 1
                                 drop_counter -= 1
 
@@ -506,9 +615,7 @@ class AudioPlayer:
             # Fill rest with silence on error
             if bytes_written < bytes_needed:
                 silence_bytes = bytes_needed - bytes_written
-                output_buffer[bytes_written : bytes_written + silence_bytes] = (
-                    b"\x00" * silence_bytes
-                )
+                self._fill_silence(output_buffer, bytes_written, silence_bytes)
             # Reset partial chunk state on error
             self._current_chunk = None
             self._current_chunk_offset = 0
@@ -662,10 +769,6 @@ class AudioPlayer:
             # Check if chunk finished
             if self._current_chunk_offset >= len(chunk_data):
                 self._advance_finished_chunk()
-
-        # Save last frame for potential duplication
-        if bytes_written >= frame_size:
-            self._last_output_frame = bytes(result[bytes_written - frame_size : bytes_written])
 
         return bytes(result)
 
@@ -845,32 +948,113 @@ class AudioPlayer:
     def _fill_silence(self, output_buffer: memoryview, offset: int, num_bytes: int) -> None:
         """Fill output buffer range with silence."""
         if num_bytes > 0:
+            # Use direct memoryview slice assignment (writable, unlike np.frombuffer)
             output_buffer[offset : offset + num_bytes] = b"\x00" * num_bytes
+
+    def _copy_to_buffer(
+        self, output_buffer: memoryview, offset: int, data: bytes | bytearray
+    ) -> None:
+        """Copy bytes to output buffer."""
+        if len(data) > 0:
+            # Use direct memoryview slice assignment (writable, unlike np.frombuffer)
+            output_buffer[offset : offset + len(data)] = data
 
     def _apply_volume(self, output_buffer: memoryview, num_bytes: int) -> None:
         """
         Apply volume scaling to the output buffer.
 
-        Scales 16-bit audio samples by the current volume level.
+        Scales audio samples by the current volume level, supporting multiple bit depths.
         """
         muted = self._muted
         volume = self._volume
 
         if muted or volume == 0:
-            # Fill with silence
-            output_buffer[:num_bytes] = b"\x00" * num_bytes
+            # Fill with silence using numpy
+            self._fill_silence(output_buffer, 0, num_bytes)
             return
 
         if volume == 100:
             return
 
-        # Create view of buffer as int16 samples (no copy)
-        samples = np.frombuffer(output_buffer[:num_bytes], dtype=np.int16).copy()
         # Power curve for natural volume control (gentler at high volumes)
         amplitude = (volume / 100.0) ** 1.5
-        samples = (samples * amplitude).astype(np.int16)
-        # Write back to buffer
-        output_buffer[:num_bytes] = samples.tobytes()
+
+        bit_depth = self._format.bit_depth if self._format else 16
+
+        if bit_depth == 8:
+            # 8-bit is unsigned (0-255, center at 128)
+            self._apply_volume_8bit(output_buffer, num_bytes, amplitude)
+        elif bit_depth == 24:
+            # 24-bit is packed (3 bytes/sample) - convert to int32 for scaling
+            self._apply_volume_24bit(output_buffer, num_bytes, amplitude)
+        else:
+            # 16, 32-bit have native signed numpy dtypes
+            if bit_depth == 32:
+                dtype_str = "int32"
+                clip_min, clip_max = -2147483648, 2147483647
+            else:  # 16-bit default
+                dtype_str = "int16"
+                clip_min, clip_max = -32768, 32767
+
+            # Read samples, scale, and write back via memoryview
+            buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes)
+            samples = np.frombuffer(buffer_array, dtype=dtype_str).copy()
+            scaled = np.clip(samples.astype(np.float64) * amplitude, clip_min, clip_max)
+            output_buffer[:num_bytes] = scaled.astype(dtype_str).tobytes()
+
+    def _apply_volume_8bit(
+        self, output_buffer: memoryview, num_bytes: int, amplitude: float
+    ) -> None:
+        """Apply volume scaling to unsigned 8-bit audio data (center at 128)."""
+        if num_bytes == 0:
+            return
+
+        # Read unsigned 8-bit samples
+        buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).copy()
+
+        # Convert to signed (center at 0) for scaling, then back to unsigned
+        # unsigned 128 = signed 0 (silence)
+        signed = buffer_array.astype(np.float64) - 128.0
+        scaled = np.clip(signed * amplitude, -128.0, 127.0)
+        result = (scaled + 128.0).astype(np.uint8)
+
+        output_buffer[:num_bytes] = result.tobytes()
+
+    def _apply_volume_24bit(
+        self, output_buffer: memoryview, num_bytes: int, amplitude: float
+    ) -> None:
+        """Apply volume scaling to packed 24-bit audio data."""
+        num_samples = num_bytes // 3
+        if num_samples == 0:
+            return
+
+        # Read packed 24-bit samples and reshape to (N, 3) for vectorized unpacking
+        raw = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).reshape(-1, 3)
+
+        # Unpack 3 bytes per sample to int32 (little-endian: low | mid<<8 | high<<16)
+        samples_i32 = (
+            raw[:, 0].astype(np.int32)
+            | (raw[:, 1].astype(np.int32) << 8)
+            | (raw[:, 2].astype(np.int32) << 16)
+        )
+
+        # Sign extend from 24-bit to 32-bit (if bit 23 is set, set bits 24-31)
+        samples_i32 = np.where(
+            samples_i32 & 0x800000, samples_i32 | np.int32(-0x1000000), samples_i32
+        )
+
+        # Apply volume scaling
+        scaled = np.clip(samples_i32.astype(np.float64) * amplitude, -8388608, 8388607).astype(
+            np.int32
+        )
+
+        # Pack back to 24-bit (extract bytes using vectorized shifts)
+        result = np.empty((num_samples, 3), dtype=np.uint8)
+        result[:, 0] = scaled & 0xFF
+        result[:, 1] = (scaled >> 8) & 0xFF
+        result[:, 2] = (scaled >> 16) & 0xFF
+
+        output_buffer[:num_bytes] = result.tobytes()
 
     def _compute_and_set_loop_start(self, server_timestamp_us: int) -> None:
         """Compute and set scheduled start time from server timestamp."""
@@ -926,7 +1110,7 @@ class AudioPlayer:
                 (delta_us * self._format.sample_rate + 999_999) // self._MICROSECONDS_PER_SECOND
             )
             frames_to_silence = min(frames_until_start, frames)
-            silence_bytes = frames_to_silence * self._format.frame_size
+            silence_bytes = frames_to_silence * self._output_frame_size
             self._fill_silence(output_buffer, bytes_written, silence_bytes)
             bytes_written += silence_bytes
         elif delta_us < 0 and can_drop_frames:
