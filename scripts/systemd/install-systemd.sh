@@ -207,25 +207,51 @@ generate_client_id() {
     echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g' | sed 's/^-\+\|-\+$//g'
 }
 
-# Load old config if it exists (for migration)
+# Load existing config if it exists (prefer JSON over old format)
+EXISTING_CONFIG_DIR="$DAEMON_HOME/.config/sendspin"
+EXISTING_CONFIG_FILE="$EXISTING_CONFIG_DIR/settings-daemon.json"
 OLD_CONFIG="/etc/default/sendspin"
-OLD_NAME=""
-OLD_DEVICE=""
-OLD_DELAY="0"
 
-if [ -f "$OLD_CONFIG" ]; then
-    echo -e "\n${C}Found existing config, migrating...${N}"
-    # Source the old config to get values
+# Default values
+DEFAULT_NAME="$(hostname)"
+DEFAULT_CLIENT_ID=""
+DEFAULT_DEVICE="default"
+DEFAULT_DELAY="0"
+
+# Check for existing JSON config first (priority)
+if [ -f "$EXISTING_CONFIG_FILE" ]; then
+    echo -e "\n${C}Found existing configuration${N}"
+    # Parse JSON using python if available, otherwise use grep/sed
+    if command -v python3 &>/dev/null; then
+        DEFAULT_NAME=$(python3 -c "import json; print(json.load(open('$EXISTING_CONFIG_FILE')).get('name', '$DEFAULT_NAME'))" 2>/dev/null || echo "$DEFAULT_NAME")
+        DEFAULT_CLIENT_ID=$(python3 -c "import json; print(json.load(open('$EXISTING_CONFIG_FILE')).get('client_id', ''))" 2>/dev/null || echo "")
+        DEFAULT_DEVICE=$(python3 -c "import json; d=json.load(open('$EXISTING_CONFIG_FILE')).get('audio_device'); print(d if d else 'default')" 2>/dev/null || echo "default")
+        DEFAULT_DELAY=$(python3 -c "import json; print(json.load(open('$EXISTING_CONFIG_FILE')).get('static_delay_ms', 0))" 2>/dev/null || echo "0")
+    else
+        # Fallback to basic parsing
+        DEFAULT_NAME=$(grep -o '"name"[[:space:]]*:[[:space:]]*"[^"]*"' "$EXISTING_CONFIG_FILE" | sed 's/.*"\([^"]*\)"/\1/' || echo "$DEFAULT_NAME")
+        DEFAULT_CLIENT_ID=$(grep -o '"client_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$EXISTING_CONFIG_FILE" | sed 's/.*"\([^"]*\)"/\1/' || echo "")
+        DEFAULT_DEVICE=$(grep -o '"audio_device"[[:space:]]*:[[:space:]]*"[^"]*"' "$EXISTING_CONFIG_FILE" | sed 's/.*"\([^"]*\)"/\1/' || echo "default")
+        DEFAULT_DELAY=$(grep -o '"static_delay_ms"[[:space:]]*:[[:space:]]*[0-9.]*' "$EXISTING_CONFIG_FILE" | sed 's/.*:[[:space:]]*\([0-9.]*\)/\1/' || echo "0")
+    fi
+# Check for old config format (lower priority)
+elif [ -f "$OLD_CONFIG" ]; then
+    echo -e "\n${C}Found old configuration, migrating...${N}"
     source "$OLD_CONFIG"
-    OLD_NAME="$SENDSPIN_CLIENT_NAME"
-    OLD_DEVICE="$SENDSPIN_AUDIO_DEVICE"
-    OLD_DELAY="${SENDSPIN_STATIC_DELAY_MS:-0}"
+    DEFAULT_NAME="${SENDSPIN_CLIENT_NAME:-$DEFAULT_NAME}"
+    DEFAULT_DEVICE="${SENDSPIN_AUDIO_DEVICE:-default}"
+    DEFAULT_DELAY="${SENDSPIN_STATIC_DELAY_MS:-0}"
 fi
 
 # Configure
 echo -e "\n${C}Configuration${N}"
-NAME=$(prompt_input "Client name" "${OLD_NAME:-$(hostname)}")
-CLIENT_ID=$(generate_client_id "$NAME")
+NAME=$(prompt_input "Client name" "$DEFAULT_NAME")
+
+# Generate or use existing client_id
+if [ -z "$DEFAULT_CLIENT_ID" ]; then
+    DEFAULT_CLIENT_ID=$(generate_client_id "$NAME")
+fi
+CLIENT_ID=$(prompt_input "Client ID" "$DEFAULT_CLIENT_ID")
 
 echo -e "\n${C}Audio Devices${N}"
 # List audio devices - try to detect session environment for accuracy
@@ -233,24 +259,20 @@ DAEMON_USER_UID=$(id -u "$DAEMON_USER")
 DAEMON_RUNTIME_DIR="/run/user/$DAEMON_USER_UID"
 DAEMON_DBUS=""
 
-# For dedicated user, session might not exist yet, so just list without DBUS
-if [ "$USE_DEDICATED_USER" = true ]; then
-    sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2 || echo -e "${D}(Audio devices will be detected when daemon starts)${N}"
-else
-    # Try to get DBUS address from user's session
-    if [ -d "$DAEMON_RUNTIME_DIR" ]; then
-        DAEMON_DBUS=$(ps -u "$DAEMON_USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
-        [ -z "$DAEMON_DBUS" ] && DAEMON_DBUS="unix:path=$DAEMON_RUNTIME_DIR/bus"
-    fi
-    
-    if [ -n "$DAEMON_DBUS" ]; then
-        sudo -u "$DAEMON_USER" env XDG_RUNTIME_DIR="$DAEMON_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DAEMON_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
-    else
-        sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
-    fi
+# Try to get DBUS address from user's session (or current session for dedicated user)
+if [ -d "$DAEMON_RUNTIME_DIR" ]; then
+    DAEMON_DBUS=$(ps -u "$DAEMON_USER" e | grep -m1 'DBUS_SESSION_BUS_ADDRESS=' | sed 's/.*DBUS_SESSION_BUS_ADDRESS=\([^ ]*\).*/\1/' || true)
+    [ -z "$DAEMON_DBUS" ] && DAEMON_DBUS="unix:path=$DAEMON_RUNTIME_DIR/bus"
 fi
 
-DEVICE=$(prompt_input "Audio device" "${OLD_DEVICE:-default}")
+# Run with environment variables if available
+if [ -n "$DAEMON_DBUS" ]; then
+    sudo -u "$DAEMON_USER" env XDG_RUNTIME_DIR="$DAEMON_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DAEMON_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+else
+    sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2 || echo -e "${D}(Audio devices will be detected when daemon starts)${N}"
+fi
+
+DEVICE=$(prompt_input "Audio device" "$DEFAULT_DEVICE")
 [ "$DEVICE" = "default" ] && DEVICE=""
 
 # MPRIS disabled by default (user can enable manually in config if needed)
@@ -266,8 +288,8 @@ sudo -u "$DAEMON_USER" mkdir -p "$CONFIG_DIR"
 DEVICE_JSON="null"
 [ -n "$DEVICE" ] && DEVICE_JSON="\"$DEVICE\""
 
-# Use old delay value if it was set
-DELAY_VALUE="${OLD_DELAY:-0.0}"
+# Use existing delay value
+DELAY_VALUE="${DEFAULT_DELAY:-0.0}"
 
 sudo -u "$DAEMON_USER" tee "$CONFIG_FILE" > /dev/null << EOF
 {
