@@ -31,7 +31,7 @@ fi
 prompt_yn() {
     local question="$1"
     local default="${2:-yes}"
-    
+
     if [ "$INTERACTIVE" = true ]; then
         if [ "$default" = "no" ]; then
             read -p "$question [y/N] " -n1 -r REPLY </dev/tty; echo
@@ -67,7 +67,7 @@ prompt_input() {
 install_package() {
     local canonical_name="$1"
     local pkg_name="$canonical_name"  # default to canonical name
-    
+
     # Map canonical package names to distro-specific names
     case "$PKG_MGR:$canonical_name" in
         pacman:libportaudio2) pkg_name="portaudio" ;;
@@ -75,7 +75,7 @@ install_package() {
         dnf:libopenblas0|yum:libopenblas0) pkg_name="openblas" ;;
         # Additional mappings can be added here as needed
     esac
-    
+
     # Construct install command for the package manager
     local CMD=""
     case "$PKG_MGR" in
@@ -84,7 +84,7 @@ install_package() {
         apt-get) CMD="$PKG_MGR install -y $pkg_name" ;;
         *) CMD="$PKG_MGR install -y $pkg_name" ;;
     esac
-    
+
     if prompt_yn "Install now? ($CMD)"; then
         $CMD || { echo -e "${R}Failed${N}"; return 1; }
         return 0
@@ -111,7 +111,7 @@ if [[ -n "$SUDO_USER" && "$SUDO_USER" != "root" ]]; then
     echo -e "${D}You can run sendspin as a dedicated 'sendspin' user (recommended)"
     echo -e "or as your current user ($SUDO_USER).${N}"
     echo ""
-    
+
     if prompt_yn "Use dedicated 'sendspin' user?" "yes"; then
         DAEMON_USER="sendspin"
         DAEMON_HOME="/home/sendspin"
@@ -131,10 +131,10 @@ if [ "$USE_DEDICATED_USER" = true ] && ! id -u sendspin &>/dev/null; then
     echo -e "${D}Creating sendspin system user...${N}"
     useradd -r -m -d "$DAEMON_HOME" -s /bin/bash -c "Sendspin Daemon" sendspin || \
         { echo -e "${R}Failed to create user${N}"; exit 1; }
-    
+
     # Add to audio group for audio device access
     usermod -a -G audio sendspin 2>/dev/null || true
-    
+
     echo -e "${G}✓${N} Created sendspin system user"
 elif [ "$USE_DEDICATED_USER" = true ]; then
     echo -e "${D}User 'sendspin' already exists${N}"

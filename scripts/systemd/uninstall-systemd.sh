@@ -25,7 +25,7 @@ fi
 prompt_yn() {
     local question="$1"
     local default="${2:-yes}"
-    
+
     if [ "$INTERACTIVE" = true ]; then
         if [ "$default" = "no" ]; then
             read -p "$question [y/N] " -n1 -r REPLY </dev/tty; echo
@@ -114,7 +114,7 @@ if [ -n "$DAEMON_USER" ]; then
         echo -e "${D}Removing configuration...${N}"
         rm -rf "$CONFIG_DIR"
     fi
-    
+
     # Uninstall sendspin
     if sudo -u "$DAEMON_USER" bash -l -c "command -v uv" &>/dev/null; then
         echo -e "${D}Uninstalling sendspin from $DAEMON_USER...${N}"
