@@ -123,9 +123,18 @@ sudo -u "$USER" bash -l -c "uv tool install --upgrade sendspin" || { echo -e "${
 # Grab the proper bin path from uv (in case it's non-standard)
 SENDSPIN_BIN="$(sudo -u "$USER" bash -l -c "uv tool dir --bin")/sendspin"
 
+# Function to generate client_id from name (convert to snake-case)
+# e.g., "Kitchen Music Player" -> "kitchen-music-player"
+generate_client_id() {
+    local name="$1"
+    # Convert to lowercase, replace spaces/special chars with hyphens, remove consecutive hyphens
+    echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]\+/-/g' | sed 's/^-\+\|-\+$//g'
+}
+
 # Configure
 echo ""
 NAME=$(prompt_input "Client name" "$(hostname)")
+CLIENT_ID=$(generate_client_id "$NAME")
 
 echo -e "\n${D}Available audio devices:${N}"
 # Detect user's session environment for accurate audio device listing
@@ -151,19 +160,42 @@ fi
 DEVICE=$(prompt_input "Audio device" "default")
 [ "$DEVICE" = "default" ] && DEVICE=""
 
-# Save config
-cat > /etc/default/sendspin << EOF
-# Friendly name displayed on the Sendspin server
-SENDSPIN_CLIENT_NAME=$NAME
+# Ask about MPRIS support
+echo ""
+echo -e "${D}MPRIS (Media Player Remote Interfacing Specification) enables playback control"
+echo -e "(play/pause/next/prev) from input devices and system controllers.${N}"
+echo -e "${D}Generally disabled for headless endpoints unless they have controls.${N}"
+USE_MPRIS=false
+if [ "$INTERACTIVE" = true ]; then
+    read -p "Enable MPRIS? [y/N] " -n1 -r REPLY </dev/tty; echo
+    [[ $REPLY =~ ^[Yy]$ ]] && USE_MPRIS=true
+else
+    echo "Enable MPRIS? [auto: no]"
+fi
 
-# Audio device index or name prefix (leave empty for default)
-SENDSPIN_AUDIO_DEVICE=$DEVICE
+# Create config directory
+CONFIG_DIR="/home/$USER/.config/sendspin"
+CONFIG_FILE="$CONFIG_DIR/settings-daemon.json"
+sudo -u "$USER" mkdir -p "$CONFIG_DIR"
 
-# Playback delay in milliseconds (typically negative, e.g., -100)
-SENDSPIN_STATIC_DELAY_MS=0
+# Save config in new JSON format
+# Create JSON with conditional fields (null if empty)
+DEVICE_JSON="null"
+[ -n "$DEVICE" ] && DEVICE_JSON="\"$DEVICE\""
 
-# Additional command-line arguments (e.g., --log-level DEBUG)
-SENDSPIN_ARGS=
+sudo -u "$USER" tee "$CONFIG_FILE" > /dev/null << EOF
+{
+  "name": "$NAME",
+  "log_level": null,
+  "listen_port": null,
+  "player_volume": 25,
+  "player_muted": false,
+  "static_delay_ms": 0.0,
+  "last_server_url": null,
+  "client_id": "$CLIENT_ID",
+  "audio_device": $DEVICE_JSON,
+  "use_mpris": $USE_MPRIS
+}
 EOF
 
 # Install service
@@ -175,13 +207,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-EnvironmentFile=/etc/default/sendspin
 User=$USER
-ExecStart=/bin/bash -c 'exec $SENDSPIN_BIN daemon \
-    \${SENDSPIN_CLIENT_NAME:+--name "\${SENDSPIN_CLIENT_NAME}"} \
-    \${SENDSPIN_AUDIO_DEVICE:+--audio-device "\${SENDSPIN_AUDIO_DEVICE}"} \
-    --static-delay-ms \${SENDSPIN_STATIC_DELAY_MS:-0} \
-    \${SENDSPIN_ARGS}'
+ExecStart=$SENDSPIN_BIN daemon
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -195,7 +222,7 @@ ProtectHome=read-only
 WantedBy=multi-user.target
 EOF
 
-chmod 644 /etc/systemd/system/sendspin.service /etc/default/sendspin
+chmod 644 /etc/systemd/system/sendspin.service
 systemctl daemon-reload
 
 # Enable and start
@@ -205,6 +232,6 @@ prompt_yn "Start now?" && systemctl start sendspin.service && echo -e "\n${G}✓
 
 # Summary
 echo -e "\n${B}Installation Complete${N}"
-echo -e "${D}Config:${N}  /etc/default/sendspin"
+echo -e "${D}Config:${N}  $CONFIG_FILE"
 echo -e "${D}Service:${N} systemctl {start|stop|status} sendspin"
 echo -e "${D}Logs:${N}    journalctl -u sendspin -f\n"
