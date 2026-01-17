@@ -48,25 +48,12 @@ if (isIOS()) {
  * Initialize the Sendspin player (called after user interaction)
  */
 async function initPlayer() {
-  // Import sendspin-js from unpkg CDN
   const { SendspinPlayer } = await sdkImport;
 
-  // Remove player ID generation + useOutputLatencyCompensation: true
-  // when merged https://github.com/Sendspin/sendspin-js/pull/29
-  const playerId = `sendspin-web-${Math.random()
-    .toString(36)
-    .substring(2, 10)}`;
-
-  player = new SendspinPlayer({
-    playerId,
-    baseUrl: serverUrl,
-    onStateChange: handleStateChange,
-    useOutputLatencyCompensation: true,
-  });
+  player = new SendspinPlayer({ baseUrl: serverUrl });
 
   try {
     await player.connect();
-    // Start polling for sync status updates
     syncUpdateInterval = setInterval(updateSyncStatus, 500);
   } catch (err) {
     console.error("Connection failed:", err);
@@ -80,8 +67,6 @@ async function initPlayer() {
 function updateSyncStatus() {
   if (!player) return;
 
-  // SDK has no way to control reconnect logic or inform us of disconnects yet
-  // But since we check this ever 500ms, it's good enough for now
   if (!player.isConnected) {
     disconnect();
     return;
@@ -99,13 +84,6 @@ function updateSyncStatus() {
       elements.syncStatus.classList.remove("synced");
     }
   }
-}
-
-/**
- * Handle player state changes
- */
-function handleStateChange(state) {
-  // State changes are handled, sync is polled separately
 }
 
 /**
@@ -165,7 +143,7 @@ elements.volumeSlider.addEventListener("input", () => {
 });
 
 const sdkImport = import(
-  "https://unpkg.com/@music-assistant/sendspin-js@0.5/dist/index.js"
+  "https://unpkg.com/@music-assistant/sendspin-js@1.0/dist/index.js"
 );
 
 // QR Code generation (using qrcode-generator loaded via script tag)
