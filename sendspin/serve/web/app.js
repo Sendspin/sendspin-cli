@@ -19,7 +19,6 @@ const elements = {
   shareBtn: document.getElementById("share-btn"),
   shareServerUrl: document.getElementById("share-server-url"),
   castLink: document.getElementById("cast-link"),
-  muteWarning: document.getElementById("mute-warning"),
 };
 
 // Player instance
@@ -30,19 +29,6 @@ let syncUpdateInterval = null;
 const serverUrl = `${location.protocol}//${location.host}`;
 elements.shareServerUrl.textContent = serverUrl;
 elements.shareServerUrl.href = serverUrl;
-
-/**
- * Detect if user is on iOS/iPhone
- */
-function isIOS() {
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-}
-
-// Show mute warning for iOS users
-if (isIOS()) {
-  elements.muteWarning.classList.remove("hidden");
-}
 
 /**
  * Initialize the Sendspin player (called after user interaction)

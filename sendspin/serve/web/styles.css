@@ -66,34 +66,6 @@ header h1 {
   width: 100%;
 }
 
-/* Warning banner */
-.warning {
-  background: #fff3cd;
-  border: 1px solid #ffc107;
-  color: #856404;
-}
-
-.warning-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.warning-icon {
-  font-size: 24px;
-  flex-shrink: 0;
-}
-
-.warning-text {
-  font-size: 14px;
-  line-height: 1.5;
-  flex: 1;
-}
-
-.warning-text strong {
-  font-weight: 600;
-}
-
 /* Buttons */
 .btn {
   padding: 12px 24px;
