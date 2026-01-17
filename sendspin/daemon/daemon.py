@@ -201,9 +201,7 @@ class SendspinDaemon:
             # Clean up any previous client
             if self._client is not None:
                 logger.info("Disconnecting from previous server")
-                if self._mpris is not None:
-                    self._mpris.stop()
-                await self._audio_handler.cleanup()
+                await self._stop_mpris_and_audio()
                 if self._client.connected:
                     try:
                         await self._client._send_message(  # noqa: SLF001
@@ -252,7 +250,7 @@ class SendspinDaemon:
         finally:
             # Only cleanup if we're still the active client (not replaced by new connection)
             if self._client is client:
-                await self._audio_handler.cleanup()
+                await self._stop_mpris_and_audio()
 
     async def _connection_loop(self, url: str) -> None:
         """Run the connection loop with automatic reconnection (client-initiated mode)."""
