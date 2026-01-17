@@ -6,7 +6,13 @@ set -e
 exec 2>&1
 
 # Colors
-C='\033[0;36m'; G='\033[0;32m'; Y='\033[1;33m'; R='\033[0;31m'; B='\033[1m'; D='\033[2m'; N='\033[0m'
+C='\033[0;36m'
+G='\033[0;32m'
+Y='\033[1;33m'
+R='\033[0;31m'
+B='\033[1m'
+D='\033[2m'
+N='\033[0m'
 
 # Detect if running interactively
 INTERACTIVE=true
@@ -46,7 +52,8 @@ prompt_input() {
     local prompt="$1"
     local default="$2"
     if [ "$INTERACTIVE" = true ]; then
-        read -p "$prompt [$default]: " REPLY </dev/tty
+        echo -en "${C}${prompt}${N} [$default]: " >&2
+        read -r REPLY </dev/tty
         echo "${REPLY:-$default}"
     else
         echo "Using default for $prompt: $default"
@@ -102,7 +109,7 @@ elif command -v yum &>/dev/null; then PKG_MGR="yum"
 elif command -v pacman &>/dev/null; then PKG_MGR="pacman"
 fi
 
-echo -e "${D}Checking dependencies...${N}"
+echo -e "\n${C}Checking dependencies...${N}"
 
 # Check for and offer to install libportaudio2
 if ! ldconfig -p 2>/dev/null | grep -q libportaudio.so; then
@@ -140,7 +147,7 @@ if ! sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null && \
 fi
 
 # Install or update sendspin
-echo -e "\n${D}Installing sendspin...${N}"
+echo -e "\n${C}Installing Sendspin...${N}"
 if sudo -u "$USER" bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
     echo -e "${D}Sendspin already installed, updating...${N}"
     sudo -u "$USER" bash -l -c "uv tool update sendspin" || { echo -e "${R}Failed${N}"; exit 1; }
@@ -166,7 +173,7 @@ OLD_DEVICE=""
 OLD_DELAY="0"
 
 if [ -f "$OLD_CONFIG" ]; then
-    echo -e "${D}Found existing config at $OLD_CONFIG, migrating...${N}"
+    echo -e "\n${C}Found existing config, migrating...${N}"
     # Source the old config to get values
     source "$OLD_CONFIG"
     OLD_NAME="$SENDSPIN_CLIENT_NAME"
@@ -175,11 +182,11 @@ if [ -f "$OLD_CONFIG" ]; then
 fi
 
 # Configure
-echo ""
+echo -e "\n${C}Configuration${N}"
 NAME=$(prompt_input "Client name" "${OLD_NAME:-$(hostname)}")
 CLIENT_ID=$(generate_client_id "$NAME")
 
-echo -e "\n${D}Available audio devices:${N}"
+echo -e "\n${C}Audio Devices${N}"
 # Detect user's session environment for accurate audio device listing
 USER_UID=$(id -u "$USER")
 USER_RUNTIME_DIR="/run/user/$USER_UID"
@@ -205,9 +212,10 @@ DEVICE=$(prompt_input "Audio device" "${OLD_DEVICE:-default}")
 
 # Ask about MPRIS support
 echo ""
+echo -e "${C}MPRIS Support${N}"
 echo -e "${D}MPRIS (Media Player Remote Interfacing Specification) enables playback control"
-echo -e "(play/pause/next/prev) from input devices and system controllers.${N}"
-echo -e "${D}Generally disabled for headless endpoints unless they have controls.${N}"
+echo -e "(play/pause/next/prev) from input devices and system controllers."
+echo -e "Generally disabled for headless endpoints unless they have controls.${N}"
 USE_MPRIS=false
 prompt_yn "Enable MPRIS?" "no" && USE_MPRIS=true
 
@@ -241,7 +249,7 @@ EOF
 
 # Clean up old config file if it exists
 if [ -f "$OLD_CONFIG" ]; then
-    echo -e "${D}Removing old config file: $OLD_CONFIG${N}"
+    echo -e "${G}✓${N} Migrated config, removing old file"
     rm -f "$OLD_CONFIG"
 fi
 
@@ -273,12 +281,12 @@ chmod 644 /etc/systemd/system/sendspin.service
 systemctl daemon-reload
 
 # Enable and start
-echo ""
+echo -e "\n${C}Service Setup${N}"
 prompt_yn "Enable on boot?" && systemctl enable sendspin.service &>/dev/null
 prompt_yn "Start now?" && systemctl start sendspin.service && echo -e "\n${G}✓${N} Service started"
 
 # Summary
-echo -e "\n${B}Installation Complete${N}"
-echo -e "${D}Config:${N}  $CONFIG_FILE"
-echo -e "${D}Service:${N} systemctl {start|stop|status} sendspin"
-echo -e "${D}Logs:${N}    journalctl -u sendspin -f\n"
+echo -e "\n${B}${G}Installation Complete!${N}\n"
+echo -e "${C}Config:${N}  $CONFIG_FILE"
+echo -e "${C}Service:${N} systemctl {start|stop|status} sendspin"
+echo -e "${C}Logs:${N}    journalctl -u sendspin -f\n"
