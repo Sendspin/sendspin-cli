@@ -41,14 +41,43 @@ prompt_yn() {
 }
 
 # Check root
-[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo"; exit 1; }
-USER=${SUDO_USER:-$(whoami)}
-[[ -z "$USER" || "$USER" == "root" ]] && { echo -e "${R}Error:${N} Cannot determine user"; exit 1; }
+[[ $EUID -ne 0 ]] && { echo -e "${R}Error:${N} Please run with sudo or as root"; exit 1; }
 
 echo -e "\n${B}${C}Sendspin Systemd Uninstaller${N}\n"
 
+# Detect which user was used (check if sendspin user exists and has sendspin installed)
+DAEMON_USER=""
+USE_DEDICATED_USER=false
+
+if id -u sendspin &>/dev/null && sudo -u sendspin bash -l -c "command -v uv" &>/dev/null 2>&1; then
+    # Check if sendspin user has sendspin installed
+    if sudo -u sendspin bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
+        DAEMON_USER="sendspin"
+        USE_DEDICATED_USER=true
+        echo -e "${D}Detected installation with dedicated 'sendspin' user${N}"
+    fi
+fi
+
+# If no dedicated user found, check current/sudo user
+if [ -z "$DAEMON_USER" ]; then
+    CURRENT_USER=${SUDO_USER:-$(whoami)}
+    if [[ "$CURRENT_USER" != "root" ]]; then
+        if sudo -u "$CURRENT_USER" bash -l -c "uv tool list" 2>/dev/null | grep -q "^sendspin "; then
+            DAEMON_USER="$CURRENT_USER"
+            echo -e "${D}Detected installation with user: $DAEMON_USER${N}"
+        fi
+    fi
+fi
+
+# If still not found, warn user
+if [ -z "$DAEMON_USER" ]; then
+    echo -e "${Y}Warning:${N} Could not detect sendspin installation user"
+    echo -e "${D}Will clean up service and config files if present${N}"
+fi
+
 # Confirm
-if ! prompt_yn "This will remove sendspin service and configuration. Continue?" "no"; then
+echo ""
+if ! prompt_yn "This will remove sendspin service, configuration, and optionally the user. Continue?" "no"; then
     echo "Cancelled"
     exit 0
 fi
@@ -74,22 +103,35 @@ fi
 # Remove old config
 if [[ -f /etc/default/sendspin ]]; then
     echo -e "${D}Removing old configuration...${N}"
-    rm /etc/default/sendspin
+    rm -f /etc/default/sendspin
 fi
 
-# Remove new JSON config
-CONFIG_FILE="/home/$USER/.config/sendspin/settings-daemon.json"
-if [[ -f "$CONFIG_FILE" ]]; then
-    echo -e "${D}Removing configuration...${N}"
-    rm -f "$CONFIG_FILE"
-    # Remove directory if empty
-    rmdir --ignore-fail-on-non-empty "/home/$USER/.config/sendspin" 2>/dev/null || true
+# Uninstall sendspin and remove config for detected user
+if [ -n "$DAEMON_USER" ]; then
+    # Remove new JSON config
+    CONFIG_DIR="/home/$DAEMON_USER/.config/sendspin"
+    if [[ -d "$CONFIG_DIR" ]]; then
+        echo -e "${D}Removing configuration...${N}"
+        rm -rf "$CONFIG_DIR"
+    fi
+    
+    # Uninstall sendspin
+    if sudo -u "$DAEMON_USER" bash -l -c "command -v uv" &>/dev/null; then
+        echo -e "${D}Uninstalling sendspin from $DAEMON_USER...${N}"
+        sudo -u "$DAEMON_USER" bash -l -c "uv tool uninstall sendspin" 2>/dev/null || true
+    fi
 fi
 
-# Uninstall sendspin
-if sudo -u "$USER" bash -l -c "command -v uv" &>/dev/null; then
-    echo -e "${D}Uninstalling sendspin...${N}"
-    sudo -u "$USER" bash -l -c "uv tool uninstall sendspin" 2>/dev/null || true
+# Offer to remove dedicated sendspin user if it exists
+if [ "$USE_DEDICATED_USER" = true ] && id -u sendspin &>/dev/null; then
+    echo ""
+    if prompt_yn "Remove 'sendspin' system user and home directory?" "no"; then
+        echo -e "${D}Removing sendspin user and home directory...${N}"
+        userdel -r sendspin 2>/dev/null || userdel sendspin 2>/dev/null || true
+        echo -e "${G}✓${N} Removed sendspin user"
+    else
+        echo -e "${D}Keeping sendspin user${N}"
+    fi
 fi
 
-echo -e "\n${G}✓${N} Uninstallation complete"
+echo -e "\n${B}${G}Uninstallation Complete!${N}"
