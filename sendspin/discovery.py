@@ -44,7 +44,18 @@ class DiscoveredServer:
         )
 
 
+@dataclass
+class DiscoveredClient:
+    """Information about a discovered Sendspin client."""
+
+    name: str
+    url: str
+    host: str
+    port: int
+
+
 SERVICE_TYPE = "_sendspin-server._tcp.local."
+CLIENT_SERVICE_TYPE = "_sendspin._tcp.local."
 DEFAULT_PATH = "/sendspin"
 
 
@@ -184,3 +195,72 @@ async def discover_servers(discovery_time: float = 3.0) -> list[DiscoveredServer
         return discovery.get_servers()
     finally:
         await discovery.stop()
+
+
+class _ClientDiscoveryListener:
+    """Listens for Sendspin client advertisements via mDNS."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._clients: dict[str, DiscoveredClient] = {}
+
+    @property
+    def clients(self) -> dict[str, DiscoveredClient]:
+        """Get all discovered clients."""
+        return self._clients
+
+    async def _process_service_info(
+        self, zeroconf: AsyncZeroconf, service_type: str, name: str
+    ) -> None:
+        """Extract and construct WebSocket URL from service info."""
+        info = await zeroconf.async_get_service_info(service_type, name)
+        if info is None or info.port is None:
+            return
+        addresses = info.parsed_addresses()
+        if not addresses:
+            return
+        host = addresses[0]
+        url = _build_service_url(host, info.port, info.properties)
+
+        # Track this client
+        self._clients[name] = DiscoveredClient(
+            name=name.removesuffix(f".{CLIENT_SERVICE_TYPE}"),
+            url=url,
+            host=host,
+            port=info.port,
+        )
+
+    def add_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
+        create_task(self._process_service_info(zeroconf, service_type, name), loop=self._loop)
+
+    def update_service(self, zeroconf: AsyncZeroconf, service_type: str, name: str) -> None:
+        create_task(self._process_service_info(zeroconf, service_type, name), loop=self._loop)
+
+    def remove_service(self, _zeroconf: AsyncZeroconf, _service_type: str, name: str) -> None:
+        """Handle service removal (client offline)."""
+        self._clients.pop(name, None)
+
+
+async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient]:
+    """Discover Sendspin clients on the network.
+
+    Args:
+        discovery_time: How long to wait for discovery in seconds.
+
+    Returns:
+        List of discovered clients.
+    """
+    loop = asyncio.get_running_loop()
+    listener = _ClientDiscoveryListener(loop)
+    zeroconf = AsyncZeroconf()
+    await zeroconf.__aenter__()
+
+    try:
+        browser = AsyncServiceBrowser(
+            zeroconf.zeroconf, CLIENT_SERVICE_TYPE, cast("ServiceListener", listener)
+        )
+        await asyncio.sleep(discovery_time)
+        await browser.async_cancel()
+        return list(listener.clients.values())
+    finally:
+        await zeroconf.__aexit__(None, None, None)
