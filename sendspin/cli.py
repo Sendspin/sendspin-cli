@@ -484,7 +484,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         args.log_level = settings.log_level or "INFO"
     if args.command == "daemon" and args.port is None:
         args.port = settings.listen_port or 8928
-    args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
+    args.use_mpris = not args.disable_mpris and settings.use_mpris
 
     # Apply hook settings (CLI > settings)
     if args.hook_start is None:
