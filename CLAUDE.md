@@ -172,6 +172,9 @@ Options should be configurable via both CLI flags and the settings file, with CL
 7. **Use in daemon/TUI**:
    - Access via `self._args.option`
 
-8. **Document** in `README.md`:
+8. **Document** in `README.md` (required for user-facing features):
    - Add to example config JSON
    - Add to settings table
+   - Add usage section if the feature warrants explanation
+
+**Important:** All new user-facing features (CLI options, settings, commands) must be documented in `README.md`.
