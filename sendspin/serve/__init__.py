@@ -165,6 +165,7 @@ async def run_server(config: ServeConfig) -> int:
     await server.start_server(port=port, discover_clients=False)
 
     local_ip = get_local_ip()
+    server_url = f"http://{local_ip}:{port}"
 
     # Track connected Chromecast clients for cleanup
     chromecast_clients: list[ChromecastClient] = []
@@ -175,12 +176,8 @@ async def run_server(config: ServeConfig) -> int:
             try:
                 print(f"Connecting to client: {client_url}")
                 if client_url.startswith("cast://"):
-                    # Connect to Chromecast device
-                    # Generate a player ID based on the Chromecast host
                     host, _ = parse_cast_url(client_url)
                     player_id = f"cast-{host.replace('.', '-')}"
-                    server_url = f"http://{local_ip}:{port}"
-
                     cc_client = await connect_to_chromecast(
                         url=client_url,
                         server_url=server_url,
@@ -238,13 +235,9 @@ async def run_server(config: ServeConfig) -> int:
 
     finally:
         with suppress(Exception):
-            # Disconnect Chromecast clients
             for cc_client in chromecast_clients:
                 disconnect_chromecast(cc_client)
 
-            # Temp workaround until https://github.com/Sendspin/aiosendspin/pull/108
-            for client in server.clients:
-                await client.disconnect(retry_connection=False)
             await server.close()
 
     return 0
