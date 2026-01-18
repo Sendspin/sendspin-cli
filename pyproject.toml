@@ -15,7 +15,7 @@ classifiers = [
 ]
 dependencies = [
   "aiosendspin~=3.0",
-  "aiosendspin-mpris~=2.1",
+  "aiosendspin-mpris~=2.1.1",
   "av>=14.0.0",
   "numpy>=1.24.0",
   "pychromecast>=14.0.0",
