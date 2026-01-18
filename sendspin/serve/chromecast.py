@@ -213,15 +213,20 @@ async def _send_sendspin_config(
     await loop.run_in_executor(None, send_message)
 
 
-def disconnect_chromecast(client: ChromecastClient) -> None:
+async def disconnect_chromecast(client: ChromecastClient) -> None:
     """Disconnect from a Chromecast device.
 
     Args:
         client: The ChromecastClient to disconnect
     """
-    try:
-        client.cast.quit_app()
-        client.cast.disconnect()
-        logger.info("Disconnected from Chromecast: %s", client.friendly_name)
-    except Exception:
-        logger.debug("Error disconnecting from Chromecast", exc_info=True)
+    loop = asyncio.get_running_loop()
+
+    def _disconnect() -> None:
+        try:
+            client.cast.quit_app()
+            client.cast.disconnect()
+        except Exception:
+            logger.debug("Error disconnecting from Chromecast", exc_info=True)
+
+    await loop.run_in_executor(None, _disconnect)
+    logger.info("Disconnected from Chromecast: %s", client.friendly_name)

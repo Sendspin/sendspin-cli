@@ -239,7 +239,7 @@ async def run_server(config: ServeConfig) -> int:
     finally:
         with suppress(Exception):
             for cc_client in chromecast_clients:
-                disconnect_chromecast(cc_client)
+                await disconnect_chromecast(cc_client)
 
             await server.close()
 
