@@ -13,6 +13,8 @@ async def run_hook(
     command: str,
     *,
     event: str,
+    server_id: str | None = None,
+    server_name: str | None = None,
     server_url: str | None = None,
     client_id: str | None = None,
     client_name: str | None = None,
@@ -22,6 +24,8 @@ async def run_hook(
     Args:
         command: Shell command to execute.
         event: Event type (e.g., "start", "stop").
+        server_id: Connected server identifier.
+        server_name: Connected server friendly name.
         server_url: Connected server URL.
         client_id: Client identifier.
         client_name: Client friendly name.
@@ -29,6 +33,10 @@ async def run_hook(
     # Build environment with SENDSPIN_ prefixed variables
     env = os.environ.copy()
     env["SENDSPIN_EVENT"] = event
+    if server_id:
+        env["SENDSPIN_SERVER_ID"] = server_id
+    if server_name:
+        env["SENDSPIN_SERVER_NAME"] = server_name
     if server_url:
         env["SENDSPIN_SERVER_URL"] = server_url
     if client_id:

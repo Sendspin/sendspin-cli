@@ -672,10 +672,13 @@ class SendspinApp:
         if not hook:
             return
         server = self._state.selected_server
+        server_info = self._client.server_info
         create_task(
             run_hook(
                 hook,
                 event=event,
+                server_id=server_info.server_id if server_info else None,
+                server_name=server_info.name if server_info else None,
                 server_url=server.url if server else None,
                 client_id=self._args.client_id,
                 client_name=self._args.client_name,

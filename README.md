@@ -247,6 +247,8 @@ sendspin daemon --hook-start "amixer set Master unmute" --hook-stop "amixer set 
 
 Hooks receive these environment variables:
 - `SENDSPIN_EVENT` - Event type: "start" or "stop"
+- `SENDSPIN_SERVER_ID` - Connected server identifier
+- `SENDSPIN_SERVER_NAME` - Connected server friendly name
 - `SENDSPIN_SERVER_URL` - Connected server URL
 - `SENDSPIN_CLIENT_ID` - Client identifier
 - `SENDSPIN_CLIENT_NAME` - Client friendly name

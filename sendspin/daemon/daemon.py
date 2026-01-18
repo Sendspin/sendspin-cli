@@ -331,10 +331,13 @@ class SendspinDaemon:
         hook = self._args.hook_start if event == "start" else self._args.hook_stop
         if not hook:
             return
+        server_info = self._client.server_info if self._client else None
         create_task(
             run_hook(
                 hook,
                 event=event,
+                server_id=server_info.server_id if server_info else None,
+                server_name=server_info.name if server_info else None,
                 server_url=self._server_url,
                 client_id=self._args.client_id,
                 client_name=self._args.client_name,
