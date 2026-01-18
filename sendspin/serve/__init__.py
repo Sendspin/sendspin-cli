@@ -22,6 +22,12 @@ from aiosendspin.server.stream import MediaStream
 
 from sendspin.utils import create_task
 
+from .chromecast import (
+    ChromecastClient,
+    connect_to_chromecast,
+    disconnect_chromecast,
+    parse_cast_url,
+)
 from .server import SendspinPlayerServer
 from .source import decode_audio
 
@@ -158,17 +164,35 @@ async def run_server(config: ServeConfig) -> int:
 
     await server.start_server(port=port, discover_clients=False)
 
+    local_ip = get_local_ip()
+
+    # Track connected Chromecast clients for cleanup
+    chromecast_clients: list[ChromecastClient] = []
+
     # Connect to specified clients
     if config.clients:
         for client_url in config.clients:
             try:
                 print(f"Connecting to client: {client_url}")
-                await server.connect_to_client(client_url)
+                if client_url.startswith("cast://"):
+                    # Connect to Chromecast device
+                    # Generate a player ID based on the Chromecast host
+                    host, _ = parse_cast_url(client_url)
+                    player_id = f"cast-{host.replace('.', '-')}"
+                    server_url = f"http://{local_ip}:{port}"
+
+                    cc_client = await connect_to_chromecast(
+                        url=client_url,
+                        server_url=server_url,
+                        player_id=player_id,
+                    )
+                    chromecast_clients.append(cc_client)
+                    print(f"Chromecast connected: {cc_client.friendly_name}")
+                else:
+                    await server.connect_to_client(client_url)
             except Exception as e:
                 logger.warning("Failed to connect to client %s: %s", client_url, e)
                 print(f"Warning: Failed to connect to client {client_url}: {e}")
-
-    local_ip = get_local_ip()
     url = f"http://{local_ip}:{port}/"
     print(f"\nServer running at {url}")
     if local_ip == "localhost":
@@ -214,6 +238,10 @@ async def run_server(config: ServeConfig) -> int:
 
     finally:
         with suppress(Exception):
+            # Disconnect Chromecast clients
+            for cc_client in chromecast_clients:
+                disconnect_chromecast(cc_client)
+
             # Temp workaround until https://github.com/Sendspin/aiosendspin/pull/108
             for client in server.clients:
                 await client.disconnect(retry_connection=False)

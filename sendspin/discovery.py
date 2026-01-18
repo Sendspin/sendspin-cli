@@ -54,7 +54,7 @@ class DiscoveredClient:
     port: int
 
 
-SERVICE_TYPE = "_sendspin-server._tcp.local."
+SERVER_SERVICE_TYPE = "_sendspin-server._tcp.local."
 CLIENT_SERVICE_TYPE = "_sendspin._tcp.local."
 DEFAULT_PATH = "/sendspin"
 
@@ -105,7 +105,7 @@ class _ServiceDiscoveryListener:
 
         # Track this server
         self._servers[name] = DiscoveredServer(
-            name=name.removesuffix(f".{SERVICE_TYPE}"),
+            name=name.removesuffix(f".{SERVER_SERVICE_TYPE}"),
             url=url,
             host=host,
             port=info.port,
@@ -145,7 +145,9 @@ class ServiceDiscovery:
 
         try:
             self._browser = AsyncServiceBrowser(
-                self._zeroconf.zeroconf, SERVICE_TYPE, cast("ServiceListener", self._listener)
+                self._zeroconf.zeroconf,
+                SERVER_SERVICE_TYPE,
+                cast("ServiceListener", self._listener),
             )
         except Exception:
             await self.stop()
@@ -242,25 +244,53 @@ class _ClientDiscoveryListener:
 
 
 async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient]:
-    """Discover Sendspin clients on the network.
+    """Discover Sendspin clients and Chromecast devices on the network.
 
     Args:
         discovery_time: How long to wait for discovery in seconds.
 
     Returns:
-        List of discovered clients.
+        List of discovered clients (Sendspin clients and Chromecast devices).
     """
-    loop = asyncio.get_running_loop()
-    listener = _ClientDiscoveryListener(loop)
-    zeroconf = AsyncZeroconf()
-    await zeroconf.__aenter__()
+    from pychromecast.discovery import CastBrowser, SimpleCastListener
 
-    try:
-        browser = AsyncServiceBrowser(
-            zeroconf.zeroconf, CLIENT_SERVICE_TYPE, cast("ServiceListener", listener)
+    loop = asyncio.get_running_loop()
+    sendspin_listener = _ClientDiscoveryListener(loop)
+
+    async with AsyncZeroconf() as zeroconf:
+        # Start Chromecast discovery (non-blocking)
+        chromecast_browser = CastBrowser(
+            SimpleCastListener(),
+            zeroconf.zeroconf,
         )
-        await asyncio.sleep(discovery_time)
-        await browser.async_cancel()
-        return list(listener.clients.values())
-    finally:
-        await zeroconf.__aexit__(None, None, None)
+        chromecast_browser.start_discovery()
+
+        try:
+            # Browse Sendspin clients (non-blocking)
+            sendspin_browser = AsyncServiceBrowser(
+                zeroconf.zeroconf, CLIENT_SERVICE_TYPE, cast("ServiceListener", sendspin_listener)
+            )
+
+            # Wait for both discoveries to run
+            await asyncio.sleep(discovery_time)
+
+            await sendspin_browser.async_cancel()
+
+            # Collect Chromecast results
+            chromecast_clients: list[DiscoveredClient] = []
+            for cc in chromecast_browser.devices.values():
+                host = cc.host
+                port = cc.port
+                name = cc.friendly_name or f"Chromecast ({host})"
+                host_fmt = f"[{host}]" if ":" in host else host
+                url = f"cast://{host_fmt}:{port}"
+                chromecast_clients.append(
+                    DiscoveredClient(name=name, url=url, host=host, port=port)
+                )
+
+            return [
+                *sendspin_listener.clients.values(),
+                *chromecast_clients,
+            ]
+        finally:
+            chromecast_browser.stop_discovery()
