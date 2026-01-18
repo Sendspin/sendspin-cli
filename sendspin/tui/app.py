@@ -39,6 +39,7 @@ from aiosendspin.models.types import (
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
+from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
@@ -204,6 +205,8 @@ class AppArgs:
     url: str | None = None
     static_delay_ms: float | None = None
     use_mpris: bool = True
+    hook_start: str | None = None
+    hook_stop: str | None = None
 
 
 class SendspinApp:
@@ -300,6 +303,7 @@ class SendspinApp:
                 audio_device=args.audio_device,
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
+                on_event=self._on_stream_event,
             )
 
             await self._discovery.start()
@@ -659,5 +663,24 @@ class SendspinApp:
                 state=PlayerStateType.SYNCHRONIZED,
                 volume=state.player_volume,
                 muted=state.player_muted,
+            )
+        )
+
+    def _on_stream_event(self, event: str) -> None:
+        """Handle stream lifecycle events by running hooks."""
+        hook = self._args.hook_start if event == "start" else self._args.hook_stop
+        if not hook:
+            return
+        server = self._state.selected_server
+        server_info = self._client.server_info
+        create_task(
+            run_hook(
+                hook,
+                event=event,
+                server_id=server_info.server_id if server_info else None,
+                server_name=server_info.name if server_info else None,
+                server_url=server.url if server else None,
+                client_id=self._args.client_id,
+                client_name=self._args.client_name,
             )
         )

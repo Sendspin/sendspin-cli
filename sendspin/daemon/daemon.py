@@ -27,6 +27,7 @@ from aiosendspin.models.types import (
 
 from sendspin.audio import AudioDevice
 from sendspin.audio_connector import AudioStreamHandler
+from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
 from sendspin.utils import create_task, get_device_info
 
@@ -45,6 +46,8 @@ class DaemonArgs:
     static_delay_ms: float | None = None
     listen_port: int = 8928
     use_mpris: bool = True
+    hook_start: str | None = None
+    hook_stop: str | None = None
 
 
 class SendspinDaemon:
@@ -65,6 +68,7 @@ class SendspinDaemon:
         self._mpris: SendspinMpris | None = None
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
+        self._server_url: str | None = None
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -123,6 +127,7 @@ class SendspinDaemon:
             audio_device=self._args.audio_device,
             volume=self._settings.player_volume,
             muted=self._settings.player_muted,
+            on_event=self._on_stream_event,
         )
 
         try:
@@ -157,6 +162,7 @@ class SendspinDaemon:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
         self._audio_handler.attach_client(self._client)
+        self._server_url = self._args.url
         self._client.add_server_command_listener(self._handle_server_command)
         await self._connection_loop(self._args.url)
 
@@ -317,5 +323,23 @@ class SendspinDaemon:
                 state=PlayerStateType.SYNCHRONIZED,
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
+            )
+        )
+
+    def _on_stream_event(self, event: str) -> None:
+        """Handle stream lifecycle events by running hooks."""
+        hook = self._args.hook_start if event == "start" else self._args.hook_stop
+        if not hook:
+            return
+        server_info = self._client.server_info if self._client else None
+        create_task(
+            run_hook(
+                hook,
+                event=event,
+                server_id=server_info.server_id if server_info else None,
+                server_name=server_info.name if server_info else None,
+                server_url=self._server_url,
+                client_id=self._args.client_id,
+                client_name=self._args.client_name,
             )
         )

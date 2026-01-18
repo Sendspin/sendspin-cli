@@ -171,6 +171,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Disable MPRIS integration",
     )
+    daemon_parser.add_argument(
+        "--hook-start",
+        type=str,
+        default=None,
+        help="Command to run when audio stream starts (receives SENDSPIN_* env vars)",
+    )
+    daemon_parser.add_argument(
+        "--hook-stop",
+        type=str,
+        default=None,
+        help="Command to run when audio stream stops (receives SENDSPIN_* env vars)",
+    )
 
     # Default behavior (client mode) - existing arguments
     parser.add_argument(
@@ -233,6 +245,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--headless",
         action="store_true",
         help="(DEPRECATED: use 'sendspin daemon' instead) Run without the interactive terminal UI",
+    )
+    parser.add_argument(
+        "--hook-start",
+        type=str,
+        default=None,
+        help="Command to run when audio stream starts (receives SENDSPIN_* env vars)",
+    )
+    parser.add_argument(
+        "--hook-stop",
+        type=str,
+        default=None,
+        help="Command to run when audio stream stops (receives SENDSPIN_* env vars)",
     )
     return parser.parse_args(argv)
 
@@ -390,6 +414,8 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         static_delay_ms=args.static_delay_ms,
         listen_port=args.port,
         use_mpris=args.use_mpris,
+        hook_start=args.hook_start,
+        hook_stop=args.hook_stop,
     )
 
     daemon = SendspinDaemon(daemon_args)
@@ -458,7 +484,13 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         args.log_level = settings.log_level or "INFO"
     if args.command == "daemon" and args.port is None:
         args.port = settings.listen_port or 8928
-    args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
+    args.use_mpris = not args.disable_mpris and settings.use_mpris
+
+    # Apply hook settings (CLI > settings)
+    if args.hook_start is None:
+        args.hook_start = settings.hook_start
+    if args.hook_stop is None:
+        args.hook_stop = settings.hook_stop
 
     # Set up logging with resolved log level
     logging.basicConfig(level=getattr(logging, args.log_level))
@@ -487,6 +519,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
+        hook_start=args.hook_start,
+        hook_stop=args.hook_stop,
     )
 
     app = SendspinApp(app_args)

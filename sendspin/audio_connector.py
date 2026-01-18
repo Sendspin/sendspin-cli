@@ -32,6 +32,7 @@ class AudioStreamHandler:
         *,
         volume: int = 100,
         muted: bool = False,
+        on_event: Callable[[str], None] | None = None,
     ) -> None:
         """Initialize the audio stream handler.
 
@@ -39,13 +40,16 @@ class AudioStreamHandler:
             audio_device: Audio device to use for playback.
             volume: Initial volume (0-100).
             muted: Initial muted state.
+            on_event: Callback for stream lifecycle events ("start" or "stop").
         """
         self._audio_device = audio_device
         self._volume = volume
         self._muted = muted
+        self._on_event = on_event
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: AudioFormat | None = None
+        self._stream_active = False  # Track if stream is currently active
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
@@ -109,12 +113,27 @@ class AudioStreamHandler:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream start")
 
+        # Fire event only on transition from inactive to active
+        if not self._stream_active:
+            self._stream_active = True
+            if self._on_event:
+                self._on_event("start")
+
     def _on_stream_end(self, roles: list[Roles] | None) -> None:
-        """Handle stream end by clearing audio queue to prevent desync on resume."""
+        """Handle stream end by clearing audio queue."""
         # For the CLI player, we only care about the player role
-        if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
+        if roles is not None and Roles.PLAYER not in roles:
+            return
+
+        if self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream end")
+
+        # Fire event only on transition from active to inactive
+        if self._stream_active:
+            self._stream_active = False
+            if self._on_event:
+                self._on_event("stop")
 
     def _on_stream_clear(self, roles: list[Roles] | None) -> None:
         """Handle stream clear by clearing audio queue (e.g., for seek operations)."""
@@ -130,6 +149,12 @@ class AudioStreamHandler:
 
     async def cleanup(self) -> None:
         """Stop audio player and clear resources."""
+        # Fire stop event if stream was active
+        if self._stream_active:
+            self._stream_active = False
+            if self._on_event:
+                self._on_event("stop")
+
         if self.audio_player is not None:
             await self.audio_player.stop()
             self.audio_player = None

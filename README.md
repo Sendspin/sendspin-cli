@@ -152,6 +152,8 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
+| `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
+| `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
 | `source` | string | serve | Default audio source (file path or URL) |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
 
@@ -228,6 +230,28 @@ The daemon runs in the background and logs status messages to stdout. It accepts
 ```bash
 sendspin daemon --name "Kitchen" --audio-device 2
 ```
+
+### Hooks
+
+You can run external commands when audio streams start or stop. This is useful for controlling amplifiers, lighting, or other home automation:
+
+```bash
+sendspin --hook-start "./turn_on_amp.sh" --hook-stop "./turn_off_amp.sh"
+```
+
+Or with inline commands:
+
+```bash
+sendspin daemon --hook-start "amixer set Master unmute" --hook-stop "amixer set Master mute"
+```
+
+Hooks receive these environment variables:
+- `SENDSPIN_EVENT` - Event type: "start" or "stop"
+- `SENDSPIN_SERVER_ID` - Connected server identifier
+- `SENDSPIN_SERVER_NAME` - Connected server friendly name
+- `SENDSPIN_SERVER_URL` - Connected server URL. Only available if client initiated the connection to the server.
+- `SENDSPIN_CLIENT_ID` - Client identifier
+- `SENDSPIN_CLIENT_NAME` - Client friendly name
 
 ### Debugging & Troubleshooting
 
