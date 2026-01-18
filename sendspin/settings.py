@@ -113,6 +113,8 @@ class ClientSettings(BaseSettings):
     client_id: str | None = None
     audio_device: str | None = None
     use_mpris: bool = True
+    hook_start: str | None = None
+    hook_stop: str | None = None
 
     def update(
         self,
@@ -127,6 +129,8 @@ class ClientSettings(BaseSettings):
         log_level: str | None = None,
         listen_port: int | None = None,
         use_mpris: bool | None = None,
+        hook_start: str | None = None,
+        hook_stop: str | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = False
@@ -151,6 +155,8 @@ class ClientSettings(BaseSettings):
                     "log_level": log_level,
                     "listen_port": listen_port,
                     "use_mpris": use_mpris,
+                    "hook_start": hook_start,
+                    "hook_stop": hook_stop,
                 }
             )
             or changed
@@ -178,6 +184,8 @@ class ClientSettings(BaseSettings):
             self.client_id = data.get("client_id")
             self.audio_device = data.get("audio_device")
             self.use_mpris = data.get("use_mpris", True)
+            self.hook_start = data.get("hook_start")
+            self.hook_stop = data.get("hook_stop")
             logger.info(
                 "Loaded settings from %s: volume=%d%%, muted=%s",
                 self._settings_file,
