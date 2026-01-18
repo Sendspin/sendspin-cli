@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 
 async def run_hook(
-    command: str | None,
+    command: str,
     *,
     event: str,
     server_url: str | None = None,
@@ -20,15 +20,12 @@ async def run_hook(
     """Execute a hook command with environment variables.
 
     Args:
-        command: Shell command to execute. If None, does nothing.
+        command: Shell command to execute.
         event: Event type (e.g., "start", "stop").
         server_url: Connected server URL.
         client_id: Client identifier.
         client_name: Client friendly name.
     """
-    if not command:
-        return
-
     # Build environment with SENDSPIN_ prefixed variables
     env = os.environ.copy()
     env["SENDSPIN_EVENT"] = event

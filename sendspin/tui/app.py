@@ -669,14 +669,15 @@ class SendspinApp:
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""
         hook = self._args.hook_start if event == "start" else self._args.hook_stop
-        if hook:
-            server = self._state.selected_server
-            create_task(
-                run_hook(
-                    hook,
-                    event=event,
-                    server_url=server.url if server else None,
-                    client_id=self._args.client_id,
-                    client_name=self._args.client_name,
-                )
+        if not hook:
+            return
+        server = self._state.selected_server
+        create_task(
+            run_hook(
+                hook,
+                event=event,
+                server_url=server.url if server else None,
+                client_id=self._args.client_id,
+                client_name=self._args.client_name,
             )
+        )

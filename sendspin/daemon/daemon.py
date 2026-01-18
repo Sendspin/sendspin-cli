@@ -329,13 +329,14 @@ class SendspinDaemon:
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""
         hook = self._args.hook_start if event == "start" else self._args.hook_stop
-        if hook:
-            create_task(
-                run_hook(
-                    hook,
-                    event=event,
-                    server_url=self._server_url,
-                    client_id=self._args.client_id,
-                    client_name=self._args.client_name,
-                )
+        if not hook:
+            return
+        create_task(
+            run_hook(
+                hook,
+                event=event,
+                server_url=self._server_url,
+                client_id=self._args.client_id,
+                client_name=self._args.client_name,
             )
+        )
