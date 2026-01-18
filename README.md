@@ -249,7 +249,7 @@ Hooks receive these environment variables:
 - `SENDSPIN_EVENT` - Event type: "start" or "stop"
 - `SENDSPIN_SERVER_ID` - Connected server identifier
 - `SENDSPIN_SERVER_NAME` - Connected server friendly name
-- `SENDSPIN_SERVER_URL` - Connected server URL
+- `SENDSPIN_SERVER_URL` - Connected server URL. Only available if client initiated the connection to the server.
 - `SENDSPIN_CLIENT_ID` - Client identifier
 - `SENDSPIN_CLIENT_NAME` - Client friendly name
 
