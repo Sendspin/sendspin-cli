@@ -3,6 +3,7 @@
 import asyncio
 import errno
 import logging
+import re
 import signal
 import socket
 import sys
@@ -177,7 +178,9 @@ async def run_server(config: ServeConfig) -> int:
                 print(f"Connecting to client: {client_url}")
                 if client_url.startswith("cast://"):
                     host, _ = parse_cast_url(client_url)
-                    player_id = f"cast-{host.replace('.', '-')}"
+                    # Replace non-alphanumeric chars with dashes (handles IPv4 and IPv6)
+                    safe_host = re.sub(r"[^a-zA-Z0-9]", "-", host)
+                    player_id = f"cast-{safe_host}"
                     cc_client = await connect_to_chromecast(
                         url=client_url,
                         server_url=server_url,

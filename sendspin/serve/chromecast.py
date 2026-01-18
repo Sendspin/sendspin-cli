@@ -89,24 +89,25 @@ async def connect_to_chromecast(
             zeroconf_instance=zeroconf,
         )
 
-        # Find the Chromecast matching our target host
-        cast = next((cc for cc in chromecasts if cc.cast_info.host == host), None)
-        if cast is None:
-            browser.stop_discovery()
-            raise ConnectionError(f"Could not find Chromecast at {host}")
+        try:
+            # Find the Chromecast matching our target host
+            cast = next((cc for cc in chromecasts if cc.cast_info.host == host), None)
+            if cast is None:
+                raise ConnectionError(f"Could not find Chromecast at {host}")
 
-        # Wait for socket client to initialize before stopping discovery
-        cast.wait()
-        browser.stop_discovery()
-        return cast
+            # Wait for socket client to initialize before stopping discovery
+            cast.wait()
+            return cast
+        finally:
+            browser.stop_discovery()
 
     try:
         cast = await asyncio.wait_for(
             loop.run_in_executor(None, _connect),
             timeout=15.0,
         )
-    except TimeoutError:
-        raise TimeoutError(f"Timeout connecting to Chromecast at {host}") from None
+    except TimeoutError as e:
+        raise TimeoutError(f"Timeout connecting to Chromecast at {host}") from e
 
     friendly_name = cast.cast_info.friendly_name or f"Chromecast ({host})"
     logger.info("Connected to Chromecast: %s", friendly_name)
@@ -171,8 +172,8 @@ async def _launch_sendspin_app(
     await loop.run_in_executor(None, launch)
     try:
         await asyncio.wait_for(event.wait(), timeout=10.0)
-    except TimeoutError:
-        raise TimeoutError("Timeout waiting for Sendspin Cast App to launch") from None
+    except TimeoutError as e:
+        raise TimeoutError("Timeout waiting for Sendspin Cast App to launch") from e
 
     if not launch_success:
         raise ConnectionError(f"Failed to launch Sendspin Cast App: {launch_error}")
