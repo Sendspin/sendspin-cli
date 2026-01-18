@@ -487,9 +487,9 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     args.use_mpris = not getattr(args, "disable_mpris", False) and settings.use_mpris
 
     # Apply hook settings (CLI > settings)
-    if getattr(args, "hook_start", None) is None:
+    if args.hook_start is None:
         args.hook_start = settings.hook_start
-    if getattr(args, "hook_stop", None) is None:
+    if args.hook_stop is None:
         args.hook_stop = settings.hook_stop
 
     # Set up logging with resolved log level
