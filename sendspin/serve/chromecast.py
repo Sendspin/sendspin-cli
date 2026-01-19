@@ -195,6 +195,7 @@ async def _send_sendspin_config(
         cast.socket_client.send_app_message(
             SENDSPIN_CAST_NAMESPACE,
             {
+                "type": "config",
                 "serverUrl": server_url,
                 "playerId": player_id,
                 "playerName": player_name,
