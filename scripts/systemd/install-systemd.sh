@@ -314,7 +314,6 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
 SupplementaryGroups=audio
 
 [Install]
