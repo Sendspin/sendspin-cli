@@ -326,6 +326,17 @@ class AudioPlayer:
         # Clear deferred operation flag
         self._clear_requested = False
 
+        # Stop the audio stream (but don't close it) to release ALSA device
+        # This allows the device to transition to 'closed' state when paused
+        # The stream will be restarted when new audio chunks arrive in submit()
+        if self._stream is not None and self._stream_started:
+            try:
+                self._stream.stop()
+            except Exception:
+                # Non-fatal: stream will be restarted on next audio chunk
+                logger.exception("Failed to stop audio stream on clear")
+        self._stream_started = False
+
         # Drain all queued chunks
         while True:
             try:
