@@ -76,6 +76,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Audio source: local file path or URL (http/https)",
     )
     serve_parser.add_argument(
+        "--source-format",
+        default=None,
+        help="ffmpeg container format for source audio",
+    )
+    serve_parser.add_argument(
         "--demo",
         action="store_true",
         help="Use a demo audio stream (retro dance music)",
@@ -392,6 +397,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
 
     serve_config = ServeConfig(
         source=source,
+        source_format=args.source_format or settings.source_format,
         port=args.port,
         name=args.name,
         clients=args.clients or settings.clients,

@@ -50,6 +50,7 @@ async def decode_audio(
     *,
     target_sample_rate: int = 48000,
     target_channels: int = 2,
+    source_format: str | None = None,
 ) -> AudioSource:
     """
     Decode an audio source (file path or URL) to PCM.
@@ -78,7 +79,7 @@ async def decode_audio(
                 if container is not None:
                     container.close()
 
-                container = av.open(source)
+                container = av.open(format=source_format, file=source)
                 resampler = av.AudioResampler(format="s16", layout=layout, rate=target_sample_rate)
                 for frame in container.decode(container.streams.audio[0]):
                     for resampled in resampler.resample(frame):

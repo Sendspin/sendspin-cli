@@ -63,6 +63,7 @@ class ServeConfig:
     """Configuration for the serve command."""
 
     source: str
+    source_format: str | None = None
     port: int = 8928
     name: str = "Sendspin Server"
     clients: list[str] | None = None
@@ -220,7 +221,7 @@ async def run_server(config: ServeConfig) -> int:
 
             # Decode and stream audio
             try:
-                audio_source = await decode_audio(config.source)
+                audio_source = await decode_audio(config.source, source_format=config.source_format)
                 media_stream = MediaStream(
                     main_channel_source=audio_source.generator,
                     main_channel_format=audio_source.format,

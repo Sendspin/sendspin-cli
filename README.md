@@ -154,7 +154,8 @@ Settings are stored in `~/.config/sendspin/`:
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
-| `source` | string | serve | Default audio source (file path or URL) |
+| `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
+| `source_format` | string | serve | ffmpeg container format for audio source |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
 
 Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
