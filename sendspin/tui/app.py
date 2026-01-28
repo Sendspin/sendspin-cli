@@ -363,7 +363,8 @@ class SendspinApp:
                 except ServerSwitchRequested:
                     pass  # New server already set in state, fall through to connection loop
                 except (TimeoutError, OSError, ClientError):
-                    # Last server unavailable, fall through to discovery
+                    # Last server unavailable, clear selected_server so discovery can proceed
+                    self._state.selected_server = None
                     self._ui.add_event("Last server unavailable, searching...")
 
             # No URL yet - do mDNS discovery
