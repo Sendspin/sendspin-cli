@@ -219,9 +219,11 @@ class SendspinApp:
 
         server: DiscoveredServer | None = None
         if args.url:
-            server = DiscoveredServer.from_url("Command-line argument", args.url)
-        elif args.settings.last_server_url:
-            server = DiscoveredServer.from_url("Last used", args.settings.last_server_url)
+            # Determine source: CLI if different from settings, otherwise "Last used"
+            if args.settings.last_server_url and args.url == args.settings.last_server_url:
+                server = DiscoveredServer.from_url("Last used", args.url)
+            else:
+                server = DiscoveredServer.from_url("Command-line argument", args.url)
 
         self._state = AppState(selected_server=server)
         self._client = SendspinClient(
@@ -343,31 +345,9 @@ class SendspinApp:
 
             # Get initial server URL
             if args.url:
-                pass  # URL provided via CLI - selected_server already set in __init__
-            elif self._settings.last_server_url:
-                # Try last known server first
-                last_url = self._settings.last_server_url
-                self._ui.add_event(f"Trying last server at {last_url}...")
-                try:
-                    await self._connect_cancellable(last_url)
-                    # Success - create server entry
-                    self._state.selected_server = DiscoveredServer.from_url(
-                        "Last connected", last_url
-                    )
-                    self._ui.add_event(f"Connected to {last_url}")
-                    self._ui.set_connected(last_url)
-                    self._settings.update(last_server_url=last_url)
-                    # Run connection loop starting from wait-for-disconnect
-                    await self._connection_loop(already_connected=True)
-                    return 0
-                except ServerSwitchRequested:
-                    pass  # New server already set in state, fall through to connection loop
-                except (TimeoutError, OSError, ClientError):
-                    # Last server unavailable, clear selected_server so discovery can proceed
-                    self._state.selected_server = None
-                    self._ui.add_event("Last server unavailable, searching...")
+                pass  # URL provided (CLI or settings) - selected_server already set in __init__
 
-            # No URL yet - do mDNS discovery
+            # No URL - do mDNS discovery
             if self._state.selected_server is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
                 self._ui.add_event("Searching for Sendspin server...")

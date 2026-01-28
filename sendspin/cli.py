@@ -476,8 +476,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     settings = await get_client_settings("daemon" if is_daemon else "tui", settings_dir)
 
     # Apply settings as defaults for CLI arguments (CLI > settings > hard-coded)
-    # Note: args.url is NOT defaulted here for TUI mode - the app reads last_server_url
-    # directly from settings to distinguish CLI-specified from last used.
+    if args.url is None:
+        args.url = settings.last_server_url
     if args.name is None:
         args.name = settings.name
     if args.id is None:
@@ -508,9 +508,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
 
     # Handle daemon subcommand
     if args.command == "daemon":
-        # Apply last_server_url if no explicit URL given
-        if args.url is None:
-            args.url = settings.last_server_url
         return await _run_daemon_mode(args, settings)
 
     from sendspin.tui.app import AppArgs, SendspinApp
