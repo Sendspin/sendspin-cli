@@ -270,7 +270,9 @@ This player is highly experimental and has several known limitations:
 
 - **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
 
-## Install as Daemon (systemd, Linux)
+## Install as a service
+
+###  systemd, Linux
 
 For headless devices like Raspberry Pi, you can install `sendspin daemon` as a systemd service that starts automatically on boot.
 
@@ -298,6 +300,38 @@ journalctl -u sendspin -f        # View logs
 **Uninstall:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/uninstall-systemd.sh | sudo bash
+```
+
+### macOS
+
+Create `sendspin.plist` in `~/Library/LaunchAgents/`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>sendspin</string>
+    <key>ProgramArguments</key>
+    <array>
+      <string>/opt/homebrew/bin/uvx</string>
+      <string>sendspin</string>
+      <string>daemon</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+  </dict>
+</plist>
+```
+
+This assumes `uv` was installed with `brew`. Then, load it with `launchctl load ~/Library/LaunchAgents/sendspin.plist`.
+
+**Manage the service:**
+```bash
+launchctl start ~/Library/LaunchAgents/sendspin.plist     # Start the service
+launchctl stop ~/Library/LaunchAgents/sendspin.plist      # Stop the service
+launchctl unload ~/Library/LaunchAgents/sendspin.plist    # Uninstall
 ```
 
 ## Sendspin Party
