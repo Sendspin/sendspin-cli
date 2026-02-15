@@ -219,6 +219,8 @@ async def run_server(config: ServeConfig) -> int:
     print("Press Ctrl+C to quit\n")
 
     try:
+        consecutive_errors = 0
+
         while not shutdown_requested:
             # Wait for a client to connect
             if not active_group:
@@ -236,14 +238,23 @@ async def run_server(config: ServeConfig) -> int:
                 stream = active_group.start_stream()
                 play_media_task = create_task(_stream_audio(stream, audio_source))
                 await play_media_task
+                consecutive_errors = 0
             except asyncio.CancelledError:
                 pass
             except FileNotFoundError as e:
                 print(f"Error: {e}")
                 return 1
             except Exception as e:
+                consecutive_errors += 1
+                delay = min(2**consecutive_errors, 30)
                 print(f"Playback error: {e}")
                 logger.debug("Playback error", exc_info=True)
+                print(f"Retrying in {delay}s...")
+                play_media_task = create_task(asyncio.sleep(delay))
+                try:
+                    await play_media_task
+                except asyncio.CancelledError:
+                    pass
 
     finally:
         with suppress(Exception):
