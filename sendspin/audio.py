@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+SOUNDDEVICE_DTYPE_MAP = {
+    8: "uint8",
+    16: "int16",
+    24: "int24",
+    32: "int32",
+}
+
+
 @dataclass(slots=True)
 class AudioDevice:
     """Represents an audio output device.
@@ -102,13 +110,14 @@ def detect_supported_audio_formats(
         List of supported PCM audio formats.
     """
     sample_rates = [48000, 44100, 96000, 192000]
-    bit_depths = [16, 24]
+    bit_depths = [32, 24, 16]
     channel_counts = [2]
-    dtype_map = {8: "uint8", 16: "int16", 24: "int24", 32: "int32"}
 
     # Test each dimension independently (6 probes)
     supported_rates = [r for r in sample_rates if _check_format(device, r, 2, "int16")]
-    supported_depths = [d for d in bit_depths if _check_format(device, 48000, 2, dtype_map[d])]
+    supported_depths = [
+        d for d in bit_depths if _check_format(device, 48000, 2, SOUNDDEVICE_DTYPE_MAP[d])
+    ]
     supported_channels = [c for c in channel_counts if _check_format(device, 48000, c, "int16")]
 
     supported: list[SupportedAudioFormat] = []
@@ -342,14 +351,19 @@ class AudioPlayer:
         self._stream = sounddevice.RawOutputStream(
             samplerate=pcm_format.sample_rate,
             channels=pcm_format.channels,
-            dtype="int16",
+            dtype=SOUNDDEVICE_DTYPE_MAP[pcm_format.bit_depth],
             blocksize=self._BLOCKSIZE,
             callback=self._audio_callback,
             latency="high",
             device=device.index,
         )
+        # Add sample rate, channels and bit depth
         logger.info(
-            "Audio stream configured: blocksize=%d, latency=high, device=%s",
+            "Audio stream configured: format=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
+            "pcm",
+            pcm_format.sample_rate,
+            pcm_format.channels,
+            pcm_format.bit_depth,
             self._BLOCKSIZE,
             device,
         )
@@ -921,26 +935,98 @@ class AudioPlayer:
         """
         Apply volume scaling to the output buffer.
 
-        Scales 16-bit audio samples by the current volume level.
+        Scales audio samples by the current volume level, supporting multiple bit depths.
         """
         muted = self._muted
         volume = self._volume
 
         if muted or volume == 0:
-            # Fill with silence
-            output_buffer[:num_bytes] = b"\x00" * num_bytes
+            # Fill with silence using numpy
+            self._fill_silence(output_buffer, 0, num_bytes)
             return
 
         if volume == 100:
             return
 
-        # Create view of buffer as int16 samples (no copy)
-        samples = np.frombuffer(output_buffer[:num_bytes], dtype=np.int16).copy()
         # Power curve for natural volume control (gentler at high volumes)
         amplitude = (volume / 100.0) ** 1.5
-        samples = (samples * amplitude).astype(np.int16)
-        # Write back to buffer
-        output_buffer[:num_bytes] = samples.tobytes()
+
+        bit_depth = self._format.bit_depth if self._format else 16
+
+        if bit_depth == 8:
+            # 8-bit is unsigned (0-255, center at 128)
+            self._apply_volume_8bit(output_buffer, num_bytes, amplitude)
+        elif bit_depth == 24:
+            # 24-bit is packed (3 bytes/sample) - convert to int32 for scaling
+            self._apply_volume_24bit(output_buffer, num_bytes, amplitude)
+        else:
+            # 16, 32-bit have native signed numpy dtypes
+            if bit_depth == 32:
+                dtype_str = "int32"
+                clip_min, clip_max = -2147483648, 2147483647
+            else:  # 16-bit default
+                dtype_str = "int16"
+                clip_min, clip_max = -32768, 32767
+
+            # Read samples, scale, and write back via memoryview
+            buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes)
+            samples = np.frombuffer(buffer_array, dtype=dtype_str).copy()
+            scaled = np.clip(samples.astype(np.float64) * amplitude, clip_min, clip_max)
+            output_buffer[:num_bytes] = scaled.astype(dtype_str).tobytes()
+
+    def _apply_volume_8bit(
+        self, output_buffer: memoryview, num_bytes: int, amplitude: float
+    ) -> None:
+        """Apply volume scaling to unsigned 8-bit audio data (center at 128)."""
+        if num_bytes == 0:
+            return
+
+        # Read unsigned 8-bit samples
+        buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).copy()
+
+        # Convert to signed (center at 0) for scaling, then back to unsigned
+        # unsigned 128 = signed 0 (silence)
+        signed = buffer_array.astype(np.float64) - 128.0
+        scaled = np.clip(signed * amplitude, -128.0, 127.0)
+        result = (scaled + 128.0).astype(np.uint8)
+
+        output_buffer[:num_bytes] = result.tobytes()
+
+    def _apply_volume_24bit(
+        self, output_buffer: memoryview, num_bytes: int, amplitude: float
+    ) -> None:
+        """Apply volume scaling to packed 24-bit audio data."""
+        num_samples = num_bytes // 3
+        if num_samples == 0:
+            return
+
+        # Read packed 24-bit samples and reshape to (N, 3) for vectorized unpacking
+        raw = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).reshape(-1, 3)
+
+        # Unpack 3 bytes per sample to int32 (little-endian: low | mid<<8 | high<<16)
+        samples_i32 = (
+            raw[:, 0].astype(np.int32)
+            | (raw[:, 1].astype(np.int32) << 8)
+            | (raw[:, 2].astype(np.int32) << 16)
+        )
+
+        # Sign extend from 24-bit to 32-bit (if bit 23 is set, set bits 24-31)
+        samples_i32 = np.where(
+            samples_i32 & 0x800000, samples_i32 | np.int32(-0x1000000), samples_i32
+        )
+
+        # Apply volume scaling
+        scaled = np.clip(samples_i32.astype(np.float64) * amplitude, -8388608, 8388607).astype(
+            np.int32
+        )
+
+        # Pack back to 24-bit (extract bytes using vectorized shifts)
+        result = np.empty((num_samples, 3), dtype=np.uint8)
+        result[:, 0] = scaled & 0xFF
+        result[:, 1] = (scaled >> 8) & 0xFF
+        result[:, 2] = (scaled >> 16) & 0xFF
+
+        output_buffer[:num_bytes] = result.tobytes()
 
     def _compute_and_set_loop_start(self, server_timestamp_us: int) -> None:
         """Compute and set scheduled start time from server timestamp."""
