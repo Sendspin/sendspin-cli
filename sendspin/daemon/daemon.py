@@ -122,6 +122,7 @@ class SendspinDaemon:
             volume=self._settings.player_volume,
             muted=self._settings.player_muted,
             on_event=self._on_stream_event,
+            on_format_change=self._handle_format_change,
         )
 
         try:
@@ -318,6 +319,18 @@ class SendspinDaemon:
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
             )
+        )
+
+    def _handle_format_change(
+        self, codec: str | None, sample_rate: int, bit_depth: int, channels: int
+    ) -> None:
+        """Log audio format changes."""
+        logger.info(
+            "Audio format: %s %dHz/%d-bit/%dch",
+            codec or "PCM",
+            sample_rate,
+            bit_depth,
+            channels,
         )
 
     def _on_stream_event(self, event: str) -> None:

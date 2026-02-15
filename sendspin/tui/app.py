@@ -298,6 +298,7 @@ class SendspinApp:
                 volume=self._settings.player_volume,
                 muted=self._settings.player_muted,
                 on_event=self._on_stream_event,
+                on_format_change=self._handle_format_change,
             )
 
             await self._discovery.start()
@@ -651,6 +652,13 @@ class SendspinApp:
                 muted=state.player_muted,
             )
         )
+
+    def _handle_format_change(
+        self, codec: str | None, sample_rate: int, bit_depth: int, channels: int
+    ) -> None:
+        """Handle audio format changes by updating the UI."""
+        assert self._ui is not None
+        self._ui.set_audio_format(codec, sample_rate, bit_depth, channels)
 
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""

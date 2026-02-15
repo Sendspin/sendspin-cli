@@ -102,11 +102,15 @@ def detect_supported_audio_formats(
     cartesian product. This assumes that if individual dimensions work, their
     combinations will too (valid for PulseAudio/PipeWire which handle conversion).
 
+    Returns formats for both PCM (raw) and FLAC (compressed) codecs. FLAC formats
+    are preferred and listed first since they reduce bandwidth. FLAC decoding is
+    done client-side before playback.
+
     Args:
         device: Audio device ID. None for default device.
 
     Returns:
-        List of supported PCM audio formats.
+        List of supported audio formats, with FLAC formats first (preferred).
     """
     sample_rates = [48000, 44100, 96000, 192000]
     bit_depths = [24, 16]
@@ -119,8 +123,21 @@ def detect_supported_audio_formats(
     ]
     supported_channels = [c for c in channel_counts if _check_format(device, 48000, c, "int16")]
 
+    # Build formats for both FLAC (preferred) and PCM
+    # FLAC is preferred as it reduces bandwidth while maintaining lossless quality
     supported: list[SupportedAudioFormat] = []
 
+    # Add FLAC formats first (preferred)
+    for rate in supported_rates:
+        for depth in supported_depths:
+            for ch in supported_channels:
+                supported.append(
+                    SupportedAudioFormat(
+                        codec=AudioCodec.FLAC, channels=ch, sample_rate=rate, bit_depth=depth
+                    )
+                )
+
+    # Add PCM formats as fallback
     for rate in supported_rates:
         for depth in supported_depths:
             for ch in supported_channels:
@@ -133,10 +150,13 @@ def detect_supported_audio_formats(
     if not supported:
         logger.warning("Could not detect supported formats, using safe defaults")
         supported = [
+            SupportedAudioFormat(
+                codec=AudioCodec.FLAC, channels=2, sample_rate=44100, bit_depth=16
+            ),
             SupportedAudioFormat(codec=AudioCodec.PCM, channels=2, sample_rate=44100, bit_depth=16),
         ]
 
-    logger.info("Detected %d supported audio formats", len(supported))
+    logger.info("Detected %d supported audio formats (FLAC + PCM)", len(supported))
     return supported
 
 

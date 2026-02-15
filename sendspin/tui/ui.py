@@ -61,6 +61,12 @@ class UIState:
     player_volume: int = 100
     player_muted: bool = False
 
+    # Audio format
+    audio_codec: str | None = None
+    audio_sample_rate: int = 0
+    audio_bit_depth: int = 0
+    audio_channels: int = 0
+
     # Delay
     delay_ms: float = 0.0
 
@@ -387,6 +393,19 @@ class SendspinUI:
                 left.append(f" · Delay: +{delay:.0f}ms", style="dim")
             else:
                 left.append(f" · Delay: {delay:.0f}ms", style="dim")
+            # Add audio format info
+            if self._state.audio_sample_rate > 0:
+                rate_khz = self._state.audio_sample_rate / 1000
+                ch_label = (
+                    "stereo"
+                    if self._state.audio_channels == 2
+                    else f"{self._state.audio_channels}ch"
+                )
+                codec_label = self._state.audio_codec or "PCM"
+                left.append(
+                    f" · {codec_label} {rate_khz:.1f}kHz/{self._state.audio_bit_depth}bit {ch_label}",
+                    style="dim",
+                )
         else:
             left.append(self._state.status_message, style="dim yellow")
 
@@ -491,6 +510,16 @@ class SendspinUI:
         """Update player volume."""
         self._state.player_volume = volume
         self._state.player_muted = muted
+        self.refresh()
+
+    def set_audio_format(
+        self, codec: str | None, sample_rate: int, bit_depth: int, channels: int
+    ) -> None:
+        """Update audio format display."""
+        self._state.audio_codec = codec
+        self._state.audio_sample_rate = sample_rate
+        self._state.audio_bit_depth = bit_depth
+        self._state.audio_channels = channels
         self.refresh()
 
     def set_delay(self, delay_ms: float) -> None:
