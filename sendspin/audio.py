@@ -128,8 +128,8 @@ def detect_supported_audio_formats(
     supported: list[SupportedAudioFormat] = []
 
     # Add FLAC formats first (preferred)
-    for rate in supported_rates:
-        for depth in supported_depths:
+    for depth in supported_depths:
+        for rate in supported_rates:
             for ch in supported_channels:
                 supported.append(
                     SupportedAudioFormat(
@@ -138,8 +138,8 @@ def detect_supported_audio_formats(
                 )
 
     # Add PCM formats as fallback
-    for rate in supported_rates:
-        for depth in supported_depths:
+    for depth in supported_depths:
+        for rate in supported_rates:
             for ch in supported_channels:
                 supported.append(
                     SupportedAudioFormat(
