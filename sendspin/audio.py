@@ -110,10 +110,10 @@ def detect_supported_audio_formats(
         List of supported PCM audio formats.
     """
     sample_rates = [48000, 44100, 96000, 192000]
-    bit_depths = [32, 24, 16]
-    channel_counts = [2]
+    bit_depths = [24, 16]
+    channel_counts = [2, 1]
 
-    # Test each dimension independently (6 probes)
+    # Test each dimension independently
     supported_rates = [r for r in sample_rates if _check_format(device, r, 2, "int16")]
     supported_depths = [
         d for d in bit_depths if _check_format(device, 48000, 2, SOUNDDEVICE_DTYPE_MAP[d])
