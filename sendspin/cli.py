@@ -89,7 +89,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
-        help="Port to listen on (default: 8928)",
+        help="Port to listen on (default: 8927)",
     )
     serve_parser.add_argument(
         "--name",

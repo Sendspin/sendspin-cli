@@ -64,7 +64,7 @@ class ServeConfig:
 
     source: str
     source_format: str | None = None
-    port: int = 8928
+    port: int = 8927
     name: str = "Sendspin Server"
     clients: list[str] | None = None
 
