@@ -587,17 +587,11 @@ class SendspinApp:
         assert self._ui is not None
         state = self._state
         ui = self._ui
-        # Only clear metadata when actually switching to a different group
-        group_changed = payload.group_id is not None and payload.group_id != state.group_id
-        if group_changed:
+        # Track group ID changes for logging. Metadata clearing is not needed here
+        # because the server always sends a metadata update (snapshot or cleared)
+        # before the group update message when groups change.
+        if payload.group_id is not None and payload.group_id != state.group_id:
             state.group_id = payload.group_id
-            state.title = None
-            state.artist = None
-            state.album = None
-            state.track_progress = None
-            state.track_duration = None
-            ui.set_metadata(title=None, artist=None, album=None)
-            ui.clear_progress()
             ui.add_event(f"Group ID: {payload.group_id}")
 
         if payload.group_name:
