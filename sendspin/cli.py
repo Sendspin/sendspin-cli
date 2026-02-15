@@ -89,7 +89,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
-        help="Port to listen on (default: 8928)",
+        help="Port to listen on (default: 8927)",
     )
     serve_parser.add_argument(
         "--name",
@@ -374,7 +374,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
 
     # Apply settings defaults
     if args.port is None:
-        args.port = settings.listen_port or 8928
+        args.port = settings.listen_port or 8927
     if args.name is None:
         args.name = settings.name or "Sendspin Server"
     if args.log_level is None:
