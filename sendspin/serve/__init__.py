@@ -85,7 +85,7 @@ def _windows_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[st
 
 
 async def _stream_audio(stream: PushStream, source: AudioSource) -> None:
-    """Push decoded PCM audio into a PushStream until the source is exhausted."""
+    """Push decoded PCM audio into a PushStream until cancelled."""
     try:
         async for pcm_chunk in source.generator:
             stream.prepare_audio(pcm_chunk, source.format)

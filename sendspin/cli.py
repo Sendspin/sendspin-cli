@@ -374,7 +374,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
 
     # Apply settings defaults
     if args.port is None:
-        args.port = settings.listen_port or 8927
+        args.port = settings.listen_port or 8928
     if args.name is None:
         args.name = settings.name or "Sendspin Server"
     if args.log_level is None:
