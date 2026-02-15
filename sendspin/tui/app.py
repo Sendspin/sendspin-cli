@@ -203,6 +203,7 @@ class AppArgs:
     client_name: str
     settings: ClientSettings
     url: str | None = None
+    url_from_settings: bool = False
     static_delay_ms: float | None = None
     use_mpris: bool = True
     hook_start: str | None = None
@@ -219,11 +220,8 @@ class SendspinApp:
 
         server: DiscoveredServer | None = None
         if args.url:
-            # Determine source: CLI if different from settings, otherwise "Last used"
-            if args.settings.last_server_url and args.url == args.settings.last_server_url:
-                server = DiscoveredServer.from_url("Last used", args.url)
-            else:
-                server = DiscoveredServer.from_url("Command-line argument", args.url)
+            label = "Last used" if args.url_from_settings else "Command-line argument"
+            server = DiscoveredServer.from_url(label, args.url)
 
         self._state = AppState(selected_server=server)
         self._client = SendspinClient(
@@ -344,10 +342,29 @@ class SendspinApp:
                 loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
             # Get initial server URL
-            if args.url:
-                pass  # URL provided (CLI or settings) - selected_server already set in __init__
+            if args.url and not args.url_from_settings:
+                pass  # URL provided via CLI - selected_server already set in __init__
+            elif args.url and args.url_from_settings:
+                # Try last known server first, fall back to mDNS discovery
+                last_url = args.url
+                self._ui.add_event(f"Trying last server at {last_url}...")
+                try:
+                    await self._connect_cancellable(last_url)
+                    self._state.selected_server = DiscoveredServer.from_url(
+                        "Last connected", last_url
+                    )
+                    self._ui.add_event(f"Connected to {last_url}")
+                    self._ui.set_connected(last_url)
+                    self._settings.update(last_server_url=last_url)
+                    await self._connection_loop(already_connected=True)
+                    return 0
+                except ServerSwitchRequested:
+                    pass  # New server already set in state, fall through to connection loop
+                except (TimeoutError, OSError, ClientError):
+                    self._state.selected_server = None
+                    self._ui.add_event("Last server unavailable, searching...")
 
-            # No URL - do mDNS discovery
+            # No URL or last server unavailable - do mDNS discovery
             if self._state.selected_server is None:
                 logger.info("Waiting for mDNS discovery of Sendspin server...")
                 self._ui.add_event("Searching for Sendspin server...")
