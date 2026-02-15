@@ -132,6 +132,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=None,
+        dest="listen_port",
         help="Port to listen on for incoming server connections (default: 8928)",
     )
     daemon_parser.add_argument(
@@ -373,7 +374,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
 
     # Apply settings defaults
     if args.port is None:
-        args.port = settings.listen_port or 8928
+        args.port = settings.listen_port or 8927
     if args.name is None:
         args.name = settings.name or "Sendspin Server"
     if args.log_level is None:
@@ -418,7 +419,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         client_name=client_name,
         settings=settings,
         static_delay_ms=args.static_delay_ms,
-        listen_port=args.port,
+        listen_port=args.listen_port,
         use_mpris=args.use_mpris,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
@@ -470,8 +471,14 @@ def main() -> int:
 
 async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
-    # Determine mode and load settings
-    is_daemon = args.command == "daemon" or getattr(args, "headless", False)
+    # Handle deprecated --headless flag early so all downstream logic
+    # can simply check args.command == "daemon".
+    if getattr(args, "headless", False):
+        print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
+        print("Routing to daemon mode...\n")
+        args.command = "daemon"
+
+    is_daemon = args.command == "daemon"
     settings_dir = getattr(args, "settings_dir", None)
     settings = await get_client_settings("daemon" if is_daemon else "tui", settings_dir)
 
@@ -488,8 +495,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         args.static_delay_ms = settings.static_delay_ms
     if args.log_level is None:
         args.log_level = settings.log_level or "INFO"
-    if args.command == "daemon" and args.port is None:
-        args.port = settings.listen_port or 8928
+    if is_daemon and getattr(args, "listen_port", None) is None:
+        args.listen_port = settings.listen_port or 8928
     args.use_mpris = not args.disable_mpris and settings.use_mpris
 
     # Apply hook settings (CLI > settings)
@@ -500,11 +507,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
 
     # Set up logging with resolved log level
     logging.basicConfig(level=getattr(logging, args.log_level))
-
-    if args.headless:
-        print("Warning: --headless is deprecated. Use 'sendspin daemon' instead.")
-        print("Routing to daemon mode...\n")
-        args.command = "daemon"
 
     # Handle daemon subcommand
     if args.command == "daemon":

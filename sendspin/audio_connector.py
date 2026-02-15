@@ -119,10 +119,10 @@ class AudioStreamHandler:
             if self._on_event:
                 self._on_event("start")
 
-    def _on_stream_end(self, roles: list[Roles] | None) -> None:
+    def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end by clearing audio queue."""
         # For the CLI player, we only care about the player role
-        if roles is not None and Roles.PLAYER not in roles:
+        if roles is not None and Roles.PLAYER.value not in roles:
             return
 
         if self.audio_player is not None:
@@ -135,10 +135,10 @@ class AudioStreamHandler:
             if self._on_event:
                 self._on_event("stop")
 
-    def _on_stream_clear(self, roles: list[Roles] | None) -> None:
+    def _on_stream_clear(self, roles: list[str] | None) -> None:
         """Handle stream clear by clearing audio queue (e.g., for seek operations)."""
         # For the CLI player, we only care about the player role
-        if (roles is None or Roles.PLAYER in roles) and self.audio_player is not None:
+        if (roles is None or Roles.PLAYER.value in roles) and self.audio_player is not None:
             self.audio_player.clear()
             logger.debug("Cleared audio queue on stream clear")
 

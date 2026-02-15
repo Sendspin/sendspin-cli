@@ -6,7 +6,7 @@ from dataclasses import dataclass
 import av
 import av.audio.frame
 import numpy as np
-from aiosendspin.server.stream import AudioFormat
+from aiosendspin.server import AudioFormat
 
 # 16-bit = 2 bytes per sample
 BYTES_PER_SAMPLE = 2
