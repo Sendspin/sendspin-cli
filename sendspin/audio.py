@@ -357,7 +357,6 @@ class AudioPlayer:
             latency="high",
             device=device.index,
         )
-        # Add sample rate, channels and bit depth
         logger.info(
             "Audio stream configured: format=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
             "pcm",
