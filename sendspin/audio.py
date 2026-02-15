@@ -377,8 +377,8 @@ class AudioPlayer:
             device=device.index,
         )
         logger.info(
-            "Audio stream configured: format=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
-            "pcm",
+            "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
+            audio_format.codec.value,
             pcm_format.sample_rate,
             pcm_format.channels,
             pcm_format.bit_depth,

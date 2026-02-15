@@ -374,41 +374,6 @@ class SendspinUI:
 
     def _build_status_line(self) -> Table:
         """Build the status line at the bottom."""
-        # Left side: connection status + delay
-        left = Text()
-        left.append("  ")  # Align with panel content
-        if self._state.connected and self._state.server_url:
-            # Extract host from ws://host:port/path
-            url = self._state.server_url
-            host = url.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
-            # Remove brackets from IPv6
-            host = host.strip("[]")
-            if self._state.group_name:
-                left.append(f"Connected to {self._state.group_name} at {host}", style="dim")
-            else:
-                left.append(f"Connected to {host}", style="dim")
-            # Add delay info
-            delay = self._state.delay_ms
-            if delay >= 0:
-                left.append(f" · Delay: +{delay:.0f}ms", style="dim")
-            else:
-                left.append(f" · Delay: {delay:.0f}ms", style="dim")
-            # Add audio format info
-            if self._state.audio_sample_rate > 0:
-                rate_khz = self._state.audio_sample_rate / 1000
-                ch_label = (
-                    "stereo"
-                    if self._state.audio_channels == 2
-                    else f"{self._state.audio_channels}ch"
-                )
-                codec_label = self._state.audio_codec or "PCM"
-                left.append(
-                    f" · {codec_label} {rate_khz:.1f}kHz/{self._state.audio_bit_depth}bit {ch_label}",
-                    style="dim",
-                )
-        else:
-            left.append(self._state.status_message, style="dim yellow")
-
         # Right side: delay shortcuts + server selector + quit shortcut
         right = Text()
         right.append(",", style=self._shortcut_style("delay-"))
@@ -419,6 +384,57 @@ class SendspinUI:
         right.append(" server  ", style="dim")
         right.append("q", style=self._shortcut_style("quit"))
         right.append(" quit", style="dim")
+
+        # Left side: connection status + format + delay
+        indent = "  "
+        left = Text()
+        if self._state.connected and self._state.server_url:
+            # Extract host from ws://host:port/path
+            url = self._state.server_url
+            host = url.split("://", 1)[-1].split("/", 1)[0].split(":")[0]
+            host = host.strip("[]")  # Remove brackets from IPv6
+            if self._state.group_name:
+                base = f"Connected to {self._state.group_name} at {host}"
+            else:
+                base = f"Connected to {host}"
+
+            # Build info segments (each treated as atomic for wrapping)
+            info_segments: list[str] = []
+            if self._state.audio_sample_rate > 0:
+                rate_khz = self._state.audio_sample_rate / 1000
+                ch_label = (
+                    "stereo"
+                    if self._state.audio_channels == 2
+                    else f"{self._state.audio_channels}ch"
+                )
+                codec_label = (self._state.audio_codec or "PCM").upper()
+                info_segments.append(
+                    f" · {codec_label} {rate_khz:.1f}kHz/{self._state.audio_bit_depth}bit {ch_label}"
+                )
+            delay = self._state.delay_ms
+            delay_str = f"+{delay:.0f}ms" if delay >= 0 else f"{delay:.0f}ms"
+            info_segments.append(f" · Delay: {delay_str}")
+
+            # Greedily fit segments on first line, overflow to indented second line
+            available = self._console.width - len(right) - 4
+            first_line = base
+            line_len = len(indent) + len(first_line)
+            overflow_segments: list[str] = []
+            for seg in info_segments:
+                if not overflow_segments and line_len + len(seg) <= available:
+                    first_line += seg
+                    line_len += len(seg)
+                else:
+                    overflow_segments.append(seg)
+
+            left.append(indent)
+            left.append(first_line, style="dim")
+            if overflow_segments:
+                parts = [seg.removeprefix(" · ") for seg in overflow_segments]
+                left.append(f"\n{indent}· {' · '.join(parts)}", style="dim")
+        else:
+            left.append(indent)
+            left.append(self._state.status_message, style="dim yellow")
 
         # Use grid for left/right alignment with padding column
         line = Table.grid(expand=True)
