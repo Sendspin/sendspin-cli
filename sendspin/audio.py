@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 
 SOUNDDEVICE_DTYPE_MAP = {
-    8: "uint8",
     16: "int16",
     24: "int24",
     32: "int32",
@@ -952,10 +951,7 @@ class AudioPlayer:
 
         bit_depth = self._format.bit_depth if self._format else 16
 
-        if bit_depth == 8:
-            # 8-bit is unsigned (0-255, center at 128)
-            self._apply_volume_8bit(output_buffer, num_bytes, amplitude)
-        elif bit_depth == 24:
+        if bit_depth == 24:
             # 24-bit is packed (3 bytes/sample) - convert to int32 for scaling
             self._apply_volume_24bit(output_buffer, num_bytes, amplitude)
         else:
@@ -967,29 +963,9 @@ class AudioPlayer:
                 dtype_str = "int16"
                 clip_min, clip_max = -32768, 32767
 
-            # Read samples, scale, and write back via memoryview
-            buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes)
-            samples = np.frombuffer(buffer_array, dtype=dtype_str).copy()
+            samples = np.frombuffer(output_buffer[:num_bytes], dtype=dtype_str).copy()
             scaled = np.clip(samples.astype(np.float64) * amplitude, clip_min, clip_max)
             output_buffer[:num_bytes] = scaled.astype(dtype_str).tobytes()
-
-    def _apply_volume_8bit(
-        self, output_buffer: memoryview, num_bytes: int, amplitude: float
-    ) -> None:
-        """Apply volume scaling to unsigned 8-bit audio data (center at 128)."""
-        if num_bytes == 0:
-            return
-
-        # Read unsigned 8-bit samples
-        buffer_array = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).copy()
-
-        # Convert to signed (center at 0) for scaling, then back to unsigned
-        # unsigned 128 = signed 0 (silence)
-        signed = buffer_array.astype(np.float64) - 128.0
-        scaled = np.clip(signed * amplitude, -128.0, 127.0)
-        result = (scaled + 128.0).astype(np.uint8)
-
-        output_buffer[:num_bytes] = result.tobytes()
 
     def _apply_volume_24bit(
         self, output_buffer: memoryview, num_bytes: int, amplitude: float
