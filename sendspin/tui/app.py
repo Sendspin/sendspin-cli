@@ -24,10 +24,8 @@ from aiosendspin.models.core import (
 from aiosendspin.models.player import (
     ClientHelloPlayerSupport,
     PlayerCommandPayload,
-    SupportedAudioFormat,
 )
 from aiosendspin.models.types import (
-    AudioCodec,
     MediaCommand,
     PlaybackStateType,
     PlayerCommand,
@@ -36,7 +34,7 @@ from aiosendspin.models.types import (
     UndefinedField,
 )
 
-from sendspin.audio import AudioDevice
+from sendspin.audio import AudioDevice, detect_supported_audio_formats
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
 from sendspin.hooks import run_hook
@@ -224,20 +222,16 @@ class SendspinApp:
             server = DiscoveredServer.from_url(label, args.url)
 
         self._state = AppState(selected_server=server)
+        # Detect supported audio formats for the output device
+        supported_formats = detect_supported_audio_formats(args.audio_device.index)
+
         self._client = SendspinClient(
             client_id=args.client_id,
             client_name=args.client_name,
             roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
-                supported_formats=[
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
-                    ),
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
-                    ),
-                ],
+                supported_formats=supported_formats,
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),

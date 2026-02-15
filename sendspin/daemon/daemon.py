@@ -15,17 +15,16 @@ from aiosendspin.models.core import (
     ClientGoodbyePayload,
     ServerCommandPayload,
 )
-from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
+from aiosendspin.models.player import ClientHelloPlayerSupport
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
-    AudioCodec,
     GoodbyeReason,
     PlayerCommand,
     PlayerStateType,
     Roles,
 )
 
-from sendspin.audio import AudioDevice
+from sendspin.audio import AudioDevice, detect_supported_audio_formats
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
@@ -76,20 +75,15 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
+        supported_formats = detect_supported_audio_formats(self._args.audio_device.index)
+
         return SendspinClient(
             client_id=self._args.client_id,
             client_name=self._args.client_name,
             roles=client_roles,
             device_info=get_device_info(),
             player_support=ClientHelloPlayerSupport(
-                supported_formats=[
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=2, sample_rate=44_100, bit_depth=16
-                    ),
-                    SupportedAudioFormat(
-                        codec=AudioCodec.PCM, channels=1, sample_rate=44_100, bit_depth=16
-                    ),
-                ],
+                supported_formats=supported_formats,
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),

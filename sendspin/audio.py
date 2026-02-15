@@ -21,6 +21,8 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 import numpy as np
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
+from aiosendspin.models.player import SupportedAudioFormat
+from aiosendspin.models.types import AudioCodec
 from sounddevice import CallbackFlags
 
 if TYPE_CHECKING:
@@ -71,6 +73,63 @@ def query_devices() -> list[AudioDevice]:
                 )
             )
     return result
+
+
+def _check_format(device: int | None, rate: int, channels: int, dtype: str) -> bool:
+    """Check if a specific audio format is supported by the device."""
+    try:
+        sounddevice.check_output_settings(
+            device=device, samplerate=rate, channels=channels, dtype=dtype
+        )
+        return True
+    except sounddevice.PortAudioError:
+        return False
+
+
+def detect_supported_audio_formats(
+    device: int | None = None,
+) -> list[SupportedAudioFormat]:
+    """Detect supported audio formats by testing dimensions independently.
+
+    Tests sample rates, bit depths, and channels separately then creates the
+    cartesian product. This assumes that if individual dimensions work, their
+    combinations will too (valid for PulseAudio/PipeWire which handle conversion).
+
+    Args:
+        device: Audio device ID. None for default device.
+
+    Returns:
+        List of supported PCM audio formats.
+    """
+    sample_rates = [48000, 44100, 96000, 192000]
+    bit_depths = [16, 24]
+    channel_counts = [2]
+    dtype_map = {8: "uint8", 16: "int16", 24: "int24", 32: "int32"}
+
+    # Test each dimension independently (6 probes)
+    supported_rates = [r for r in sample_rates if _check_format(device, r, 2, "int16")]
+    supported_depths = [d for d in bit_depths if _check_format(device, 48000, 2, dtype_map[d])]
+    supported_channels = [c for c in channel_counts if _check_format(device, 48000, c, "int16")]
+
+    supported: list[SupportedAudioFormat] = []
+
+    for rate in supported_rates:
+        for depth in supported_depths:
+            for ch in supported_channels:
+                supported.append(
+                    SupportedAudioFormat(
+                        codec=AudioCodec.PCM, channels=ch, sample_rate=rate, bit_depth=depth
+                    )
+                )
+
+    if not supported:
+        logger.warning("Could not detect supported formats, using safe defaults")
+        supported = [
+            SupportedAudioFormat(codec=AudioCodec.PCM, channels=2, sample_rate=44100, bit_depth=16),
+        ]
+
+    logger.info("Detected %d supported audio formats", len(supported))
+    return supported
 
 
 class AudioTimeInfo(Protocol):
