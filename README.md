@@ -124,7 +124,8 @@ Settings are stored in `~/.config/sendspin/`:
   "audio_format": "flac:48000:24:2",
   "log_level": "INFO",
   "listen_port": 8927,
-  "use_mpris": true
+  "use_mpris": true,
+  "hardware_volume": true
 }
 ```
 
@@ -154,6 +155,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
+| `hardware_volume` | boolean | TUI/daemon | Control hardware output volume by default; use `--disable-hardware-volume` to use software volume instead; syncs group volume on startup |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
@@ -225,6 +227,20 @@ The format string uses the pattern `codec:sample_rate:bit_depth:channels`:
 - **channels**: Channel count (`1` for mono, `2` for stereo)
 
 The specified format is validated against the audio device on startup. If the device doesn't support it, the player will exit with an error.
+
+### System Volume Control
+
+Sendspin controls your system output volume by default. To disable hardware/system volume control and use software player volume instead:
+
+```bash
+sendspin --disable-hardware-volume
+```
+
+Daemon mode supports the same option:
+
+```bash
+sendspin daemon --disable-hardware-volume
+```
 
 ### Adjusting Playback Delay
 

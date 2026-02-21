@@ -29,6 +29,15 @@ Please install PortAudio for your system:
   • Other systems: https://www.portaudio.com/"""
 
 
+def arg_str_to_bool(v: str) -> bool:
+    s = v.lower()
+    if s in {"true", "1", "yes", "y", "on"}:
+        return True
+    if s in {"false", "0", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError("Expected true/false")
+
+
 def list_audio_devices() -> None:
     """List all available audio output devices."""
     try:
@@ -189,6 +198,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Disable MPRIS integration",
     )
     daemon_parser.add_argument(
+        "--disable-hardware-volume",
+        nargs="?",
+        const=True,
+        default=None,
+        type=arg_str_to_bool,
+        help="Disable hardware/system volume control and use software player volume",
+    )
+    daemon_parser.add_argument(
         "--hook-start",
         type=str,
         default=None,
@@ -266,6 +283,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--disable-mpris",
         action="store_true",
         help="Disable MPRIS integration",
+    )
+    parser.add_argument(
+        "--disable-hardware-volume",
+        nargs="?",
+        const=True,
+        type=arg_str_to_bool,
+        help="Disable hardware/system volume control and use software player volume",
     )
     parser.add_argument(
         "--headless",
@@ -478,6 +502,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         listen_port=args.listen_port,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
+        hardware_volume=not args.disable_hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )
@@ -559,6 +584,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     args.use_mpris = not args.disable_mpris and settings.use_mpris
     if args.audio_format is None:
         args.audio_format = settings.audio_format
+    if args.disable_hardware_volume is None:
+        args.disable_hardware_volume = not settings.hardware_volume
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -586,6 +613,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
+        hardware_volume=not args.disable_hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )

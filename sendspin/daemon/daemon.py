@@ -24,10 +24,12 @@ from aiosendspin.models.types import (
     Roles,
 )
 
+from sendspin import hardware_volume
 from sendspin.audio import AudioDevice, detect_supported_audio_formats
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
+from sendspin.hardware_volume import HardwareVolumeController
 from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,7 @@ class DaemonArgs:
     listen_port: int = 8928
     use_mpris: bool = True
     preferred_format: SupportedAudioFormat | None = None
+    hardware_volume: bool = True
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -69,6 +72,7 @@ class SendspinDaemon:
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
+        self._hardware_volume: HardwareVolumeController | None = None
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -113,6 +117,11 @@ class SendspinDaemon:
             loop.add_signal_handler(signal.SIGTERM, signal_handler)
 
         self._settings = self._args.settings
+        if self._args.hardware_volume and hardware_volume.AVAILABLE:
+            self._hardware_volume = HardwareVolumeController()
+            if current := await self._hardware_volume.get_state():
+                player_volume, player_muted = current
+                self._settings.update(player_volume=player_volume, player_muted=player_muted)
 
         # CLI arg overrides settings for static delay
         delay = (
@@ -123,11 +132,14 @@ class SendspinDaemon:
 
         self._audio_handler = AudioStreamHandler(
             audio_device=self._args.audio_device,
-            volume=self._settings.player_volume,
-            muted=self._settings.player_muted,
+            volume=100 if self._hardware_volume else self._settings.player_volume,
+            muted=False if self._hardware_volume else self._settings.player_muted,
             on_event=self._on_stream_event,
             on_format_change=self._handle_format_change,
         )
+
+        if self._hardware_volume:
+            await self._hardware_volume.start_monitoring(self._on_hardware_volume_change)
 
         try:
             if self._args.url is not None:
@@ -139,6 +151,8 @@ class SendspinDaemon:
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
+            if self._hardware_volume is not None:
+                await self._hardware_volume.stop_monitoring()
             await self._stop_mpris_and_audio()
             if self._client is not None:
                 await self._client.disconnect()
@@ -151,6 +165,37 @@ class SendspinDaemon:
             logger.info("Daemon stopped")
 
         return 0
+
+    def _on_hardware_volume_change(self, volume: int, muted: bool) -> None:
+        """Handle external hardware volume changes."""
+        assert self._settings is not None
+        assert self._audio_handler is not None
+
+        self._settings.update(player_volume=volume, player_muted=muted)
+        self._apply_volume(volume, muted=muted)
+        logger.info(
+            "Hardware volume changed externally: %d%% (%s)",
+            volume,
+            "muted" if muted else "unmuted",
+        )
+
+        if self._client is not None and self._client.connected:
+            create_task(
+                self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=volume,
+                    muted=muted,
+                )
+            )
+
+    def _apply_volume(self, volume: int, *, muted: bool) -> None:
+        """Route volume/mute to the hardware controller (if enabled) or software player."""
+        assert self._audio_handler is not None
+
+        if self._hardware_volume:
+            create_task(self._hardware_volume.set_state(volume, muted=muted))
+        else:
+            self._audio_handler.set_volume(volume, muted=muted)
 
     async def _run_client_initiated(self, static_delay_ms: float) -> None:
         """Run in client-initiated mode, connecting to a specific URL."""
@@ -199,6 +244,7 @@ class SendspinDaemon:
         logger.info("Server connected")
         assert self._audio_handler is not None
         assert self._connection_lock is not None
+        assert self._settings is not None
 
         # Lock ensures we wait for any in-progress handshake to complete
         # before disconnecting the previous server
@@ -229,6 +275,15 @@ class SendspinDaemon:
 
             try:
                 await client.attach_websocket(ws)
+                if (
+                    self._settings.player_volume is not None
+                    and self._settings.player_muted is not None
+                ):
+                    await self._client.send_player_state(
+                        state=PlayerStateType.SYNCHRONIZED,
+                        volume=self._settings.player_volume,
+                        muted=self._settings.player_muted,
+                    )
             except TimeoutError:
                 logger.warning("Handshake with server timed out")
                 await self._stop_mpris_and_audio()
@@ -261,12 +316,22 @@ class SendspinDaemon:
         """Run the connection loop with automatic reconnection (client-initiated mode)."""
         assert self._client is not None
         assert self._audio_handler is not None
+        assert self._settings is not None
         error_backoff = 1.0
         max_backoff = 300.0
 
         while True:
             try:
                 await self._client.connect(url)
+                if (
+                    self._settings.player_volume is not None
+                    and self._settings.player_muted is not None
+                ):
+                    await self._client.send_player_state(
+                        state=PlayerStateType.SYNCHRONIZED,
+                        volume=self._settings.player_volume,
+                        muted=self._settings.player_muted,
+                    )
                 error_backoff = 1.0
 
                 # Wait for disconnect
@@ -305,15 +370,11 @@ class SendspinDaemon:
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             self._settings.update(player_volume=player_cmd.volume)
-            self._audio_handler.set_volume(
-                self._settings.player_volume, muted=self._settings.player_muted
-            )
+            self._apply_volume(self._settings.player_volume, muted=self._settings.player_muted)
             logger.info("Server set player volume: %d%%", player_cmd.volume)
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             self._settings.update(player_muted=player_cmd.mute)
-            self._audio_handler.set_volume(
-                self._settings.player_volume, muted=self._settings.player_muted
-            )
+            self._apply_volume(self._settings.player_volume, muted=self._settings.player_muted)
             logger.info("Server %s player", "muted" if player_cmd.mute else "unmuted")
 
         # Send state update back to server per spec
