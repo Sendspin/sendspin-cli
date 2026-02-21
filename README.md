@@ -155,7 +155,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
-| `hardware_volume` | boolean | TUI/daemon | Control hardware output volume by default; use `--disable-hardware-volume` to use software volume instead; syncs group volume on startup |
+| `hardware_volume` | boolean | TUI/daemon | Control hardware output volume by default; use `--disable-hardware-volume` to use software volume instead |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
