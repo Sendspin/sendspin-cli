@@ -113,6 +113,7 @@ class ClientSettings(BaseSettings):
     client_id: str | None = None
     audio_device: str | None = None
     use_mpris: bool = True
+    audio_format: str | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -129,6 +130,7 @@ class ClientSettings(BaseSettings):
         log_level: str | None = None,
         listen_port: int | None = None,
         use_mpris: bool | None = None,
+        audio_format: str | None = None,
         hook_start: str | None = None,
         hook_stop: str | None = None,
     ) -> None:
@@ -155,6 +157,7 @@ class ClientSettings(BaseSettings):
                     "log_level": log_level,
                     "listen_port": listen_port,
                     "use_mpris": use_mpris,
+                    "audio_format": audio_format,
                     "hook_start": hook_start,
                     "hook_stop": hook_stop,
                 }
@@ -184,6 +187,7 @@ class ClientSettings(BaseSettings):
             self.client_id = data.get("client_id")
             self.audio_device = data.get("audio_device")
             self.use_mpris = data.get("use_mpris", True)
+            self.audio_format = data.get("audio_format")
             self.hook_start = data.get("hook_start")
             self.hook_stop = data.get("hook_stop")
             logger.info(

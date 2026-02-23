@@ -24,6 +24,7 @@ from aiosendspin.models.core import (
 from aiosendspin.models.player import (
     ClientHelloPlayerSupport,
     PlayerCommandPayload,
+    SupportedAudioFormat,
 )
 from aiosendspin.models.types import (
     MediaCommand,
@@ -204,6 +205,7 @@ class AppArgs:
     url_from_settings: bool = False
     static_delay_ms: float | None = None
     use_mpris: bool = True
+    preferred_format: SupportedAudioFormat | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -224,6 +226,9 @@ class SendspinApp:
         self._state = AppState(selected_server=server)
         # Detect supported audio formats for the output device
         supported_formats = detect_supported_audio_formats(args.audio_device.index)
+        if args.preferred_format is not None:
+            supported_formats = [f for f in supported_formats if f != args.preferred_format]
+            supported_formats.insert(0, args.preferred_format)
 
         self._client = SendspinClient(
             client_id=args.client_id,

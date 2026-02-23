@@ -121,6 +121,7 @@ Settings are stored in `~/.config/sendspin/`:
   "name": "Living Room",
   "client_id": "sendspin-living-room",
   "audio_device": "2",
+  "audio_format": "flac:48000:24:2",
   "log_level": "INFO",
   "listen_port": 8927,
   "use_mpris": true
@@ -149,6 +150,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `name` | string | All | Friendly name for client or server (`--name`) |
 | `client_id` | string | TUI/daemon | Unique client identifier (`--id`) |
 | `audio_device` | string | TUI/daemon | Audio device index or name prefix (`--audio-device`) |
+| `audio_format` | string | TUI/daemon | Preferred audio format (`--audio-format`, e.g., `flac:48000:24:2`) |
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
@@ -207,6 +209,22 @@ sendspin --audio-device "MacBook"
 ```
 
 This is particularly useful when running `sendspin daemon` on headless devices or when you want to route audio to a specific output.
+
+### Preferred Audio Format
+
+By default, the player negotiates the best audio format with the server from the list of formats supported by your audio device (preferring FLAC over PCM). You can specify a preferred format to prioritize:
+
+```bash
+sendspin --audio-format flac:48000:24:2
+```
+
+The format string uses the pattern `codec:sample_rate:bit_depth:channels`:
+- **codec**: `flac` (compressed, preferred) or `pcm` (uncompressed)
+- **sample_rate**: Sample rate in Hz (e.g., `44100`, `48000`, `96000`)
+- **bit_depth**: Bits per sample (`16` or `24`)
+- **channels**: Channel count (`1` for mono, `2` for stereo)
+
+The specified format is validated against the audio device on startup. If the device doesn't support it, the player will exit with an error.
 
 ### Adjusting Playback Delay
 
@@ -268,7 +286,7 @@ This provides detailed information about time synchronization. The output can be
 
 This player is highly experimental and has several known limitations:
 
-- **Format Support**: Currently fixed to uncompressed 44.1kHz 16-bit stereo PCM
+- **Format Support**: Limited to formats supported by the audio device and server (FLAC and PCM codecs)
 
 ## Install as Daemon (systemd, Linux)
 

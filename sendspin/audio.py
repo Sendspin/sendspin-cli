@@ -160,6 +160,82 @@ def detect_supported_audio_formats(
     return supported
 
 
+def parse_audio_format(format_str: str) -> SupportedAudioFormat:
+    """Parse an audio format string into a SupportedAudioFormat.
+
+    Format: ``codec:sample_rate:bit_depth:channels``
+    Example: ``flac:48000:24:2``
+
+    Args:
+        format_str: The format string to parse.
+
+    Returns:
+        A SupportedAudioFormat matching the specification.
+
+    Raises:
+        ValueError: If the format string is invalid.
+    """
+    parts = format_str.lower().split(":")
+    if len(parts) != 4:
+        raise ValueError(
+            f"Invalid audio format '{format_str}'. "
+            "Expected format: codec:sample_rate:bit_depth:channels (e.g., flac:48000:24:2)"
+        )
+
+    codec_str, rate_str, depth_str, channels_str = parts
+
+    if codec_str == "flac":
+        codec = AudioCodec.FLAC
+    elif codec_str == "pcm":
+        codec = AudioCodec.PCM
+    else:
+        raise ValueError(f"Unknown codec '{codec_str}'. Supported codecs: flac, pcm")
+
+    try:
+        sample_rate = int(rate_str)
+    except ValueError:
+        raise ValueError(f"Invalid sample rate '{rate_str}'. Expected an integer.") from None
+
+    try:
+        bit_depth = int(depth_str)
+    except ValueError:
+        raise ValueError(f"Invalid bit depth '{depth_str}'. Expected an integer.") from None
+
+    try:
+        channels = int(channels_str)
+    except ValueError:
+        raise ValueError(f"Invalid channel count '{channels_str}'. Expected an integer.") from None
+
+    return SupportedAudioFormat(
+        codec=codec, channels=channels, sample_rate=sample_rate, bit_depth=bit_depth
+    )
+
+
+def validate_audio_format(fmt: SupportedAudioFormat, device: int | None) -> bool:
+    """Validate that an audio format's PCM dimensions are supported by the device.
+
+    Checks sample rate, bit depth, and channel count independently against the
+    audio device (matching the approach used by detect_supported_audio_formats).
+
+    Args:
+        fmt: The audio format to validate.
+        device: Audio device ID. None for default device.
+
+    Returns:
+        True if the device supports the format dimensions.
+    """
+    dtype = SOUNDDEVICE_DTYPE_MAP.get(fmt.bit_depth)
+    if dtype is None:
+        return False
+
+    # Check each dimension independently (same approach as detect_supported_audio_formats)
+    rate_ok = _check_format(device, fmt.sample_rate, 2, "int16")
+    depth_ok = _check_format(device, 48000, 2, dtype)
+    channels_ok = _check_format(device, 48000, fmt.channels, "int16")
+
+    return rate_ok and depth_ok and channels_ok
+
+
 class AudioTimeInfo(Protocol):
     """Protocol for audio timing information from sounddevice callback.
 

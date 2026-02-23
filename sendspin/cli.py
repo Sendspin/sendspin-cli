@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from sendspin.settings import ClientSettings, get_client_settings, get_serve_settings
 
 if TYPE_CHECKING:
+    from aiosendspin.models.player import SupportedAudioFormat
+
     from sendspin.audio import AudioDevice
 
 LOGGER = logging.getLogger(__name__)
@@ -167,6 +169,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     daemon_parser.add_argument(
+        "--audio-format",
+        type=str,
+        default=None,
+        help=(
+            "Preferred audio format as codec:sample_rate:bit_depth:channels "
+            "(e.g., flac:48000:24:2). Verified against the audio device on startup."
+        ),
+    )
+    daemon_parser.add_argument(
         "--settings-dir",
         type=str,
         default=None,
@@ -225,6 +236,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help=(
             "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
             "Use --list-audio-devices to see available devices."
+        ),
+    )
+    parser.add_argument(
+        "--audio-format",
+        type=str,
+        default=None,
+        help=(
+            "Preferred audio format as codec:sample_rate:bit_depth:channels "
+            "(e.g., flac:48000:24:2). Verified against the audio device on startup."
         ),
     )
     parser.add_argument(
@@ -365,6 +385,41 @@ def _resolve_client_info(client_id: str | None, client_name: str | None) -> tupl
     )
 
 
+def _resolve_audio_format(
+    format_arg: str | None, device: AudioDevice
+) -> SupportedAudioFormat | None:
+    """Parse and validate a preferred audio format against the audio device.
+
+    Args:
+        format_arg: Format string (e.g., "flac:48000:24:2") or None.
+        device: The resolved audio device to validate against.
+
+    Returns:
+        The parsed SupportedAudioFormat, or None if no format was specified.
+
+    Raises:
+        CLIError: If the format string is invalid or unsupported by the device.
+    """
+    if format_arg is None:
+        return None
+
+    from sendspin.audio import parse_audio_format, validate_audio_format
+
+    try:
+        fmt = parse_audio_format(format_arg)
+    except ValueError as e:
+        raise CLIError(str(e)) from None
+
+    if not validate_audio_format(fmt, device.index):
+        raise CLIError(
+            f"Audio format '{format_arg}' is not supported by device "
+            f"'{device.name}' (index {device.index})."
+        )
+
+    LOGGER.info("Using preferred audio format: %s", format_arg)
+    return fmt
+
+
 async def _run_serve_mode(args: argparse.Namespace) -> int:
     """Run the server mode."""
     from sendspin.serve import ServeConfig, run_server
@@ -411,9 +466,10 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
+    audio_device = _resolve_audio_device(args.audio_device)
 
     daemon_args = DaemonArgs(
-        audio_device=_resolve_audio_device(args.audio_device),
+        audio_device=audio_device,
         url=args.url,
         client_id=client_id,
         client_name=client_name,
@@ -421,6 +477,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         static_delay_ms=args.static_delay_ms,
         listen_port=args.listen_port,
         use_mpris=args.use_mpris,
+        preferred_format=_resolve_audio_format(args.audio_format, audio_device),
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )
@@ -501,6 +558,10 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         args.listen_port = settings.listen_port or 8928
     args.use_mpris = not args.disable_mpris and settings.use_mpris
 
+    # Apply audio format setting (CLI > settings)
+    if args.audio_format is None:
+        args.audio_format = settings.audio_format
+
     # Apply hook settings (CLI > settings)
     if args.hook_start is None:
         args.hook_start = settings.hook_start
@@ -517,9 +578,10 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     from sendspin.tui.app import AppArgs, SendspinApp
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
+    audio_device = _resolve_audio_device(args.audio_device)
 
     app_args = AppArgs(
-        audio_device=_resolve_audio_device(args.audio_device),
+        audio_device=audio_device,
         url=args.url,
         url_from_settings=url_from_settings,
         client_id=client_id,
@@ -527,6 +589,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
+        preferred_format=_resolve_audio_format(args.audio_format, audio_device),
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )

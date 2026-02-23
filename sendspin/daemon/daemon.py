@@ -15,7 +15,7 @@ from aiosendspin.models.core import (
     ClientGoodbyePayload,
     ServerCommandPayload,
 )
-from aiosendspin.models.player import ClientHelloPlayerSupport
+from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
     GoodbyeReason,
@@ -45,6 +45,7 @@ class DaemonArgs:
     static_delay_ms: float | None = None
     listen_port: int = 8928
     use_mpris: bool = True
+    preferred_format: SupportedAudioFormat | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -76,6 +77,9 @@ class SendspinDaemon:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
         supported_formats = detect_supported_audio_formats(self._args.audio_device.index)
+        if self._args.preferred_format is not None:
+            supported_formats = [f for f in supported_formats if f != self._args.preferred_format]
+            supported_formats.insert(0, self._args.preferred_format)
 
         return SendspinClient(
             client_id=self._args.client_id,
