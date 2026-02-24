@@ -557,12 +557,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     if is_daemon and getattr(args, "listen_port", None) is None:
         args.listen_port = settings.listen_port or 8928
     args.use_mpris = not args.disable_mpris and settings.use_mpris
-
-    # Apply audio format setting (CLI > settings)
     if args.audio_format is None:
         args.audio_format = settings.audio_format
-
-    # Apply hook settings (CLI > settings)
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:

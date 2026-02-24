@@ -228,12 +228,7 @@ def validate_audio_format(fmt: SupportedAudioFormat, device: int | None) -> bool
     if dtype is None:
         return False
 
-    # Check each dimension independently (same approach as detect_supported_audio_formats)
-    rate_ok = _check_format(device, fmt.sample_rate, 2, "int16")
-    depth_ok = _check_format(device, 48000, 2, dtype)
-    channels_ok = _check_format(device, 48000, fmt.channels, "int16")
-
-    return rate_ok and depth_ok and channels_ok
+    return _check_format(device, fmt.sample_rate, fmt.channels, dtype)
 
 
 class AudioTimeInfo(Protocol):
