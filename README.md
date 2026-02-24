@@ -282,12 +282,6 @@ sendspin --log-level DEBUG
 
 This provides detailed information about time synchronization. The output can be helpful when reporting issues.
 
-## Limitations & Known Issues
-
-This player is highly experimental and has several known limitations:
-
-- **Format Support**: Limited to formats supported by the audio device and server (FLAC and PCM codecs)
-
 ## Install as Daemon (systemd, Linux)
 
 For headless devices like Raspberry Pi, you can install `sendspin daemon` as a systemd service that starts automatically on boot.
