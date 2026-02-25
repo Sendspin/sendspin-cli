@@ -240,6 +240,8 @@ class SendspinApp:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             static_delay_ms=0.0,  # Will be set after loading settings
+            initial_volume=args.settings.player_volume,
+            initial_muted=args.settings.player_muted,
         )
 
         self._audio_handler: AudioStreamHandler | None = None

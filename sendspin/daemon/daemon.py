@@ -80,6 +80,15 @@ class SendspinDaemon:
             supported_formats = [f for f in supported_formats if f != self._args.preferred_format]
             supported_formats.insert(0, self._args.preferred_format)
 
+        # Use current volume state from settings so the initial handshake
+        # sends the correct volume instead of the default (100/unmuted).
+        if self._settings is not None:
+            initial_volume = self._settings.player_volume
+            initial_muted = self._settings.player_muted
+        else:
+            initial_volume = 100
+            initial_muted = False
+
         return SendspinClient(
             client_id=self._args.client_id,
             client_name=self._args.client_name,
@@ -91,6 +100,8 @@ class SendspinDaemon:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             static_delay_ms=static_delay_ms,
+            initial_volume=initial_volume,
+            initial_muted=initial_muted,
         )
 
     async def run(self) -> int:
