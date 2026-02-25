@@ -10,8 +10,6 @@ import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from sendspin import hardware_volume
-
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
 
@@ -42,7 +40,6 @@ from sendspin.audio_connector import AudioStreamHandler
 from sendspin.discovery import ServiceDiscovery, DiscoveredServer
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
-from sendspin.hardware_volume import HardwareVolumeController
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
@@ -254,11 +251,8 @@ class SendspinApp:
         self._connection_manager = ConnectionManager(self._discovery)
         self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
-        self._hardware_volume: HardwareVolumeController | None = None
         if MPRIS_AVAILABLE and args.use_mpris:
             self._mpris = SendspinMpris(self._client)
-        if hardware_volume.AVAILABLE and args.hardware_volume:
-            self._hardware_volume = HardwareVolumeController()
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -286,14 +280,6 @@ class SendspinApp:
 
         try:
             self._settings = self._args.settings
-            if self._hardware_volume:
-                if current_hardware_volume := await self._hardware_volume.get_state():
-                    player_volume, player_muted = current_hardware_volume
-                    self._settings.update(player_volume=player_volume, player_muted=player_muted)
-
-            self._state.player_volume = self._settings.player_volume
-            self._state.player_muted = self._settings.player_muted
-            self._state.hardware_volume = self._hardware_volume is not None
 
             # CLI arg overrides settings for static delay
             delay = (
@@ -303,26 +289,31 @@ class SendspinApp:
             )
             self._client.set_static_delay_ms(delay)
 
+            self._audio_handler = AudioStreamHandler(
+                audio_device=args.audio_device,
+                volume=self._settings.player_volume,
+                muted=self._settings.player_muted,
+                on_event=self._on_stream_event,
+                on_format_change=self._handle_format_change,
+                on_volume_change=self._on_volume_change,
+                enable_hardware_volume=args.hardware_volume,
+            )
+            effective_volume, effective_muted = await self._audio_handler.start()
+            self._settings.update(player_volume=effective_volume, player_muted=effective_muted)
+
+            self._state.player_volume = effective_volume
+            self._state.player_muted = effective_muted
+            self._state.hardware_volume = self._audio_handler.uses_hardware_volume
+
             self._ui = SendspinUI(
                 delay,
-                player_volume=self._settings.player_volume,
-                player_muted=self._settings.player_muted,
+                player_volume=effective_volume,
+                player_muted=effective_muted,
                 hardware_volume=self._state.hardware_volume,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
             self._ui.add_event(f"Using audio device: {args.audio_device.name}")
-
-            self._audio_handler = AudioStreamHandler(
-                audio_device=args.audio_device,
-                volume=100 if self._state.hardware_volume else self._settings.player_volume,
-                muted=False if self._state.hardware_volume else self._settings.player_muted,
-                on_event=self._on_stream_event,
-                on_format_change=self._handle_format_change,
-            )
-
-            if self._hardware_volume:
-                await self._hardware_volume.start_monitoring(self._on_hardware_volume_change)
 
             await self._discovery.start()
 
@@ -346,7 +337,6 @@ class SendspinApp:
                     self._show_server_selector,
                     self._on_server_selected,
                     request_shutdown,
-                    hardware_volume=self._hardware_volume,
                 )
             )
 
@@ -396,8 +386,6 @@ class SendspinApp:
         except asyncio.CancelledError:
             logger.debug("Connection loop cancelled")
         finally:
-            if self._hardware_volume is not None:
-                await self._hardware_volume.stop_monitoring()
             if self._mpris:
                 self._mpris.stop()
             if self._ui:
@@ -411,16 +399,14 @@ class SendspinApp:
 
         return 0
 
-    def _on_hardware_volume_change(self, volume: int, muted: bool) -> None:
-        """Handle external hardware volume changes detected by the controller."""
+    def _on_volume_change(self, volume: int, muted: bool) -> None:
+        """Handle external volume changes (e.g. hardware volume knob)."""
         assert self._settings is not None
-        assert self._audio_handler is not None
         assert self._ui is not None
 
         self._state.player_volume = volume
         self._state.player_muted = muted
         self._settings.update(player_volume=volume, player_muted=muted)
-        self._apply_volume(volume, muted=muted)
         self._ui.set_player_volume(volume, muted=muted)
 
         if self._client.connected:
@@ -431,15 +417,6 @@ class SendspinApp:
                     muted=muted,
                 )
             )
-
-    def _apply_volume(self, volume: int, *, muted: bool) -> None:
-        """Apply volume/mute to the hardware controller (if enabled) and audio player."""
-        assert self._audio_handler is not None
-
-        if self._hardware_volume:
-            create_task(self._hardware_volume.set_state(volume, muted=muted))
-        else:
-            self._audio_handler.set_volume(volume, muted=muted)
 
     async def _connect_cancellable(self, url: str) -> None:
         """Connect to server. Can be cancelled by _cancel_connect().
@@ -700,13 +677,13 @@ class SendspinApp:
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
             state.player_volume = player_cmd.volume
             self._settings.update(player_volume=player_cmd.volume)
-            self._apply_volume(state.player_volume, muted=state.player_muted)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event(f"Server set player volume: {player_cmd.volume}%")
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             state.player_muted = player_cmd.mute
             self._settings.update(player_muted=player_cmd.mute)
-            self._apply_volume(state.player_volume, muted=state.player_muted)
+            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
             ui.set_player_volume(state.player_volume, muted=state.player_muted)
             ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
 

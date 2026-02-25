@@ -16,6 +16,8 @@ from sendspin.decoder import FlacDecoder
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat, SendspinClient
 
+    from sendspin.hardware_volume import HardwareVolumeController
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,9 @@ class AudioStreamHandler:
     This handler connects to a SendspinClient and manages audio playback
     by listening for audio chunks, stream start/end events, and handling
     format changes. Supports PCM and FLAC codecs.
+
+    When hardware volume is enabled, the handler owns a HardwareVolumeController
+    and routes volume changes to it, keeping the software player at full volume.
     """
 
     def __init__(
@@ -35,6 +40,8 @@ class AudioStreamHandler:
         muted: bool = False,
         on_event: Callable[[str], None] | None = None,
         on_format_change: Callable[[str | None, int, int, int], None] | None = None,
+        on_volume_change: Callable[[int, bool], None] | None = None,
+        enable_hardware_volume: bool = False,
     ) -> None:
         """Initialize the audio stream handler.
 
@@ -44,31 +51,77 @@ class AudioStreamHandler:
             muted: Initial muted state.
             on_event: Callback for stream lifecycle events ("start" or "stop").
             on_format_change: Callback for format changes (codec, sample_rate, bit_depth, channels).
+            on_volume_change: Callback for external volume changes (e.g. hardware knob).
+            enable_hardware_volume: Whether to use hardware volume control if available.
         """
         self._audio_device = audio_device
         self._volume = volume
         self._muted = muted
         self._on_event = on_event
         self._on_format_change = on_format_change
+        self._on_volume_change = on_volume_change
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: AudioFormat | None = None
         self._flac_decoder: FlacDecoder | None = None
         self._stream_active = False  # Track if stream is currently active
 
+        self._hw_volume: HardwareVolumeController | None = None
+        if enable_hardware_volume:
+            from sendspin.hardware_volume import AVAILABLE
+
+            if AVAILABLE:
+                from sendspin.hardware_volume import HardwareVolumeController as HWController
+
+                self._hw_volume = HWController()
+
+    async def start(self) -> tuple[int, bool]:
+        """Initialize volume state and start hardware monitoring if applicable.
+
+        When hardware volume is active, reads the current hardware volume/mute
+        state and sets the software player to full volume as passthrough.
+
+        Returns:
+            Effective (volume, muted) the rest of the system should use.
+        """
+        if self._hw_volume is not None:
+            current = await self._hw_volume.get_state()
+            await self._hw_volume.start_monitoring(self._on_hw_volume_change)
+            if current is not None:
+                self._volume = 100
+                self._muted = False
+                return current
+        return self._volume, self._muted
+
+    @property
+    def uses_hardware_volume(self) -> bool:
+        """Whether this handler is using hardware volume control."""
+        return self._hw_volume is not None
+
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
 
-        Updates the cached values and applies to the audio player if active.
+        Routes to the hardware controller when active, otherwise updates the
+        software audio player directly.
 
         Args:
             volume: Volume level (0-100).
             muted: Muted state.
         """
-        self._volume = volume
-        self._muted = muted
-        if self.audio_player is not None:
-            self.audio_player.set_volume(volume, muted=muted)
+        if self._hw_volume is not None:
+            from sendspin.utils import create_task
+
+            create_task(self._hw_volume.set_state(volume, muted=muted))
+        else:
+            self._volume = volume
+            self._muted = muted
+            if self.audio_player is not None:
+                self.audio_player.set_volume(volume, muted=muted)
+
+    def _on_hw_volume_change(self, volume: int, muted: bool) -> None:
+        """Handle external hardware volume changes from the controller."""
+        if self._on_volume_change is not None:
+            self._on_volume_change(volume, muted)
 
     def attach_client(self, client: SendspinClient) -> list[Callable[[], None]]:
         """Attach to a SendspinClient and register listeners.
@@ -187,7 +240,10 @@ class AudioStreamHandler:
             self.audio_player.clear()
 
     async def cleanup(self) -> None:
-        """Stop audio player and clear resources."""
+        """Stop audio player, hardware monitoring, and clear resources."""
+        if self._hw_volume is not None:
+            await self._hw_volume.stop_monitoring()
+
         # Fire stop event if stream was active
         if self._stream_active:
             self._stream_active = False

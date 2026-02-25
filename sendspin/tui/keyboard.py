@@ -9,13 +9,11 @@ from typing import TYPE_CHECKING
 
 import readchar
 from aiosendspin.models.types import MediaCommand, PlaybackStateType, PlayerStateType
-from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
 
     from sendspin.audio_connector import AudioStreamHandler
-    from sendspin.hardware_volume import HardwareVolumeController
     from sendspin.settings import ClientSettings
     from sendspin.tui.app import AppState
     from sendspin.tui.ui import SendspinUI
@@ -33,7 +31,6 @@ class CommandHandler:
         audio_handler: AudioStreamHandler,
         ui: SendspinUI,
         settings: ClientSettings,
-        hardware_volume: HardwareVolumeController | None = None,
     ) -> None:
         """Initialize the command handler."""
         self._client = client
@@ -41,14 +38,6 @@ class CommandHandler:
         self._audio_handler = audio_handler
         self._ui = ui
         self._settings = settings
-        self._hardware_volume = hardware_volume
-
-    def _apply_volume(self, volume: int, *, muted: bool) -> None:
-        """Route volume/mute to the hardware controller (if enabled) or software player."""
-        if self._hardware_volume:
-            create_task(self._hardware_volume.set_state(volume, muted=muted))
-        else:
-            self._audio_handler.set_volume(volume, muted=muted)
 
     async def send_media_command(self, command: MediaCommand) -> None:
         """Send a media command with validation."""
@@ -69,7 +58,7 @@ class CommandHandler:
         target = max(0, min(100, self._state.player_volume + delta))
         self._state.player_volume = target
         self._settings.update(player_volume=target)
-        self._apply_volume(self._state.player_volume, muted=self._state.player_muted)
+        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
         self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
@@ -82,7 +71,7 @@ class CommandHandler:
         """Toggle player (local) mute state."""
         self._state.player_muted = not self._state.player_muted
         self._settings.update(player_muted=self._state.player_muted)
-        self._apply_volume(self._state.player_volume, muted=self._state.player_muted)
+        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
         self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
         await self._client.send_player_state(
             state=PlayerStateType.SYNCHRONIZED,
@@ -111,7 +100,6 @@ async def keyboard_loop(
     show_server_selector: Callable[[], None],
     on_server_selected: Callable[[], Awaitable[None]],
     request_shutdown: Callable[[], None],
-    hardware_volume: HardwareVolumeController | None = None,
 ) -> None:
     """Run the keyboard input loop.
 
@@ -124,9 +112,8 @@ async def keyboard_loop(
         show_server_selector: Function to show the server selector UI.
         on_server_selected: Async callback when a server is selected.
         request_shutdown: Callback to request application shutdown.
-        hardware_volume: Hardware volume controller, if enabled.
     """
-    handler = CommandHandler(client, state, audio_handler, ui, settings, hardware_volume)
+    handler = CommandHandler(client, state, audio_handler, ui, settings)
 
     # Key dispatch table: key -> (highlight_name | None, async action)
     # For keys that need case-insensitive matching, use lowercase
