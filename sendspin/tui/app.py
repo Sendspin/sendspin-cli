@@ -67,6 +67,7 @@ class AppState:
     player_volume: int = 100
     player_muted: bool = False
     group_id: str | None = None
+
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
         changed = False
@@ -281,9 +282,7 @@ class SendspinApp:
             # Detect supported audio formats for the output device
             supported_formats = detect_supported_audio_formats(args.audio_device.index)
             if args.preferred_format is not None:
-                supported_formats = [
-                    f for f in supported_formats if f != args.preferred_format
-                ]
+                supported_formats = [f for f in supported_formats if f != args.preferred_format]
                 supported_formats.insert(0, args.preferred_format)
 
             self._client = SendspinClient(
