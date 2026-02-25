@@ -12,11 +12,12 @@ from aiosendspin.models.types import AudioCodec, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 from sendspin.decoder import FlacDecoder
+from sendspin.hardware_volume import HardwareVolumeController
+from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat, SendspinClient
 
-    from sendspin.hardware_volume import HardwareVolumeController
 
 logger = logging.getLogger(__name__)
 
@@ -68,9 +69,7 @@ class AudioStreamHandler:
 
         self._hw_volume: HardwareVolumeController | None = None
         if enable_hardware_volume:
-            from sendspin.hardware_volume import HardwareVolumeController as HWController
-
-            self._hw_volume = HWController()
+            self._hw_volume = HardwareVolumeController()
 
     async def start(self) -> tuple[int, bool]:
         """Initialize volume state and start hardware monitoring if applicable.
@@ -81,13 +80,14 @@ class AudioStreamHandler:
         Returns:
             Effective (volume, muted) the rest of the system should use.
         """
-        if self._hw_volume is not None:
-            volume, muted = await self._hw_volume.get_state()
-            await self._hw_volume.start_monitoring(self._on_hw_volume_change)
-            self._volume = 100
-            self._muted = False
-            return volume, muted
-        return self._volume, self._muted
+        if self._hw_volume is None:
+            return self._volume, self._muted
+
+        volume, muted = await self._hw_volume.get_state()
+        await self._hw_volume.start_monitoring(self._on_hw_volume_change)
+        self._volume = 100
+        self._muted = False
+        return volume, muted
 
     @property
     def uses_hardware_volume(self) -> bool:
@@ -105,8 +105,6 @@ class AudioStreamHandler:
             muted: Muted state.
         """
         if self._hw_volume is not None:
-            from sendspin.utils import create_task
-
             create_task(self._hw_volume.set_state(volume, muted=muted))
         else:
             self._volume = volume
