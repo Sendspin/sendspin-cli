@@ -102,7 +102,6 @@ class AudioStreamHandler:
         """Whether this handler is using hardware volume control."""
         return self._hw_volume is not None
 
-
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
 
