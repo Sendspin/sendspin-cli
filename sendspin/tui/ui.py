@@ -60,6 +60,7 @@ class UIState:
     muted: bool = False
     player_volume: int = 100
     player_muted: bool = False
+    uses_hardware_volume: bool = False
 
     # Audio format
     audio_codec: str | None = None
@@ -84,6 +85,7 @@ class SendspinUI:
         *,
         player_volume: int = 100,
         player_muted: bool = False,
+        uses_hardware_volume: bool = False,
     ) -> None:
         """Initialize the UI."""
         self._console = Console()
@@ -92,6 +94,7 @@ class SendspinUI:
             volume=player_volume,
             player_volume=player_volume,
             player_muted=player_muted,
+            uses_hardware_volume=uses_hardware_volume,
         )
         self._live: Live | None = None
         self._running = False
@@ -246,7 +249,8 @@ class SendspinUI:
         pvol = self._state.player_volume
         pvol_style = "red" if self._state.player_muted else "cyan"
         pvol_text = f"{pvol}%" + (" [MUTED]" if self._state.player_muted else "")
-        info.add_row("Player:", Text(pvol_text, style=pvol_style))
+        player_label = "Hardware:" if self._state.uses_hardware_volume else "Player:"
+        info.add_row(player_label, Text(pvol_text, style=pvol_style))
 
         # Vertical container for info + shortcuts (5 lines total)
         content = Table.grid()

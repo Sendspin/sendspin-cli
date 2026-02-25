@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from typing import TYPE_CHECKING
 
+from sendspin.hardware_volume import AVAILABLE as HW_VOLUME_AVAILABLE
 from sendspin.settings import ClientSettings, get_client_settings, get_serve_settings
 
 if TYPE_CHECKING:
@@ -27,6 +28,15 @@ Please install PortAudio for your system:
   • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2
   • macOS: brew install portaudio
   • Other systems: https://www.portaudio.com/"""
+
+
+def arg_str_to_bool(v: str) -> bool:
+    s = v.lower()
+    if s == "true":
+        return True
+    if s == "false":
+        return False
+    raise argparse.ArgumentTypeError("Expected true or false")
 
 
 def list_audio_devices() -> None:
@@ -189,6 +199,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Disable MPRIS integration",
     )
     daemon_parser.add_argument(
+        "--hardware-volume",
+        default=None,
+        type=arg_str_to_bool,
+        help="Enable or disable hardware/system volume control (daemon: on, TUI: off)",
+    )
+    daemon_parser.add_argument(
         "--hook-start",
         type=str,
         default=None,
@@ -266,6 +282,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--disable-mpris",
         action="store_true",
         help="Disable MPRIS integration",
+    )
+    parser.add_argument(
+        "--hardware-volume",
+        default=None,
+        type=arg_str_to_bool,
+        help="Enable or disable hardware/system volume control (daemon: on, TUI: off)",
     )
     parser.add_argument(
         "--headless",
@@ -478,6 +500,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         listen_port=args.listen_port,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
+        hardware_volume=args.hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )
@@ -559,6 +582,15 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     args.use_mpris = not args.disable_mpris and settings.use_mpris
     if args.audio_format is None:
         args.audio_format = settings.audio_format
+    if args.hardware_volume is None:
+        args.hardware_volume = (
+            settings.hardware_volume if settings.hardware_volume is not None else is_daemon
+        )
+    if args.hardware_volume and not HW_VOLUME_AVAILABLE:
+        raise CLIError(
+            "Hardware volume control is not available on this system. "
+            "Install pulsectl-asyncio on Linux, or use --hardware-volume false."
+        )
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -586,6 +618,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
+        hardware_volume=args.hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )

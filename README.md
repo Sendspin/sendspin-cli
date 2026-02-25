@@ -124,7 +124,8 @@ Settings are stored in `~/.config/sendspin/`:
   "audio_format": "flac:48000:24:2",
   "log_level": "INFO",
   "listen_port": 8927,
-  "use_mpris": true
+  "use_mpris": true,
+  "hardware_volume": true
 }
 ```
 
@@ -154,6 +155,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
+| `hardware_volume` | boolean | TUI/daemon | Control hardware/system output volume instead of software volume (`--hardware-volume true/false`). Default: on for daemon, off for TUI |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
@@ -225,6 +227,17 @@ The format string uses the pattern `codec:sample_rate:bit_depth:channels`:
 - **channels**: Channel count (`1` for mono, `2` for stereo)
 
 The specified format is validated against the audio device on startup. If the device doesn't support it, the player will exit with an error.
+
+### System Volume Control
+
+On Linux with PulseAudio/PipeWire, Sendspin can control your system output volume directly. Volume adjustments (keyboard shortcuts, server commands) change the system volume. The current system volume is read on startup — the `player_volume` and `player_muted` settings are only used when hardware volume is disabled.
+
+Hardware volume is **on by default in daemon mode** and **off by default in TUI mode**. To override:
+
+```bash
+sendspin --hardware-volume true             # Enable for TUI
+sendspin daemon --hardware-volume false     # Disable for daemon
+```
 
 ### Adjusting Playback Delay
 

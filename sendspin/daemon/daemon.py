@@ -45,6 +45,7 @@ class DaemonArgs:
     listen_port: int = 8928
     use_mpris: bool = True
     preferred_format: SupportedAudioFormat | None = None
+    hardware_volume: bool = True
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -128,7 +129,10 @@ class SendspinDaemon:
             on_event=self._on_stream_event,
             on_format_change=self._handle_format_change,
             on_volume_change=self._on_volume_change,
+            enable_hardware_volume=self._args.hardware_volume,
         )
+        await self._audio_handler.read_initial_volume()
+        await self._audio_handler.start()
 
         try:
             if self._args.url is not None:
@@ -156,8 +160,10 @@ class SendspinDaemon:
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, external, etc.)."""
         assert self._settings is not None
+        assert self._audio_handler is not None
 
-        self._settings.update(player_volume=volume, player_muted=muted)
+        if not self._audio_handler.uses_hardware_volume:
+            self._settings.update(player_volume=volume, player_muted=muted)
 
     async def _run_client_initiated(self, static_delay_ms: float) -> None:
         """Run in client-initiated mode, connecting to a specific URL."""

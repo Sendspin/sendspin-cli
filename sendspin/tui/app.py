@@ -67,7 +67,6 @@ class AppState:
     player_volume: int = 100
     player_muted: bool = False
     group_id: str | None = None
-
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
         changed = False
@@ -205,6 +204,7 @@ class AppArgs:
     static_delay_ms: float | None = None
     use_mpris: bool = True
     preferred_format: SupportedAudioFormat | None = None
+    hardware_volume: bool = False
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -271,7 +271,9 @@ class SendspinApp:
                 on_event=self._on_stream_event,
                 on_format_change=self._handle_format_change,
                 on_volume_change=self._on_volume_change,
+                enable_hardware_volume=args.hardware_volume,
             )
+            await self._audio_handler.read_initial_volume()
 
             self._state.player_volume = self._audio_handler.volume
             self._state.player_muted = self._audio_handler.muted
@@ -279,7 +281,9 @@ class SendspinApp:
             # Detect supported audio formats for the output device
             supported_formats = detect_supported_audio_formats(args.audio_device.index)
             if args.preferred_format is not None:
-                supported_formats = [f for f in supported_formats if f != args.preferred_format]
+                supported_formats = [
+                    f for f in supported_formats if f != args.preferred_format
+                ]
                 supported_formats.insert(0, args.preferred_format)
 
             self._client = SendspinClient(
@@ -300,10 +304,13 @@ class SendspinApp:
             if MPRIS_AVAILABLE and args.use_mpris:
                 self._mpris = SendspinMpris(self._client)
 
+            await self._audio_handler.start()
+
             self._ui = SendspinUI(
                 delay,
                 player_volume=self._audio_handler.volume,
                 player_muted=self._audio_handler.muted,
+                uses_hardware_volume=self._audio_handler.uses_hardware_volume,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
@@ -399,8 +406,9 @@ class SendspinApp:
 
         self._state.player_volume = volume
         self._state.player_muted = muted
-        self._settings.update(player_volume=volume, player_muted=muted)
         self._ui.set_player_volume(volume, muted=muted)
+        if not self._audio_handler.uses_hardware_volume:
+            self._settings.update(player_volume=volume, player_muted=muted)
 
     async def _connect_cancellable(self, url: str) -> None:
         """Connect to server. Can be cancelled by _cancel_connect().
