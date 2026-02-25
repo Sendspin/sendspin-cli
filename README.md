@@ -250,6 +250,8 @@ The daemon runs in the background and logs status messages to stdout. It accepts
 sendspin daemon --name "Kitchen" --audio-device 2
 ```
 
+In daemon mode without `--url`, the client listens for incoming server connections and advertises itself via mDNS. The `--name` option (or `name` setting) is used as the friendly name in the mDNS advertisement, making it easy for servers to identify this client on the network.
+
 ### Hooks
 
 You can run external commands when audio streams start or stop. This is useful for controlling amplifiers, lighting, or other home automation:

@@ -186,6 +186,7 @@ class SendspinDaemon:
             client_id=self._args.client_id,
             on_connection=self._handle_server_connection,
             port=self._args.listen_port,
+            client_name=self._args.client_name,
         )
         await self._listener.start()
 
