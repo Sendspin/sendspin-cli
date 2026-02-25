@@ -71,6 +71,7 @@ class SendspinDaemon:
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
+        assert self._audio_handler is not None
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
@@ -91,8 +92,8 @@ class SendspinDaemon:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             static_delay_ms=static_delay_ms,
-            initial_volume=self._settings.player_volume,
-            initial_muted=self._settings.player_muted,
+            initial_volume=self._audio_handler.volume,
+            initial_muted=self._audio_handler.muted,
         )
 
     async def run(self) -> int:

@@ -60,6 +60,16 @@ class AudioStreamHandler:
         self._flac_decoder: FlacDecoder | None = None
         self._stream_active = False  # Track if stream is currently active
 
+    @property
+    def volume(self) -> int:
+        """Current volume level (0-100)."""
+        return self._volume
+
+    @property
+    def muted(self) -> bool:
+        """Current muted state."""
+        return self._muted
+
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
 

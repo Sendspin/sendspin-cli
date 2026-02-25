@@ -223,35 +223,14 @@ class SendspinApp:
             server = DiscoveredServer.from_url(label, args.url)
 
         self._state = AppState(selected_server=server)
-        # Detect supported audio formats for the output device
-        supported_formats = detect_supported_audio_formats(args.audio_device.index)
-        if args.preferred_format is not None:
-            supported_formats = [f for f in supported_formats if f != args.preferred_format]
-            supported_formats.insert(0, args.preferred_format)
 
-        self._client = SendspinClient(
-            client_id=args.client_id,
-            client_name=args.client_name,
-            roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
-            device_info=get_device_info(),
-            player_support=ClientHelloPlayerSupport(
-                supported_formats=supported_formats,
-                buffer_capacity=32_000_000,
-                supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
-            ),
-            static_delay_ms=0.0,  # Will be set after loading settings
-            initial_volume=args.settings.player_volume,
-            initial_muted=args.settings.player_muted,
-        )
-
+        self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: ClientSettings | None = None
+        self._settings = args.settings
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
         self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
-        if MPRIS_AVAILABLE and args.use_mpris:
-            self._mpris = SendspinMpris(self._client)
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -278,26 +257,12 @@ class SendspinApp:
             main_task.cancel()
 
         try:
-            self._settings = self._args.settings
-            self._state.player_volume = self._settings.player_volume
-            self._state.player_muted = self._settings.player_muted
-
             # CLI arg overrides settings for static delay
             delay = (
                 args.static_delay_ms
                 if args.static_delay_ms is not None
                 else self._settings.static_delay_ms
             )
-            self._client.set_static_delay_ms(delay)
-
-            self._ui = SendspinUI(
-                delay,
-                player_volume=self._settings.player_volume,
-                player_muted=self._settings.player_muted,
-            )
-            self._ui.start()
-            self._ui.add_event(f"Using client ID: {args.client_id}")
-            self._ui.add_event(f"Using audio device: {args.audio_device.name}")
 
             self._audio_handler = AudioStreamHandler(
                 audio_device=args.audio_device,
@@ -307,6 +272,42 @@ class SendspinApp:
                 on_format_change=self._handle_format_change,
                 on_volume_change=self._on_volume_change,
             )
+
+            self._state.player_volume = self._audio_handler.volume
+            self._state.player_muted = self._audio_handler.muted
+
+            # Detect supported audio formats for the output device
+            supported_formats = detect_supported_audio_formats(args.audio_device.index)
+            if args.preferred_format is not None:
+                supported_formats = [f for f in supported_formats if f != args.preferred_format]
+                supported_formats.insert(0, args.preferred_format)
+
+            self._client = SendspinClient(
+                client_id=args.client_id,
+                client_name=args.client_name,
+                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
+                device_info=get_device_info(),
+                player_support=ClientHelloPlayerSupport(
+                    supported_formats=supported_formats,
+                    buffer_capacity=32_000_000,
+                    supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
+                ),
+                static_delay_ms=delay,
+                initial_volume=self._audio_handler.volume,
+                initial_muted=self._audio_handler.muted,
+            )
+
+            if MPRIS_AVAILABLE and args.use_mpris:
+                self._mpris = SendspinMpris(self._client)
+
+            self._ui = SendspinUI(
+                delay,
+                player_volume=self._audio_handler.volume,
+                player_muted=self._audio_handler.muted,
+            )
+            self._ui.start()
+            self._ui.add_event(f"Using client ID: {args.client_id}")
+            self._ui.add_event(f"Using audio device: {args.audio_device.name}")
 
             await self._discovery.start()
 
@@ -385,16 +386,15 @@ class SendspinApp:
                 self._ui.stop()
             if self._audio_handler:
                 await self._audio_handler.cleanup()
+            assert self._client is not None
             await self._client.disconnect()
             await self._discovery.stop()
-            if self._settings:
-                await self._settings.flush()
+            await self._settings.flush()
 
         return 0
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, keyboard, external)."""
-        assert self._settings is not None
         assert self._ui is not None
 
         self._state.player_volume = volume
@@ -413,6 +413,7 @@ class SendspinApp:
                 server is already set in state; caller should continue to use it.
         """
         # Create a task for the connection so it can be cancelled
+        assert self._client is not None
         self._connect_task = asyncio.create_task(self._client.connect(url))
         try:
             await self._connect_task
@@ -453,6 +454,7 @@ class SendspinApp:
                 (used when caller already established the connection).
         """
         assert self._state.selected_server
+        assert self._client is not None
         assert self._audio_handler is not None
         assert self._ui is not None
         manager = self._connection_manager
@@ -479,8 +481,7 @@ class SendspinApp:
                     ui.set_connected(url)
                     manager.reset_backoff()
                     manager.set_last_attempted_url(url)
-                    if self._settings:
-                        self._settings.update(last_server_url=url)
+                    self._settings.update(last_server_url=url)
 
                 # Wait for disconnect
                 disconnect_event: asyncio.Event = asyncio.Event()
@@ -578,6 +579,7 @@ class SendspinApp:
             # will pick up the pending server and switch to it
             return
         # Force disconnect to trigger reconnect with new URL
+        assert self._client is not None
         await self._client.disconnect()
 
     def _handle_metadata_update(self, payload: ServerStatePayload) -> None:
@@ -666,6 +668,7 @@ class SendspinApp:
         hook = self._args.hook_start if event == "start" else self._args.hook_stop
         if not hook:
             return
+        assert self._client is not None
         server = self._state.selected_server
         server_info = self._client.server_info
         create_task(
