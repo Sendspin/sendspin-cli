@@ -401,6 +401,7 @@ class SendspinApp:
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, keyboard, external)."""
+        assert self._audio_handler is not None
         assert self._ui is not None
 
         self._state.player_volume = volume
