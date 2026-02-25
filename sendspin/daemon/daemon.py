@@ -63,7 +63,7 @@ class SendspinDaemon:
         self._client: SendspinClient | None = None
         self._listener: ClientListener | None = None
         self._audio_handler: AudioStreamHandler | None = None
-        self._settings: ClientSettings | None = None
+        self._settings = args.settings
         self._mpris: SendspinMpris | None = None
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
@@ -80,15 +80,6 @@ class SendspinDaemon:
             supported_formats = [f for f in supported_formats if f != self._args.preferred_format]
             supported_formats.insert(0, self._args.preferred_format)
 
-        # Use current volume state from settings so the initial handshake
-        # sends the correct volume instead of the default (100/unmuted).
-        if self._settings is not None:
-            initial_volume = self._settings.player_volume
-            initial_muted = self._settings.player_muted
-        else:
-            initial_volume = 100
-            initial_muted = False
-
         return SendspinClient(
             client_id=self._args.client_id,
             client_name=self._args.client_name,
@@ -100,8 +91,8 @@ class SendspinDaemon:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             static_delay_ms=static_delay_ms,
-            initial_volume=initial_volume,
-            initial_muted=initial_muted,
+            initial_volume=self._settings.player_volume,
+            initial_muted=self._settings.player_muted,
         )
 
     async def run(self) -> int:
@@ -121,8 +112,6 @@ class SendspinDaemon:
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGINT, signal_handler)
             loop.add_signal_handler(signal.SIGTERM, signal_handler)
-
-        self._settings = self._args.settings
 
         # CLI arg overrides settings for static delay
         delay = (
