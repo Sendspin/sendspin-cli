@@ -583,8 +583,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     if args.audio_format is None:
         args.audio_format = settings.audio_format
     if args.hardware_volume is None:
-        if settings.hardware_volume is not None:
-            args.hardware_volume = settings.hardware_volume
+        if settings.use_hardware_volume is not None:
+            args.hardware_volume = settings.use_hardware_volume
         else:
             args.hardware_volume = is_daemon and HW_VOLUME_AVAILABLE
     if args.hardware_volume and not HW_VOLUME_AVAILABLE:
