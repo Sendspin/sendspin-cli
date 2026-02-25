@@ -68,12 +68,9 @@ class AudioStreamHandler:
 
         self._hw_volume: HardwareVolumeController | None = None
         if enable_hardware_volume:
-            from sendspin.hardware_volume import AVAILABLE
+            from sendspin.hardware_volume import HardwareVolumeController as HWController
 
-            if AVAILABLE:
-                from sendspin.hardware_volume import HardwareVolumeController as HWController
-
-                self._hw_volume = HWController()
+            self._hw_volume = HWController()
 
     async def start(self) -> tuple[int, bool]:
         """Initialize volume state and start hardware monitoring if applicable.
@@ -85,12 +82,11 @@ class AudioStreamHandler:
             Effective (volume, muted) the rest of the system should use.
         """
         if self._hw_volume is not None:
-            current = await self._hw_volume.get_state()
+            volume, muted = await self._hw_volume.get_state()
             await self._hw_volume.start_monitoring(self._on_hw_volume_change)
-            if current is not None:
-                self._volume = 100
-                self._muted = False
-                return current
+            self._volume = 100
+            self._muted = False
+            return volume, muted
         return self._volume, self._muted
 
     @property

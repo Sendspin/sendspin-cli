@@ -255,15 +255,11 @@ class SendspinDaemon:
 
             try:
                 await client.attach_websocket(ws)
-                if (
-                    self._settings.player_volume is not None
-                    and self._settings.player_muted is not None
-                ):
-                    await self._client.send_player_state(
-                        state=PlayerStateType.SYNCHRONIZED,
-                        volume=self._settings.player_volume,
-                        muted=self._settings.player_muted,
-                    )
+                await self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._settings.player_volume,
+                    muted=self._settings.player_muted,
+                )
             except TimeoutError:
                 logger.warning("Handshake with server timed out")
                 await self._stop_mpris_and_audio()
@@ -303,15 +299,11 @@ class SendspinDaemon:
         while True:
             try:
                 await self._client.connect(url)
-                if (
-                    self._settings.player_volume is not None
-                    and self._settings.player_muted is not None
-                ):
-                    await self._client.send_player_state(
-                        state=PlayerStateType.SYNCHRONIZED,
-                        volume=self._settings.player_volume,
-                        muted=self._settings.player_muted,
-                    )
+                await self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._settings.player_volume,
+                    muted=self._settings.player_muted,
+                )
                 error_backoff = 1.0
 
                 # Wait for disconnect

@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
 import sys
+from collections.abc import Callable
 from typing import Any
-
 
 AVAILABLE = False
 if sys.platform.startswith("linux"):
@@ -25,73 +24,66 @@ VolumeChangeCallback = Callable[[int, bool], None]
 
 
 class HardwareVolumeController:
-    """Controls Linux system output volume through PulseAudio API."""
+    """Controls Linux system output volume through PulseAudio API.
+
+    Callers must verify that hardware volume is available (AVAILABLE is True)
+    before creating an instance. Methods assume PulseAudio is functional.
+    """
 
     def __init__(self) -> None:
         """Initialize the controller."""
         self._watch_task: asyncio.Task[None] | None = None
 
-    async def set_state(self, volume: int, *, muted: bool) -> bool:
+    async def set_state(self, volume: int, *, muted: bool) -> None:
         """Set hardware volume and mute state.
 
         Args:
             volume: Volume level in range 0-100.
             muted: Whether output should be muted.
 
-        Returns:
-            True if the update completed successfully, False otherwise.
+        Raises:
+            ValueError: If volume is out of range.
+            RuntimeError: If no PulseAudio sink is available.
         """
-        if not AVAILABLE:
-            return False
+        if not 0 <= volume <= 100:
+            raise ValueError(f"Volume must be 0-100, got {volume}")
 
-        clamped = max(0, min(100, volume))
-        try:
-            async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
-                sink = await self._get_default_sink(client)
-                if sink is None:
-                    logger.warning("No PulseAudio sink available for hardware volume")
-                    return False
+        async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
+            sink = await self._get_default_sink(client)
+            if sink is None:
+                raise RuntimeError("No PulseAudio sink available for hardware volume")
 
-                await client.volume_set_all_chans(sink, clamped / 100.0)
-                await client.mute(sink, muted)
-                return True
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to set PulseAudio hardware volume: %s", exc)
-            return False
+            await client.volume_set_all_chans(sink, volume / 100.0)
+            await client.mute(sink, muted)
 
-    async def get_state(self) -> tuple[int, bool] | None:
+    async def get_state(self) -> tuple[int, bool]:
         """Get current hardware volume and mute state.
 
         Returns:
-            ``(volume, muted)`` when available, otherwise ``None``.
+            ``(volume, muted)`` tuple.
+
+        Raises:
+            RuntimeError: If no PulseAudio sink is available or volume
+                cannot be read.
         """
-        if not AVAILABLE:
-            return None
+        async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
+            sink = await self._get_default_sink(client)
+            if sink is None:
+                raise RuntimeError("No PulseAudio sink available for hardware volume read")
 
-        try:
-            async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
-                sink = await self._get_default_sink(client)
-                if sink is None:
-                    logger.warning("No PulseAudio sink available for hardware volume read")
-                    return None
+            volume_obj = sink.volume
+            volume_flat = volume_obj.value_flat
+            if volume_flat is None:
+                # calculate flat volume by averaging all channels' volume levels
+                if values := volume_obj.values:
+                    volume_flat = sum(values) / len(values)
 
-                volume_obj = sink.volume
-                volume_flat = volume_obj.value_flat
-                if volume_flat is None:
-                    # calculate flat volume by averaging all channels' volume levels
-                    if values := volume_obj.values:
-                        volume_flat = sum(values) / len(values)
+            if volume_flat is None:
+                raise RuntimeError("Failed to read sink volume from PulseAudio")
 
-                if volume_flat is None:
-                    logger.warning("Failed to read sink volume from PulseAudio")
-                    return None
-
-                volume = max(0, min(100, int(round(float(volume_flat) * 100))))
-                muted = bool(sink.mute)
-                return volume, muted
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to read PulseAudio hardware volume: %s", exc)
-            return None
+            volume = max(0, min(100, int(round(float(volume_flat) * 100))))
+            muted = bool(sink.mute)
+            return volume, muted
 
     async def _get_default_sink(self, client: pulsectl_asyncio.PulseAsync) -> Any | None:
         """Return default sink if available, otherwise first sink."""
@@ -108,7 +100,7 @@ class HardwareVolumeController:
         Calls *callback(volume, muted)* whenever the hardware volume or mute
         state changes compared to the last observed value.
         """
-        if not AVAILABLE or self._watch_task is not None:
+        if self._watch_task is not None:
             return
         self._watch_task = asyncio.get_running_loop().create_task(self._watch_events(callback))
 
@@ -123,12 +115,18 @@ class HardwareVolumeController:
     async def _watch_events(self, callback: VolumeChangeCallback) -> None:
         """Subscribe to PulseAudio sink events and invoke callback on change."""
         while True:
-            previous_state = await self.get_state()
+            try:
+                previous_state = await self.get_state()
+            except RuntimeError:
+                logger.debug("Failed to read initial hardware volume, retrying...")
+                await asyncio.sleep(2)
+                continue
             try:
                 async with pulsectl_asyncio.PulseAsync("sendspin-cli-monitor") as pulse:
                     async for _event in pulse.subscribe_events("sink"):
-                        current = await self.get_state()
-                        if current is None:
+                        try:
+                            current = await self.get_state()
+                        except RuntimeError:
                             continue
                         if previous_state == current:
                             continue

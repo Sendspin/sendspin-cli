@@ -155,7 +155,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
 | `use_mpris` | boolean | TUI/daemon | Enable MPRIS integration (default: true) |
-| `hardware_volume` | boolean | TUI/daemon | Control hardware output volume by default; use `--disable-hardware-volume` to use software volume instead |
+| `hardware_volume` | boolean | TUI/daemon | Control hardware output volume (`--hardware-volume true/false`); syncs player volume to current hardware volume on startup |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
@@ -230,16 +230,16 @@ The specified format is validated against the audio device on startup. If the de
 
 ### System Volume Control
 
-Sendspin controls your system output volume by default. To disable hardware/system volume control and use software player volume instead:
+On Linux with PulseAudio/PipeWire, Sendspin controls your system output volume by default. To disable hardware volume control and use software player volume instead:
 
 ```bash
-sendspin --disable-hardware-volume
+sendspin --hardware-volume false
 ```
 
 Daemon mode supports the same option:
 
 ```bash
-sendspin daemon --disable-hardware-volume
+sendspin daemon --hardware-volume false
 ```
 
 ### Adjusting Playback Delay
