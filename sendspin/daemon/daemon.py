@@ -132,7 +132,7 @@ class SendspinDaemon:
             use_hardware_volume=self._args.use_hardware_volume,
         )
         await self._audio_handler.read_initial_volume()
-        await self._audio_handler.start()
+        await self._audio_handler.start_volume_monitor()
 
         try:
             if self._args.url is not None:

@@ -92,7 +92,7 @@ class AudioStreamHandler:
 
         self._volume, self._muted = await self._hw_volume.get_state()
 
-    async def start(self) -> None:
+    async def start_volume_monitor(self) -> None:
         """Start hardware volume monitoring if applicable."""
         if self._hw_volume is not None:
             await self._hw_volume.start_monitoring(self._on_hw_volume_change)
@@ -198,7 +198,7 @@ class AudioStreamHandler:
             else:
                 self._flac_decoder = None
 
-            if self._hw_volume is not None:
+            if self._hw_volume is None:
                 self.audio_player.set_volume(self._volume, muted=self._muted)
 
             if self._on_format_change is not None:

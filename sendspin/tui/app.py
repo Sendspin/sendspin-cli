@@ -303,7 +303,7 @@ class SendspinApp:
             if MPRIS_AVAILABLE and args.use_mpris:
                 self._mpris = SendspinMpris(self._client)
 
-            await self._audio_handler.start()
+            await self._audio_handler.start_volume_monitor()
 
             self._ui = SendspinUI(
                 delay,
