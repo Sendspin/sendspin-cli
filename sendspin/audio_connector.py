@@ -42,7 +42,7 @@ class AudioStreamHandler:
         on_event: Callable[[str], None] | None = None,
         on_format_change: Callable[[str | None, int, int, int], None] | None = None,
         on_volume_change: Callable[[int, bool], None] | None = None,
-        enable_hardware_volume: bool = False,
+        use_hardware_volume: bool = False,
     ) -> None:
         """Initialize the audio stream handler.
 
@@ -53,7 +53,7 @@ class AudioStreamHandler:
             on_event: Callback for stream lifecycle events ("start" or "stop").
             on_format_change: Callback for format changes (codec, sample_rate, bit_depth, channels).
             on_volume_change: Callback for volume changes.
-            enable_hardware_volume: Whether to use hardware volume control if available.
+            use_hardware_volume: Whether to use hardware volume control if available.
         """
         self._audio_device = audio_device
         self._volume = volume
@@ -68,7 +68,7 @@ class AudioStreamHandler:
         self._stream_active = False  # Track if stream is currently active
 
         self._hw_volume: HardwareVolumeController | None = None
-        if enable_hardware_volume:
+        if use_hardware_volume:
             self._hw_volume = HardwareVolumeController()
 
     @property
@@ -98,7 +98,7 @@ class AudioStreamHandler:
             await self._hw_volume.start_monitoring(self._on_hw_volume_change)
 
     @property
-    def uses_hardware_volume(self) -> bool:
+    def use_hardware_volume(self) -> bool:
         """Whether this handler is using hardware volume control."""
         return self._hw_volume is not None
 

@@ -205,7 +205,7 @@ class AppArgs:
     static_delay_ms: float | None = None
     use_mpris: bool = True
     preferred_format: SupportedAudioFormat | None = None
-    hardware_volume: bool = False
+    use_hardware_volume: bool = False
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -272,7 +272,7 @@ class SendspinApp:
                 on_event=self._on_stream_event,
                 on_format_change=self._handle_format_change,
                 on_volume_change=self._on_volume_change,
-                enable_hardware_volume=args.hardware_volume,
+                use_hardware_volume=args.use_hardware_volume,
             )
             await self._audio_handler.read_initial_volume()
 
@@ -309,7 +309,7 @@ class SendspinApp:
                 delay,
                 player_volume=self._audio_handler.volume,
                 player_muted=self._audio_handler.muted,
-                uses_hardware_volume=self._audio_handler.uses_hardware_volume,
+                use_hardware_volume=self._audio_handler.use_hardware_volume,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
@@ -406,7 +406,7 @@ class SendspinApp:
         self._state.player_volume = volume
         self._state.player_muted = muted
         self._ui.set_player_volume(volume, muted=muted)
-        if not self._audio_handler.uses_hardware_volume:
+        if not self._audio_handler.use_hardware_volume:
             self._settings.update(player_volume=volume, player_muted=muted)
 
     async def _connect_cancellable(self, url: str) -> None:

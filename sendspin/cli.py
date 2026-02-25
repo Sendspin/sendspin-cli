@@ -500,7 +500,7 @@ async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -
         listen_port=args.listen_port,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
-        hardware_volume=args.hardware_volume,
+        use_hardware_volume=args.hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )
@@ -618,7 +618,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
         preferred_format=_resolve_audio_format(args.audio_format, audio_device),
-        hardware_volume=args.hardware_volume,
+        use_hardware_volume=args.hardware_volume,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
     )

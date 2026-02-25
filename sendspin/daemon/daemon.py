@@ -45,7 +45,7 @@ class DaemonArgs:
     listen_port: int = 8928
     use_mpris: bool = True
     preferred_format: SupportedAudioFormat | None = None
-    hardware_volume: bool = True
+    use_hardware_volume: bool = True
     hook_start: str | None = None
     hook_stop: str | None = None
 
@@ -129,7 +129,7 @@ class SendspinDaemon:
             on_event=self._on_stream_event,
             on_format_change=self._handle_format_change,
             on_volume_change=self._on_volume_change,
-            enable_hardware_volume=self._args.hardware_volume,
+            use_hardware_volume=self._args.use_hardware_volume,
         )
         await self._audio_handler.read_initial_volume()
         await self._audio_handler.start()
@@ -162,7 +162,7 @@ class SendspinDaemon:
         assert self._settings is not None
         assert self._audio_handler is not None
 
-        if not self._audio_handler.uses_hardware_volume:
+        if not self._audio_handler.use_hardware_volume:
             self._settings.update(player_volume=volume, player_muted=muted)
 
     async def _run_client_initiated(self, static_delay_ms: float) -> None:
