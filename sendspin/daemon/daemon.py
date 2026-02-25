@@ -199,6 +199,7 @@ class SendspinDaemon:
         logger.info("Server connected")
         assert self._audio_handler is not None
         assert self._connection_lock is not None
+        assert self._settings is not None
 
         # Lock ensures we wait for any in-progress handshake to complete
         # before disconnecting the previous server
@@ -229,6 +230,11 @@ class SendspinDaemon:
 
             try:
                 await client.attach_websocket(ws)
+                await self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._settings.player_volume,
+                    muted=self._settings.player_muted,
+                )
             except TimeoutError:
                 logger.warning("Handshake with server timed out")
                 await self._stop_mpris_and_audio()
@@ -261,12 +267,18 @@ class SendspinDaemon:
         """Run the connection loop with automatic reconnection (client-initiated mode)."""
         assert self._client is not None
         assert self._audio_handler is not None
+        assert self._settings is not None
         error_backoff = 1.0
         max_backoff = 300.0
 
         while True:
             try:
                 await self._client.connect(url)
+                await self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._settings.player_volume,
+                    muted=self._settings.player_muted,
+                )
                 error_backoff = 1.0
 
                 # Wait for disconnect

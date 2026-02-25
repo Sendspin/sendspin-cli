@@ -390,6 +390,14 @@ class SendspinApp:
 
         return 0
 
+    async def _send_player_volume(self) -> None:
+        """Send current player volume/mute state to the server."""
+        await self._client.send_player_state(
+            state=PlayerStateType.SYNCHRONIZED,
+            volume=self._state.player_volume,
+            muted=self._state.player_muted,
+        )
+
     async def _connect_cancellable(self, url: str) -> None:
         """Connect to server. Can be cancelled by _cancel_connect().
 
@@ -455,6 +463,7 @@ class SendspinApp:
         while True:
             try:
                 if skip_connect:
+                    await self._send_player_volume()
                     skip_connect = False
                 else:
                     try:
@@ -465,6 +474,7 @@ class SendspinApp:
                         continue
                     ui.add_event(f"Connected to {url}")
                     ui.set_connected(url)
+                    await self._send_player_volume()
                     manager.reset_backoff()
                     manager.set_last_attempted_url(url)
                     if self._settings:
