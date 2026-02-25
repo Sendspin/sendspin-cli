@@ -236,7 +236,6 @@ class SendspinDaemon:
 
             try:
                 await client.attach_websocket(ws)
-                self._audio_handler.send_player_volume()
             except TimeoutError:
                 logger.warning("Handshake with server timed out")
                 await self._stop_mpris_and_audio()
@@ -276,7 +275,6 @@ class SendspinDaemon:
         while True:
             try:
                 await self._client.connect(url)
-                self._audio_handler.send_player_volume()
                 error_backoff = 1.0
 
                 # Wait for disconnect

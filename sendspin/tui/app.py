@@ -467,7 +467,6 @@ class SendspinApp:
         while True:
             try:
                 if skip_connect:
-                    self._audio_handler.send_player_volume()
                     skip_connect = False
                 else:
                     try:
@@ -478,7 +477,6 @@ class SendspinApp:
                         continue
                     ui.add_event(f"Connected to {url}")
                     ui.set_connected(url)
-                    self._audio_handler.send_player_volume()
                     manager.reset_backoff()
                     manager.set_last_attempted_url(url)
                     if self._settings:
