@@ -8,10 +8,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiosendspin.models.core import StreamStartMessage
-from aiosendspin.models.types import AudioCodec, Roles
+from aiosendspin.models.types import AudioCodec, PlayerStateType, Roles
 
 from sendspin.audio import AudioDevice, AudioPlayer
 from sendspin.decoder import FlacDecoder
+from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat, SendspinClient
@@ -35,6 +36,7 @@ class AudioStreamHandler:
         muted: bool = False,
         on_event: Callable[[str], None] | None = None,
         on_format_change: Callable[[str | None, int, int, int], None] | None = None,
+        on_volume_change: Callable[[int, bool], None] | None = None,
     ) -> None:
         """Initialize the audio stream handler.
 
@@ -44,12 +46,14 @@ class AudioStreamHandler:
             muted: Initial muted state.
             on_event: Callback for stream lifecycle events ("start" or "stop").
             on_format_change: Callback for format changes (codec, sample_rate, bit_depth, channels).
+            on_volume_change: Callback for external volume changes.
         """
         self._audio_device = audio_device
         self._volume = volume
         self._muted = muted
         self._on_event = on_event
         self._on_format_change = on_format_change
+        self._on_volume_change = on_volume_change
         self._client: SendspinClient | None = None
         self.audio_player: AudioPlayer | None = None
         self._current_format: AudioFormat | None = None
@@ -59,7 +63,8 @@ class AudioStreamHandler:
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
 
-        Updates the cached values and applies to the audio player if active.
+        Updates the cached values, applies to the audio player if active,
+        notifies the server, and fires the on_volume_change callback.
 
         Args:
             volume: Volume level (0-100).
@@ -69,6 +74,20 @@ class AudioStreamHandler:
         self._muted = muted
         if self.audio_player is not None:
             self.audio_player.set_volume(volume, muted=muted)
+        self.send_player_volume()
+        if self._on_volume_change is not None:
+            self._on_volume_change(volume, muted)
+
+    def send_player_volume(self) -> None:
+        """Send current player volume/mute state to the server."""
+        if self._client is not None and self._client.connected:
+            create_task(
+                self._client.send_player_state(
+                    state=PlayerStateType.SYNCHRONIZED,
+                    volume=self._volume,
+                    muted=self._muted,
+                )
+            )
 
     def attach_client(self, client: SendspinClient) -> list[Callable[[], None]]:
         """Attach to a SendspinClient and register listeners.

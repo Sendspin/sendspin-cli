@@ -30,7 +30,6 @@ from aiosendspin.models.types import (
     MediaCommand,
     PlaybackStateType,
     PlayerCommand,
-    PlayerStateType,
     Roles,
     UndefinedField,
 )
@@ -304,6 +303,7 @@ class SendspinApp:
                 muted=self._settings.player_muted,
                 on_event=self._on_stream_event,
                 on_format_change=self._handle_format_change,
+                on_volume_change=self._on_volume_change,
             )
 
             await self._discovery.start()
@@ -390,13 +390,15 @@ class SendspinApp:
 
         return 0
 
-    async def _send_player_volume(self) -> None:
-        """Send current player volume/mute state to the server."""
-        await self._client.send_player_state(
-            state=PlayerStateType.SYNCHRONIZED,
-            volume=self._state.player_volume,
-            muted=self._state.player_muted,
-        )
+    def _on_volume_change(self, volume: int, muted: bool) -> None:
+        """Handle volume changes from any source (server command, keyboard, external)."""
+        assert self._settings is not None
+        assert self._ui is not None
+
+        self._state.player_volume = volume
+        self._state.player_muted = muted
+        self._settings.update(player_volume=volume, player_muted=muted)
+        self._ui.set_player_volume(volume, muted=muted)
 
     async def _connect_cancellable(self, url: str) -> None:
         """Connect to server. Can be cancelled by _cancel_connect().
@@ -463,7 +465,7 @@ class SendspinApp:
         while True:
             try:
                 if skip_connect:
-                    await self._send_player_volume()
+                    self._audio_handler.send_player_volume()
                     skip_connect = False
                 else:
                     try:
@@ -474,7 +476,7 @@ class SendspinApp:
                         continue
                     ui.add_event(f"Connected to {url}")
                     ui.set_connected(url)
-                    await self._send_player_volume()
+                    self._audio_handler.send_player_volume()
                     manager.reset_backoff()
                     manager.set_last_attempted_url(url)
                     if self._settings:
@@ -639,34 +641,18 @@ class SendspinApp:
         if payload.player is None:
             return
 
-        assert self._settings is not None
         assert self._audio_handler is not None
         assert self._ui is not None
-        state = self._state
-        ui = self._ui
         player_cmd: PlayerCommandPayload = payload.player
 
         if player_cmd.command == PlayerCommand.VOLUME and player_cmd.volume is not None:
-            state.player_volume = player_cmd.volume
-            self._settings.update(player_volume=player_cmd.volume)
-            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
-            ui.add_event(f"Server set player volume: {player_cmd.volume}%")
+            self._audio_handler.set_volume(player_cmd.volume, muted=self._state.player_muted)
+            self._ui.add_event(f"Server set player volume: {player_cmd.volume}%")
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
-            state.player_muted = player_cmd.mute
-            self._settings.update(player_muted=player_cmd.mute)
-            self._audio_handler.set_volume(state.player_volume, muted=state.player_muted)
-            ui.set_player_volume(state.player_volume, muted=state.player_muted)
-            ui.add_event("Server muted player" if player_cmd.mute else "Server unmuted player")
-
-        # Send state update back to server per spec
-        create_task(
-            self._client.send_player_state(
-                state=PlayerStateType.SYNCHRONIZED,
-                volume=state.player_volume,
-                muted=state.player_muted,
+            self._audio_handler.set_volume(self._state.player_volume, muted=player_cmd.mute)
+            self._ui.add_event(
+                "Server muted player" if player_cmd.mute else "Server unmuted player"
             )
-        )
 
     def _handle_format_change(
         self, codec: str | None, sample_rate: int, bit_depth: int, channels: int

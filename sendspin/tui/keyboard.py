@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import readchar
-from aiosendspin.models.types import MediaCommand, PlaybackStateType, PlayerStateType
+from aiosendspin.models.types import MediaCommand, PlaybackStateType
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
@@ -53,32 +53,17 @@ class CommandHandler:
         else:
             await self.send_media_command(MediaCommand.PLAY)
 
-    async def change_player_volume(self, delta: int) -> None:
+    def change_player_volume(self, delta: int) -> None:
         """Adjust player (local) volume by delta."""
         target = max(0, min(100, self._state.player_volume + delta))
-        self._state.player_volume = target
-        self._settings.update(player_volume=target)
-        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
-        self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
-        await self._client.send_player_state(
-            state=PlayerStateType.SYNCHRONIZED,
-            volume=self._state.player_volume,
-            muted=self._state.player_muted,
-        )
+        self._audio_handler.set_volume(target, muted=self._state.player_muted)
         self._ui.add_event(f"Player volume: {target}%")
 
-    async def toggle_player_mute(self) -> None:
+    def toggle_player_mute(self) -> None:
         """Toggle player (local) mute state."""
-        self._state.player_muted = not self._state.player_muted
-        self._settings.update(player_muted=self._state.player_muted)
-        self._audio_handler.set_volume(self._state.player_volume, muted=self._state.player_muted)
-        self._ui.set_player_volume(self._state.player_volume, muted=self._state.player_muted)
-        await self._client.send_player_state(
-            state=PlayerStateType.SYNCHRONIZED,
-            volume=self._state.player_volume,
-            muted=self._state.player_muted,
-        )
-        self._ui.add_event("Player muted" if self._state.player_muted else "Player unmuted")
+        muted = not self._state.player_muted
+        self._audio_handler.set_volume(self._state.player_volume, muted=muted)
+        self._ui.add_event("Player muted" if muted else "Player unmuted")
 
     async def adjust_delay(self, delta: float) -> None:
         """Adjust static delay by delta milliseconds."""
@@ -115,9 +100,9 @@ async def keyboard_loop(
     """
     handler = CommandHandler(client, state, audio_handler, ui, settings)
 
-    # Key dispatch table: key -> (highlight_name | None, async action)
-    # For keys that need case-insensitive matching, use lowercase
-    shortcuts: dict[str, tuple[str | None, Callable[[], Awaitable[None]]]] = {
+    # Key dispatch table: key -> (highlight_name | None, action)
+    # Actions can be sync or async. For keys that need case-insensitive matching, use lowercase.
+    shortcuts: dict[str, tuple[str | None, Callable[[], Awaitable[None] | None]]] = {
         # Letter keys
         " ": ("space", handler.toggle_play_pause),
         "m": ("mute", handler.toggle_player_mute),
@@ -190,7 +175,9 @@ async def keyboard_loop(
             highlight_name, action_handler = action
             if highlight_name and ui:
                 ui.highlight_shortcut(highlight_name)
-            await action_handler()
+            result = action_handler()
+            if result is not None:
+                await result
             continue
 
         # Ignore unhandled escape sequences
