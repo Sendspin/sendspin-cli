@@ -472,8 +472,6 @@ class SendspinUI:
         content.add_row(info)
         for _ in range(max(0, min_info_rows - info_rows)):
             content.add_row("")
-        content.add_row("")  # Spacing before shortcuts
-
         # Shortcuts
         shortcut_group = Text()
         shortcut_group.append("g", style=self._shortcut_style("switch"))
