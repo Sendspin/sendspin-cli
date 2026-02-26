@@ -589,7 +589,7 @@ class SendspinApp:
 
         self._ui.hide_server_selector()
         # Skip reconnection if already connected to this server
-        if server == self._state.selected_server:
+        if self._state.selected_server and server.url == self._state.selected_server.url:
             return
 
         self._connection_manager.set_pending_server(server)
