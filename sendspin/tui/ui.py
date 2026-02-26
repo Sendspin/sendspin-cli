@@ -475,14 +475,12 @@ class SendspinUI:
         content.add_row("")  # Spacing before shortcuts
 
         # Shortcuts
-        shortcut_group = Text()
-        shortcut_group.append("g", style=self._shortcut_style("switch"))
-        shortcut_group.append(" change group", style="dim")
-        content.add_row(shortcut_group)
-        shortcut_server = Text()
-        shortcut_server.append("s", style=self._shortcut_style("server"))
-        shortcut_server.append(" change server", style="dim")
-        content.add_row(shortcut_server)
+        shortcuts = Text()
+        shortcuts.append("g", style=self._shortcut_style("switch"))
+        shortcuts.append(" change group  ", style="dim")
+        shortcuts.append("s", style=self._shortcut_style("server"))
+        shortcuts.append(" change server", style="dim")
+        content.add_row(shortcuts)
 
         return Panel(content, title="Server", border_style="yellow", expand=expand)
 
