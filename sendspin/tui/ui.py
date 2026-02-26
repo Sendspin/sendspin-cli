@@ -190,9 +190,7 @@ class SendspinUI:
         shortcuts.append("<space>", style=self._shortcut_style("space"))
         shortcuts.append(f" {space_label}  ", style="dim")
         shortcuts.append("→", style=self._shortcut_style("next"))
-        shortcuts.append(" next  ", style="dim")
-        shortcuts.append("g", style=self._shortcut_style("switch"))
-        shortcuts.append(" change group", style="dim")
+        shortcuts.append(" next", style="dim")
         content.add_row(shortcuts)
 
         return Panel(content, title="Now Playing", border_style="blue", expand=expand)
@@ -398,7 +396,7 @@ class SendspinUI:
         shortcuts.append(" shuffle", style="dim")
         content.add_row(shortcuts)
 
-        return Panel(content, title="Playback", border_style="magenta", expand=expand)
+        return Panel(content, title="Playback", border_style="yellow", expand=expand)
 
     def _build_stream_quality_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the stream quality panel."""
@@ -442,7 +440,7 @@ class SendspinUI:
         shortcuts.append(" adjust delay", style="dim")
         content.add_row(shortcuts)
 
-        return Panel(content, title="Stream Quality", border_style="yellow", expand=expand)
+        return Panel(content, title="Stream", border_style="yellow", expand=expand)
 
     def _build_server_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the server panel."""
@@ -452,16 +450,26 @@ class SendspinUI:
 
         if self._state.connected and self._state.server_url:
             url = self._state.server_url
-            host = url.split("://", 1)[-1].split("/", 1)[0]
-            host = host.strip("[]")
+            after_scheme = url.split("://", 1)[-1]
+            host_port, _, path = after_scheme.partition("/")
+            host_port = host_port.strip("[]")
+            # Split host and port
+            if ":" in host_port:
+                host, _, port = host_port.rpartition(":")
+            else:
+                host = host_port
+                port = ""
             info.add_row("Status:", Text("Connected", style="green bold"))
             info.add_row("Host:", Text(host, style="cyan"))
+            if port:
+                info.add_row("Port:", Text(port, style="cyan"))
+            info.add_row("Path:", Text(f"/{path}" if path else "/", style="cyan"))
             if self._state.group_name:
                 info.add_row("Group:", Text(self._state.group_name, style="cyan"))
         else:
             info.add_row("Status:", Text("Disconnected", style="red bold"))
             info.add_row("Host:", Text(self._state.status_message, style="yellow"))
-        info_rows = 2 + (1 if self._state.group_name else 0)
+        info_rows = 4 + (1 if self._state.group_name else 0)
 
         content = Table.grid()
         content.add_column()
@@ -473,7 +481,9 @@ class SendspinUI:
         # Shortcuts
         shortcuts = Text()
         shortcuts.append("s", style=self._shortcut_style("server"))
-        shortcuts.append(" change server", style="dim")
+        shortcuts.append(" change server  ", style="dim")
+        shortcuts.append("g", style=self._shortcut_style("switch"))
+        shortcuts.append(" change group", style="dim")
         content.add_row(shortcuts)
 
         return Panel(content, title="Server", border_style="yellow", expand=expand)
