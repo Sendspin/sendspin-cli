@@ -208,9 +208,13 @@ class SendspinUI:
             and duration_ms > 0
         ):
             elapsed_ms = (time.monotonic() - self._state.progress_updated_at) * 1000
-            progress_ms = min(duration_ms, progress_ms + int(elapsed_ms))
+            progress_ms = progress_ms + int(elapsed_ms)
 
-        percentage = min(100, progress_ms / duration_ms * 100) if duration_ms > 0 else 0
+        # Clamp progress to valid range (spec requirement)
+        if duration_ms > 0:
+            progress_ms = max(0, min(progress_ms, duration_ms))
+
+        percentage = progress_ms / duration_ms * 100 if duration_ms > 0 else 0
 
         # Time text (fixed width)
         time_str = f"{self._format_time(progress_ms)} / {self._format_time(duration_ms)}"
