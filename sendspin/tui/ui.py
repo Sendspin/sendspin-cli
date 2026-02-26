@@ -208,7 +208,7 @@ class SendspinUI:
             and duration_ms > 0
         ):
             elapsed_ms = (time.monotonic() - self._state.progress_updated_at) * 1000
-            progress_ms = progress_ms + int(elapsed_ms)
+            progress_ms += int(elapsed_ms)
 
         # Clamp progress to valid range (spec requirement)
         if duration_ms > 0:
