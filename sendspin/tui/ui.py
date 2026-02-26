@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from typing import Self
 
@@ -449,27 +450,22 @@ class SendspinUI:
         info.add_column()
 
         if self._state.connected and self._state.server_url:
-            url = self._state.server_url
-            after_scheme = url.split("://", 1)[-1]
-            host_port, _, path = after_scheme.partition("/")
-            host_port = host_port.strip("[]")
-            # Split host and port
-            if ":" in host_port:
-                host, _, port = host_port.rpartition(":")
-            else:
-                host = host_port
-                port = ""
+            parsed = urlparse(self._state.server_url)
+            host = parsed.hostname or ""
+            port = str(parsed.port) if parsed.port else ""
+            path = parsed.path or "/"
             info.add_row("Status:", Text("Connected", style="green bold"))
             info.add_row("Host:", Text(host, style="cyan"))
             if port:
                 info.add_row("Port:", Text(port, style="cyan"))
-            info.add_row("Path:", Text(f"/{path}" if path else "/", style="cyan"))
+            info.add_row("Path:", Text(path, style="cyan"))
             if self._state.group_name:
                 info.add_row("Group:", Text(self._state.group_name, style="cyan"))
+            info_rows = 3 + (1 if port else 0) + (1 if self._state.group_name else 0)
         else:
             info.add_row("Status:", Text("Disconnected", style="red bold"))
             info.add_row("Host:", Text(self._state.status_message, style="yellow"))
-        info_rows = 4 + (1 if self._state.group_name else 0)
+            info_rows = 2
 
         content = Table.grid()
         content.add_column()
