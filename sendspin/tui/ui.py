@@ -246,22 +246,31 @@ class SendspinUI:
         pvol_text = f"{pvol}%" + (" [MUTED]" if self._state.player_muted else "")
         info.add_row("Player:", Text(pvol_text, style=pvol_style))
 
-        # Vertical container for info + shortcuts (5 lines total)
+        # Vertical container for info + shortcuts
         content = Table.grid()
         content.add_column()
         content.add_row(info)
-        content.add_row("")  # Line 3: spacing
-        content.add_row("")  # Line 4: spacing
+        content.add_row("")  # Spacing
 
-        # Line 5: volume shortcuts
-        shortcuts = Text()
-        shortcuts.append("↑", style=self._shortcut_style("up"))
-        shortcuts.append(" up  ", style="dim")
-        shortcuts.append("↓", style=self._shortcut_style("down"))
-        shortcuts.append(" down  ", style="dim")
-        shortcuts.append("m", style=self._shortcut_style("mute"))
-        shortcuts.append(" mute", style="dim")
-        content.add_row(shortcuts)
+        # Player volume shortcuts
+        player_sc = Text()
+        player_sc.append("↑", style=self._shortcut_style("up"))
+        player_sc.append("/", style="dim")
+        player_sc.append("↓", style=self._shortcut_style("down"))
+        player_sc.append(" player  ", style="dim")
+        player_sc.append("m", style=self._shortcut_style("mute"))
+        player_sc.append(" mute", style="dim")
+        content.add_row(player_sc)
+
+        # Group volume shortcuts
+        group_sc = Text()
+        group_sc.append("[", style=self._shortcut_style("group-down"))
+        group_sc.append("/", style="dim")
+        group_sc.append("]", style=self._shortcut_style("group-up"))
+        group_sc.append(" group  ", style="dim")
+        group_sc.append("M", style=self._shortcut_style("group-mute"))
+        group_sc.append(" mute", style="dim")
+        content.add_row(group_sc)
 
         return Panel(content, title="Volume", border_style="magenta", expand=expand)
 

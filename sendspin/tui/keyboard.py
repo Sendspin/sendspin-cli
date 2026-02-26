@@ -65,6 +65,23 @@ class CommandHandler:
         self._audio_handler.set_volume(self._state.player_volume, muted=muted)
         self._ui.add_event("Player muted" if muted else "Player unmuted")
 
+    async def change_group_volume(self, delta: int) -> None:
+        """Adjust group volume by delta."""
+        if MediaCommand.VOLUME not in self._state.supported_commands:
+            self._ui.add_event("Server does not support volume control")
+            return
+        current = self._state.volume or 0
+        target = max(0, min(100, current + delta))
+        await self._client.send_group_command(MediaCommand.VOLUME, volume=target)
+
+    async def toggle_group_mute(self) -> None:
+        """Toggle group mute state."""
+        if MediaCommand.MUTE not in self._state.supported_commands:
+            self._ui.add_event("Server does not support mute control")
+            return
+        muted = not self._state.muted
+        await self._client.send_group_command(MediaCommand.MUTE, mute=muted)
+
     async def cycle_repeat(self) -> None:
         """Cycle repeat mode: OFF -> ALL -> ONE -> OFF."""
         _REPEAT_CYCLE: dict[RepeatMode | None, MediaCommand] = {
@@ -130,6 +147,8 @@ async def keyboard_loop(
         # Delay adjustment
         ",": ("delay-", lambda: handler.adjust_delay(-10)),
         ".": ("delay+", lambda: handler.adjust_delay(10)),
+        # Group volume/mute (uppercase M matched before lowercase fallback)
+        "M": ("group-mute", handler.toggle_group_mute),
         # Arrow keys
         readchar.key.LEFT: (
             "prev",
@@ -141,6 +160,9 @@ async def keyboard_loop(
         ),
         readchar.key.UP: ("up", lambda: handler.change_player_volume(5)),
         readchar.key.DOWN: ("down", lambda: handler.change_player_volume(-5)),
+        # Group volume
+        "]": ("group-up", lambda: handler.change_group_volume(5)),
+        "[": ("group-down", lambda: handler.change_group_volume(-5)),
     }
 
     # Interactive mode with single keypress input using readchar
