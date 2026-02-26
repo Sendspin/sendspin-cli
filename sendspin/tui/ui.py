@@ -477,9 +477,9 @@ class SendspinUI:
         # Shortcuts
         shortcuts = Text()
         shortcuts.append("g", style=self._shortcut_style("switch"))
-        shortcuts.append(" change group  ", style="dim")
+        shortcuts.append("\u00a0change\u00a0group  ", style="dim")
         shortcuts.append("s", style=self._shortcut_style("server"))
-        shortcuts.append(" change server", style="dim")
+        shortcuts.append("\u00a0change\u00a0server", style="dim")
         content.add_row(shortcuts)
 
         return Panel(content, title="Server", border_style="yellow", expand=expand)
