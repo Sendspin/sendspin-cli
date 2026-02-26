@@ -133,8 +133,10 @@ class SendspinUI:
 
     def _build_now_playing_panel(self, *, expand: bool = False) -> Panel:
         """Build the now playing panel."""
-        # Show prompt when nothing is playing (5 lines total)
-        if not self._state.title:
+        is_active = self._state.playback_state is not None or self._state.title is not None
+
+        # Show prompt when nothing is playing
+        if not is_active:
             content = Table.grid()
             content.add_column()
             content.add_row("")
@@ -157,9 +159,19 @@ class SendspinUI:
         info.add_column(style="dim", width=8)
         info.add_column()
 
-        info.add_row("Title:", Text(self._state.title, style="bold white"))
-        info.add_row("Artist:", Text(self._state.artist or "Unknown artist", style="cyan"))
-        info.add_row("Album:", Text(self._state.album or "Unknown album", style="dim"))
+        if self._state.title:
+            info.add_row("Title:", Text(self._state.title, style="bold white"))
+            info.add_row("Artist:", Text(self._state.artist or "Unknown artist", style="cyan"))
+            info.add_row("Album:", Text(self._state.album or "Unknown album", style="dim"))
+        else:
+            state_label = (
+                self._state.playback_state.value.capitalize()
+                if self._state.playback_state
+                else "Active"
+            )
+            info.add_row("Status:", Text(state_label, style="bold white"))
+            info.add_row("", Text("No metadata available", style="dim"))
+            info.add_row("")
 
         # Vertical container for info + shortcuts (5 lines total)
         content = Table.grid()
@@ -167,7 +179,7 @@ class SendspinUI:
         content.add_row(info)
         content.add_row("")  # Line 4: spacing
 
-        # Line 5: playback shortcuts (always show when track is loaded)
+        # Line 5: playback shortcuts (always show when active)
         space_label = "pause" if self._state.playback_state == PlaybackStateType.PLAYING else "play"
         shortcuts = Text()
         shortcuts.append("←", style=self._shortcut_style("prev"))
