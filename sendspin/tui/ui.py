@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Self
 
-from aiosendspin.models.types import PlaybackStateType
+from aiosendspin.models.types import PlaybackStateType, RepeatMode
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -69,6 +69,10 @@ class UIState:
 
     # Delay
     delay_ms: float = 0.0
+
+    # Repeat / Shuffle
+    repeat_mode: RepeatMode | None = None
+    shuffle: bool | None = None
 
     # Shortcut highlight
     highlighted_shortcut: str | None = None
@@ -334,36 +338,69 @@ class SendspinUI:
 
         return Panel(content, title="Select Server", border_style="cyan")
 
-    def _build_stream_quality_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
-        """Build the stream quality panel."""
+    def _build_playback_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
+        """Build the playback panel with repeat/shuffle status."""
         info = Table.grid(padding=(0, 2))
         info.add_column(style="dim", width=8)
+        info.add_column()
+
+        repeat = self._state.repeat_mode
+        info.add_row(
+            "Repeat:",
+            Text(repeat.value if repeat is not None else "—", style="cyan" if repeat else "dim"),
+        )
+
+        shuffle = self._state.shuffle
+        if shuffle is not None:
+            shuffle_text = Text("on" if shuffle else "off", style="cyan")
+        else:
+            shuffle_text = Text("—", style="dim")
+        info.add_row("Shuffle:", shuffle_text)
+        info_rows = 2
+
+        content = Table.grid()
+        content.add_column()
+        content.add_row(info)
+        for _ in range(max(0, min_info_rows - info_rows)):
+            content.add_row("")
+        content.add_row("")  # Spacing before shortcuts
+
+        # Shortcuts
+        shortcuts = Text()
+        shortcuts.append("r", style=self._shortcut_style("repeat"))
+        shortcuts.append(" repeat  ", style="dim")
+        shortcuts.append("x", style=self._shortcut_style("shuffle"))
+        shortcuts.append(" shuffle", style="dim")
+        content.add_row(shortcuts)
+
+        return Panel(content, title="Playback", border_style="magenta", expand=expand)
+
+    def _build_stream_quality_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
+        """Build the stream quality panel."""
+        info = Table.grid(padding=(0, 1))
+        info.add_column(style="dim")
         info.add_column()
 
         if self._state.audio_sample_rate > 0:
             codec_label = (self._state.audio_codec or "PCM").upper()
             info.add_row("Codec:", Text(codec_label, style="cyan"))
             rate_khz = self._state.audio_sample_rate / 1000
-            info.add_row(
-                "Quality:",
-                Text(
-                    f"{rate_khz:.1f}kHz / {self._state.audio_bit_depth}bit",
-                    style="cyan",
-                ),
-            )
+            info.add_row("Rate:", Text(f"{rate_khz:.1f}kHz", style="cyan"))
+            info.add_row("Depth:", Text(f"{self._state.audio_bit_depth}bit", style="cyan"))
             ch_label = (
                 "Stereo" if self._state.audio_channels == 2 else f"{self._state.audio_channels}ch"
             )
             info.add_row("Channels:", Text(ch_label, style="cyan"))
         else:
             info.add_row("Codec:", Text("—", style="dim"))
-            info.add_row("Quality:", Text("—", style="dim"))
+            info.add_row("Rate:", Text("—", style="dim"))
+            info.add_row("Depth:", Text("—", style="dim"))
             info.add_row("Channels:", Text("—", style="dim"))
 
         delay = self._state.delay_ms
         delay_str = f"+{delay:.0f}ms" if delay >= 0 else f"{delay:.0f}ms"
         info.add_row("Delay:", Text(delay_str, style="cyan"))
-        info_rows = 4
+        info_rows = 5
 
         content = Table.grid()
         content.add_column()
@@ -384,8 +421,8 @@ class SendspinUI:
 
     def _build_server_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the server panel."""
-        info = Table.grid(padding=(0, 2))
-        info.add_column(style="dim", width=8)
+        info = Table.grid(padding=(0, 1))
+        info.add_column(style="dim")
         info.add_column()
 
         if self._state.connected and self._state.server_url:
@@ -396,13 +433,10 @@ class SendspinUI:
             info.add_row("Host:", Text(host, style="cyan"))
             if self._state.group_name:
                 info.add_row("Group:", Text(self._state.group_name, style="cyan"))
-            else:
-                info.add_row("Group:", Text("—", style="dim"))
         else:
             info.add_row("Status:", Text("Disconnected", style="red bold"))
             info.add_row("Host:", Text(self._state.status_message, style="yellow"))
-            info.add_row("Group:", Text("—", style="dim"))
-        info_rows = 3
+        info_rows = 2 + (1 if self._state.group_name else 0)
 
         content = Table.grid()
         content.add_column()
@@ -455,15 +489,18 @@ class SendspinUI:
 
         if narrow:
             # Stacked layout: panels full-width
+            layout.add_row(self._build_playback_panel(expand=True))
             layout.add_row(self._build_stream_quality_panel(expand=True))
             layout.add_row(self._build_server_panel(expand=True))
         else:
-            # Wide layout: Stream Quality + Server side by side, equal height
-            min_rows = 4  # max of stream quality (4) and server (3) info rows
+            # Wide layout: Playback + Stream Quality + Server side by side, equal height
+            min_rows = 5  # max of stream quality (5), server (2-3), playback (2)
             bottom_row = Table.grid(expand=True)
             bottom_row.add_column(ratio=1)
             bottom_row.add_column(ratio=1)
+            bottom_row.add_column(ratio=1)
             bottom_row.add_row(
+                self._build_playback_panel(expand=True, min_info_rows=min_rows),
                 self._build_stream_quality_panel(expand=True, min_info_rows=min_rows),
                 self._build_server_panel(expand=True, min_info_rows=min_rows),
             )
@@ -574,6 +611,16 @@ class SendspinUI:
     def set_delay(self, delay_ms: float) -> None:
         """Update the delay display."""
         self._state.delay_ms = delay_ms
+        self.refresh()
+
+    def set_repeat_shuffle(
+        self,
+        repeat_mode: RepeatMode | None,
+        shuffle: bool | None,
+    ) -> None:
+        """Update repeat mode and shuffle state."""
+        self._state.repeat_mode = repeat_mode
+        self._state.shuffle = shuffle
         self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:

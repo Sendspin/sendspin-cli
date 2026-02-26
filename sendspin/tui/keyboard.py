@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 import readchar
-from aiosendspin.models.types import MediaCommand, PlaybackStateType
+from aiosendspin.models.types import MediaCommand, PlaybackStateType, RepeatMode
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
@@ -65,6 +65,24 @@ class CommandHandler:
         self._audio_handler.set_volume(self._state.player_volume, muted=muted)
         self._ui.add_event("Player muted" if muted else "Player unmuted")
 
+    async def cycle_repeat(self) -> None:
+        """Cycle repeat mode: OFF -> ALL -> ONE -> OFF."""
+        _REPEAT_CYCLE: dict[RepeatMode | None, MediaCommand] = {
+            None: MediaCommand.REPEAT_ALL,
+            RepeatMode.OFF: MediaCommand.REPEAT_ALL,
+            RepeatMode.ALL: MediaCommand.REPEAT_ONE,
+            RepeatMode.ONE: MediaCommand.REPEAT_OFF,
+        }
+        command = _REPEAT_CYCLE.get(self._state.repeat_mode, MediaCommand.REPEAT_ALL)
+        await self.send_media_command(command)
+
+    async def toggle_shuffle(self) -> None:
+        """Toggle shuffle on/off."""
+        if self._state.shuffle:
+            await self.send_media_command(MediaCommand.UNSHUFFLE)
+        else:
+            await self.send_media_command(MediaCommand.SHUFFLE)
+
     async def adjust_delay(self, delta: float) -> None:
         """Adjust static delay by delta milliseconds."""
         self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
@@ -107,6 +125,8 @@ async def keyboard_loop(
         " ": ("space", handler.toggle_play_pause),
         "m": ("mute", handler.toggle_player_mute),
         "g": ("switch", lambda: handler.send_media_command(MediaCommand.SWITCH)),
+        "r": ("repeat", handler.cycle_repeat),
+        "x": ("shuffle", handler.toggle_shuffle),
         # Delay adjustment
         ",": ("delay-", lambda: handler.adjust_delay(-10)),
         ".": ("delay+", lambda: handler.adjust_delay(10)),

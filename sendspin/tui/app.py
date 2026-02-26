@@ -30,6 +30,7 @@ from aiosendspin.models.types import (
     MediaCommand,
     PlaybackStateType,
     PlayerCommand,
+    RepeatMode,
     Roles,
     UndefinedField,
 )
@@ -67,6 +68,8 @@ class AppState:
     player_volume: int = 100
     player_muted: bool = False
     group_id: str | None = None
+    repeat_mode: RepeatMode | None = None
+    shuffle: bool | None = None
 
     def update_metadata(self, metadata: SessionUpdateMetadata) -> bool:
         """Merge new metadata into the state and report if anything changed."""
@@ -75,6 +78,15 @@ class AppState:
         # Update simple metadata fields
         for attr in ("title", "artist", "album"):
             value = getattr(metadata, attr)
+            if not isinstance(value, UndefinedField) and getattr(self, attr) != value:
+                setattr(self, attr, value)
+                changed = True
+
+        # Update repeat and shuffle
+        for attr in ("repeat_mode", "shuffle"):
+            # metadata uses "repeat" for the field name, state uses "repeat_mode"
+            meta_attr = "repeat" if attr == "repeat_mode" else attr
+            value = getattr(metadata, meta_attr)
             if not isinstance(value, UndefinedField) and getattr(self, attr) != value:
                 setattr(self, attr, value)
                 changed = True
@@ -594,6 +606,7 @@ class SendspinApp:
                 album=state.album,
             )
             ui.set_progress(state.track_progress, state.track_duration)
+            ui.set_repeat_shuffle(state.repeat_mode, state.shuffle)
             ui.add_event(state.describe())
 
     def _handle_group_update(self, payload: GroupUpdateServerPayload) -> None:
