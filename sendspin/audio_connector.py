@@ -94,10 +94,11 @@ class AudioStreamHandler:
 
         try:
             self._volume, self._muted = await self._hw_volume.get_state()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "Failed to connect to PulseAudio for hardware volume control, "
-                "falling back to software volume"
+                "falling back to software volume (%s)",
+                exc,
             )
             self._hw_volume = None
 

@@ -23,18 +23,24 @@ logger = logging.getLogger(__name__)
 VolumeChangeCallback = Callable[[int, bool], None]
 
 
-async def async_check_available() -> bool:
+async def async_check_available(timeout: float = 2.0) -> bool:
     """Check if PulseAudio is actually reachable at runtime.
 
     Returns True only if we can connect to the PulseAudio server.
     This goes beyond the module-level AVAILABLE check (which only verifies
-    the library is installed) by testing the actual connection.
+    the library is installed) by testing the actual connection. The check
+    is bounded by *timeout* seconds to keep CLI startup responsive when
+    PulseAudio is down or unreachable.
     """
     if not AVAILABLE:
         return False
-    try:
+
+    async def _probe() -> None:
         async with pulsectl_asyncio.PulseAsync("sendspin-cli-check") as client:
             await client.server_info()
+
+    try:
+        await asyncio.wait_for(_probe(), timeout=timeout)
         return True
     except Exception:  # noqa: BLE001
         return False

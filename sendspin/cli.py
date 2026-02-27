@@ -593,9 +593,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
             "Hardware volume control is not available on this system. "
             "Install pulsectl-asyncio on Linux, or use --hardware-volume false."
         )
-    if args.hardware_volume and not await hw_volume_check_available():
-        LOGGER.warning("PulseAudio server not reachable, falling back to software volume control")
-        args.hardware_volume = False
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -603,6 +600,10 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
 
     # Set up logging with resolved log level
     logging.basicConfig(level=getattr(logging, args.log_level))
+
+    if args.hardware_volume and not await hw_volume_check_available():
+        LOGGER.warning("PulseAudio server not reachable, falling back to software volume control")
+        args.hardware_volume = False
 
     # Handle daemon subcommand
     if args.command == "daemon":
