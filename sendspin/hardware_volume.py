@@ -35,12 +35,10 @@ async def async_check_available(timeout: float = 2.0) -> bool:
     if not AVAILABLE:
         return False
 
-    async def _probe() -> None:
-        async with pulsectl_asyncio.PulseAsync("sendspin-cli-check") as client:
-            await client.server_info()
-
     try:
-        await asyncio.wait_for(_probe(), timeout=timeout)
+        async with asyncio.timeout(timeout):
+            async with pulsectl_asyncio.PulseAsync("sendspin-cli-check") as client:
+                await client.server_info()
         return True
     except Exception:  # noqa: BLE001
         return False
