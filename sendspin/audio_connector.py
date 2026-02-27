@@ -85,12 +85,21 @@ class AudioStreamHandler:
         """Read the effective initial volume state.
 
         When hardware volume is active, reads the current system volume/mute
-        state. Otherwise the constructor values are used as-is.
+        state. If the PulseAudio connection fails, falls back to software
+        volume control automatically. Otherwise the constructor values are
+        used as-is.
         """
         if self._hw_volume is None:
             return
 
-        self._volume, self._muted = await self._hw_volume.get_state()
+        try:
+            self._volume, self._muted = await self._hw_volume.get_state()
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to connect to PulseAudio for hardware volume control, "
+                "falling back to software volume"
+            )
+            self._hw_volume = None
 
     async def start_volume_monitor(self) -> None:
         """Start hardware volume monitoring if applicable."""
