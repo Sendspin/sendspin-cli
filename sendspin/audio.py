@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import concurrent.futures
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
+import janus
 import numpy as np
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
@@ -352,10 +354,14 @@ class AudioPlayer:
         self._compute_client_time = compute_client_time
         self._compute_server_time = compute_server_time
         self._format: PCMFormat | None = None
-        self._queue: asyncio.Queue[_QueuedChunk] = asyncio.Queue()
+        self._async_queue: janus.Queue[_QueuedChunk] = janus.Queue()
+        self._queue: janus.SyncQueue[_QueuedChunk] = self._async_queue.sync_q
         self._stream: sounddevice.RawOutputStream | None = None
         self._closed = False
         self._stream_started = False
+        self._stream_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="sendspin-audio"
+        )
         self._first_real_chunk = True  # Flag to initialize timing from first chunk
 
         self._volume: int = 100  # 0-100 range
@@ -482,6 +488,9 @@ class AudioPlayer:
         """Stop playback and release resources."""
         self._closed = True
         self._close_stream()
+        await self._loop.run_in_executor(None, self._stream_executor.shutdown, True)
+        self._async_queue.close()
+        await self._async_queue.wait_closed()
 
     def clear(self) -> None:
         """Drop all queued audio chunks."""
@@ -491,19 +500,16 @@ class AudioPlayer:
         # Stop the audio stream (but don't close it) to release ALSA device
         # This allows the device to transition to 'closed' state when paused
         # The stream will be restarted when new audio chunks arrive in submit()
-        if self._stream is not None and self._stream_started:
-            try:
-                self._stream.stop()
-            except Exception:
-                # Non-fatal: stream will be restarted on next audio chunk
-                logger.exception("Failed to stop audio stream on clear")
         self._stream_started = False
+        stream = self._stream
+        if stream is not None:
+            self._stream_executor.submit(stream.stop)
 
         # Drain all queued chunks
         while True:
             try:
                 self._queue.get_nowait()
-            except asyncio.QueueEmpty:
+            except janus.SyncQueueEmpty:
                 break
         # Reset playback state
         self._playback_state = PlaybackState.INITIALIZING
@@ -1378,8 +1384,8 @@ class AudioPlayer:
 
         # Start stream immediately when first chunk arrives
         if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
-            self._stream.start()
             self._stream_started = True
+            self._stream_executor.submit(self._stream.start)
             logger.info(
                 "Stream STARTED: %d chunks, %.2f seconds buffered",
                 self._queue.qsize(),
@@ -1389,10 +1395,15 @@ class AudioPlayer:
     def _close_stream(self) -> None:
         """Close the audio output stream."""
         stream = self._stream
-        if stream is not None:
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                logger.exception("Failed to close audio output stream")
         self._stream = None
+        if stream is not None:
+            self._stream_executor.submit(self._stop_and_close_stream, stream)
+
+    @staticmethod
+    def _stop_and_close_stream(stream: sounddevice.RawOutputStream) -> None:
+        """Stop and close a stream (runs in executor thread)."""
+        try:
+            stream.stop()
+            stream.close()
+        except Exception:
+            logger.exception("Failed to close audio output stream")
