@@ -2,26 +2,30 @@
 
 from __future__ import annotations
 
-import io
 import logging
 import struct
 from typing import TYPE_CHECKING
 
 import av
 import numpy as np
-from av.container import InputContainer
 
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat
 
 logger = logging.getLogger(__name__)
 
+# FLAC header layout:
+# - fLaC marker: 4 bytes
+# - Metadata block header: 4 bytes (last-block flag + type + 24-bit length)
+# - STREAMINFO block: 34 bytes
+_FLAC_HEADER_PREFIX_SIZE = 8  # fLaC marker + metadata block header
+
 
 class FlacDecoder:
     """Decoder for FLAC audio frames.
 
-    Decodes individual FLAC frames to PCM samples using PyAV.
-    Requires FLAC streaminfo header for initialization.
+    Uses a persistent PyAV codec context to decode individual FLAC frames
+    to PCM samples without per-frame container overhead.
     """
 
     def __init__(self, audio_format: AudioFormat) -> None:
@@ -43,6 +47,11 @@ class FlacDecoder:
         # Track total samples decoded for debugging
         self._samples_decoded = 0
 
+        # Create persistent codec context
+        self._codec_ctx = av.CodecContext.create("flac", "r")
+        self._codec_ctx.extradata = self._build_extradata()
+        self._codec_ctx.open()
+
     def decode(self, flac_frame: bytes) -> bytes:
         """Decode a FLAC frame to PCM samples.
 
@@ -52,17 +61,12 @@ class FlacDecoder:
         Returns:
             PCM audio bytes in the format specified by audio_format.
         """
-        # Build a minimal FLAC stream with header + frame
-        flac_data = self._build_flac_stream(flac_frame)
-
-        container: InputContainer | None = None
         try:
-            # Decode using PyAV
-            container = av.open(io.BytesIO(flac_data), format="flac")  # type: ignore[assignment]
-            assert isinstance(container, InputContainer)
-            pcm_bytes = bytearray()
+            packet = av.Packet(flac_frame)
+            frames = self._codec_ctx.decode(packet)  # type: ignore[attr-defined]
 
-            for frame in container.decode(audio=0):
+            pcm_bytes = bytearray()
+            for frame in frames:
                 pcm_bytes.extend(self._frame_to_pcm(frame))
 
             return bytes(pcm_bytes)
@@ -70,74 +74,26 @@ class FlacDecoder:
         except av.FFmpegError as e:
             logger.warning("FLAC decode error: %s", e)
             return b""
-        finally:
-            if container is not None:
-                container.close()
 
-    def _build_flac_stream(self, flac_frame: bytes) -> bytes:
-        """Build a FLAC stream from header and frame.
+    def _build_extradata(self) -> bytes:
+        """Build the 34-byte FLAC STREAMINFO for codec extradata.
 
-        The codec_header from the server already contains a complete FLAC header:
-        - fLaC marker (4 bytes)
-        - Metadata block header (4 bytes)
-        - STREAMINFO block (34 bytes)
-
-        We just append the audio frame to it.
+        If the server provided a codec_header (fLaC + block header + STREAMINFO),
+        extract the 34-byte STREAMINFO. Otherwise, generate it from params.
         """
-        if self._codec_header:
-            # Server provides complete FLAC header, just append frame
-            return self._codec_header + flac_frame
+        if self._codec_header and len(self._codec_header) >= _FLAC_HEADER_PREFIX_SIZE + 34:
+            return self._codec_header[_FLAC_HEADER_PREFIX_SIZE : _FLAC_HEADER_PREFIX_SIZE + 34]
 
-        # Fallback: generate minimal header if not provided
-        stream = bytearray()
-        stream.extend(self._generate_streaminfo())
-        stream.extend(flac_frame)
-        return bytes(stream)
-
-    def _generate_streaminfo(self) -> bytes:
-        """Generate a complete FLAC header when codec_header is not provided.
-
-        Structure:
-        - fLaC marker (4 bytes)
-        - Metadata block header (4 bytes): last-block flag + type + length
-        - STREAMINFO block (34 bytes)
-        """
-        header = bytearray()
-
-        # FLAC stream marker
-        header.extend(b"fLaC")
-
-        # Metadata block header: last-metadata-block (1) + type (0) = 0x80, length = 34
-        header.append(0x80)
-        header.extend(struct.pack(">I", 34)[1:])  # 24-bit length
-
-        # STREAMINFO block (34 bytes)
+        # Fallback: generate STREAMINFO from parameters (codec_header is optional per spec)
         streaminfo = bytearray(34)
-
-        # Min/max block size (16 bits each) - use typical values
         block_size = 4096
-        streaminfo[0:2] = struct.pack(">H", block_size)  # min
-        streaminfo[2:4] = struct.pack(">H", block_size)  # max
-
-        # Min/max frame size (24 bits each) - 0 means unknown (bytes 4-9)
-        # Already zero from initialization
-
-        # Sample rate (20 bits) + channels-1 (3 bits) + bits per sample - 1 (5 bits)
-        # + total samples high 4 bits
-        sample_rate = self._sample_rate
-        channels = self._channels - 1
-        bps = self._bit_depth - 1
-
-        # Pack: sample_rate(20) | channels(3) | bps(5) | total_samples_high(4)
-        packed = (sample_rate << 12) | (channels << 9) | (bps << 4)
+        streaminfo[0:2] = struct.pack(">H", block_size)
+        streaminfo[2:4] = struct.pack(">H", block_size)
+        packed = (
+            (self._sample_rate << 12) | ((self._channels - 1) << 9) | ((self._bit_depth - 1) << 4)
+        )
         streaminfo[10:14] = struct.pack(">I", packed)
-
-        # Total samples low 32 bits (bytes 14-17) - 0 means unknown
-        # MD5 signature (16 bytes, 18-33) - zeros are acceptable for streaming
-        # Already zero from initialization
-
-        header.extend(streaminfo)
-        return bytes(header)
+        return bytes(streaminfo)
 
     def _frame_to_pcm(self, frame: av.AudioFrame) -> bytes:
         """Convert an av.AudioFrame to PCM bytes.
@@ -227,14 +183,5 @@ class FlacDecoder:
 
     def _pack_24bit(self, samples_32: np.ndarray) -> bytes:
         """Pack 32-bit samples to 24-bit (3 bytes per sample, little-endian)."""
-        # Extract lower 24 bits of each sample
-        num_samples = len(samples_32)
-        result = bytearray(num_samples * 3)
-
-        for i, sample in enumerate(samples_32):
-            # Little-endian: LSB first
-            result[i * 3] = sample & 0xFF
-            result[i * 3 + 1] = (sample >> 8) & 0xFF
-            result[i * 3 + 2] = (sample >> 16) & 0xFF
-
-        return bytes(result)
+        raw = samples_32.astype("<i4").view(np.uint8).reshape(-1, 4)
+        return raw[:, :3].tobytes()
