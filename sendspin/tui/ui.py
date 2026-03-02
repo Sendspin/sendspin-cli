@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
-from typing import Self
+from typing import Any, Self
 
 from aiosendspin.models.types import PlaybackStateType, RepeatMode
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -103,6 +104,7 @@ class SendspinUI:
         )
         self._live: Live | None = None
         self._running = False
+        self._panel_cache: dict[str, tuple[tuple[Any, ...], Panel]] = {}
 
     @property
     def state(self) -> UIState:
@@ -128,6 +130,15 @@ class SendspinUI:
     def _shortcut_style(self, shortcut: str) -> str:
         """Get the style for a shortcut key."""
         return "bold yellow reverse" if self._is_highlighted(shortcut) else "bold cyan"
+
+    def _cached_panel(self, name: str, key: tuple[Any, ...], builder: Callable[[], Panel]) -> Panel:
+        """Return cached panel if key matches, otherwise rebuild and cache."""
+        entry = self._panel_cache.get(name)
+        if entry is not None and entry[0] == key:
+            return entry[1]
+        panel = builder()
+        self._panel_cache[name] = (key, panel)
+        return panel
 
     def highlight_shortcut(self, shortcut: str) -> None:
         """Highlight a shortcut temporarily."""
@@ -498,46 +509,133 @@ class SendspinUI:
 
         # Show server selector if active
         if self._state.show_server_selector:
-            layout.add_row(self._build_server_selector_panel())
+            selector = self._cached_panel(
+                "server_selector",
+                (
+                    tuple(s.url for s in self._state.available_servers),
+                    self._state.selected_server_index,
+                    self._state.server_url,
+                    self._is_highlighted("selector-up"),
+                    self._is_highlighted("selector-down"),
+                    self._is_highlighted("selector-enter"),
+                ),
+                self._build_server_selector_panel,
+            )
+            layout.add_row(selector)
             return layout
 
         narrow = width < 80
 
-        if narrow:
-            # Stacked layout: all panels full-width
-            layout.add_row(self._build_now_playing_panel(expand=True))
-            layout.add_row(self._build_volume_panel(expand=True))
+        # Now Playing panel
+        now_playing = self._cached_panel(
+            "now_playing",
+            (
+                self._state.playback_state,
+                self._state.title,
+                self._state.artist,
+                self._state.album,
+                self._is_highlighted("prev"),
+                self._is_highlighted("space"),
+                self._is_highlighted("next"),
+            ),
+            lambda: self._build_now_playing_panel(expand=True),
+        )
+
+        # Volume panel
+        volume = self._cached_panel(
+            "volume",
+            (
+                self._state.volume,
+                self._state.muted,
+                self._state.player_volume,
+                self._state.player_muted,
+                self._state.use_hardware_volume,
+                self._is_highlighted("up"),
+                self._is_highlighted("down"),
+                self._is_highlighted("mute"),
+                self._is_highlighted("group-down"),
+                self._is_highlighted("group-up"),
+                self._is_highlighted("group-mute"),
+            ),
+            lambda: self._build_volume_panel(expand=True),
+        )
+
+        # Progress bar — only cache when not playing (interpolation needs fresh renders)
+        if self._state.playback_state == PlaybackStateType.PLAYING:
+            progress = self._build_progress_bar(expand=True)
         else:
-            # Wide layout: Now Playing + Volume side by side
+            progress = self._cached_panel(
+                "progress",
+                (self._state.track_progress_ms, self._state.track_duration_ms, width),
+                lambda: self._build_progress_bar(expand=True),
+            )
+
+        # Bottom panels
+        min_rows = 0 if narrow else 5
+
+        playback = self._cached_panel(
+            "playback",
+            (
+                narrow,
+                self._state.repeat_mode,
+                self._state.shuffle,
+                self._is_highlighted("repeat"),
+                self._is_highlighted("shuffle"),
+            ),
+            lambda: self._build_playback_panel(expand=True, min_info_rows=min_rows),
+        )
+
+        stream = self._cached_panel(
+            "stream",
+            (
+                narrow,
+                self._state.audio_codec,
+                self._state.audio_sample_rate,
+                self._state.audio_bit_depth,
+                self._state.audio_channels,
+                self._state.delay_ms,
+                self._is_highlighted("delay-"),
+                self._is_highlighted("delay+"),
+            ),
+            lambda: self._build_stream_quality_panel(expand=True, min_info_rows=min_rows),
+        )
+
+        server = self._cached_panel(
+            "server",
+            (
+                narrow,
+                self._state.connected,
+                self._state.server_url,
+                self._state.status_message,
+                self._state.group_name,
+                self._is_highlighted("switch"),
+                self._is_highlighted("server"),
+            ),
+            lambda: self._build_server_panel(expand=True, min_info_rows=min_rows),
+        )
+
+        if narrow:
+            layout.add_row(now_playing)
+            layout.add_row(volume)
+        else:
             top_row = Table.grid(expand=True)
             top_row.add_column(ratio=2)
             top_row.add_column(ratio=1)
-            top_row.add_row(
-                self._build_now_playing_panel(expand=True),
-                self._build_volume_panel(expand=True),
-            )
+            top_row.add_row(now_playing, volume)
             layout.add_row(top_row)
 
-        # Progress bar
-        layout.add_row(self._build_progress_bar(expand=True))
+        layout.add_row(progress)
 
         if narrow:
-            # Stacked layout: panels full-width
-            layout.add_row(self._build_playback_panel(expand=True))
-            layout.add_row(self._build_stream_quality_panel(expand=True))
-            layout.add_row(self._build_server_panel(expand=True))
+            layout.add_row(playback)
+            layout.add_row(stream)
+            layout.add_row(server)
         else:
-            # Wide layout: Playback + Stream Quality + Server side by side, equal height
-            min_rows = 5  # max of stream quality (5), server (2-3), playback (2)
             bottom_row = Table.grid(expand=True)
             bottom_row.add_column(ratio=1)
             bottom_row.add_column(ratio=1)
             bottom_row.add_column(ratio=1)
-            bottom_row.add_row(
-                self._build_playback_panel(expand=True, min_info_rows=min_rows),
-                self._build_stream_quality_panel(expand=True, min_info_rows=min_rows),
-                self._build_server_panel(expand=True, min_info_rows=min_rows),
-            )
+            bottom_row.add_row(playback, stream, server)
             layout.add_row(bottom_row)
 
         # Quit shortcut below boxes
