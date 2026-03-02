@@ -627,7 +627,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         logging.basicConfig(level=log_level)
     else:
         # In TUI mode, suppress logs below WARNING unless DEBUG was requested,
-        # and write to sendspin.log (created lazily on first record).
         if log_level > logging.DEBUG:
             log_level = logging.WARNING
         handler = _LazyFileHandler(os.path.join(os.getcwd(), "sendspin.log"))
