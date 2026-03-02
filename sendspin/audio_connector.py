@@ -218,7 +218,7 @@ class AudioStreamHandler:
             audio_data = pcm_data
 
         # Submit audio chunk - AudioPlayer handles timing
-        self.audio_player.submit(server_timestamp_us, audio_data)
+        self.audio_player.async_submit(server_timestamp_us, audio_data)
 
     def _on_stream_start(self, _message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""

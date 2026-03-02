@@ -354,8 +354,9 @@ class AudioPlayer:
         self._compute_client_time = compute_client_time
         self._compute_server_time = compute_server_time
         self._format: PCMFormat | None = None
-        self._async_queue: janus.Queue[_QueuedChunk] = janus.Queue()
-        self._queue: janus.SyncQueue[_QueuedChunk] = self._async_queue.sync_q
+        self._janus_queue: janus.Queue[_QueuedChunk] = janus.Queue()
+        self._sync_q: janus.SyncQueue[_QueuedChunk] = self._janus_queue.sync_q
+        self._async_q: janus.AsyncQueue[_QueuedChunk] = self._janus_queue.async_q
         self._stream: sounddevice.RawOutputStream | None = None
         self._closed = False
         self._stream_started = False
@@ -489,8 +490,8 @@ class AudioPlayer:
         self._closed = True
         self._close_stream()
         await self._loop.run_in_executor(None, self._stream_executor.shutdown, True)
-        self._async_queue.close()
-        await self._async_queue.wait_closed()
+        self._janus_queue.close()
+        await self._janus_queue.wait_closed()
 
     def clear(self) -> None:
         """Drop all queued audio chunks."""
@@ -501,17 +502,17 @@ class AudioPlayer:
 
         # Stop the audio stream (but don't close it) to release ALSA device
         # This allows the device to transition to 'closed' state when paused
-        # The stream will be restarted when new audio chunks arrive in submit()
+        # The stream will be restarted when new audio chunks arrive in async_submit()
         self._stream_started = False
         stream = self._stream
         if stream is not None:
             self._stream_executor.submit(self._call_stream, stream.stop)
 
         # Drain all queued chunks
-        while True:
+        while not self._async_q.empty():
             try:
-                self._queue.get_nowait()
-            except janus.SyncQueueEmpty:
+                self._async_q.get_nowait()
+            except asyncio.QueueEmpty:
                 break
         # Reset playback state
         self._playback_state = PlaybackState.INITIALIZING
@@ -750,7 +751,7 @@ class AudioPlayer:
 
         Updates server timestamp cursor if needed.
         """
-        self._current_chunk = self._queue.get_nowait()
+        self._current_chunk = self._sync_q.get_nowait()
         self._current_chunk_offset = 0
         # Initialize server cursor if needed
         if self._server_ts_cursor_us == 0:
@@ -769,7 +770,7 @@ class AudioPlayer:
 
         # Ensure we have a current chunk
         if self._current_chunk is None:
-            if self._queue.empty():
+            if self._sync_q.empty():
                 return None
             self._initialize_current_chunk()
 
@@ -816,7 +817,7 @@ class AudioPlayer:
         while bytes_written < total_bytes_needed:
             # Get frames from current chunk
             if self._current_chunk is None:
-                if self._queue.empty():
+                if self._sync_q.empty():
                     # No more data - pad with silence
                     silence_bytes = total_bytes_needed - bytes_written
                     result[bytes_written:] = b"\x00" * silence_bytes
@@ -881,9 +882,9 @@ class AudioPlayer:
         frame_size = self._format.frame_size
         while frames_to_skip > 0:
             if self._current_chunk is None:
-                if self._queue.empty():
+                if self._sync_q.empty():
                     break
-                self._current_chunk = self._queue.get_nowait()
+                self._current_chunk = self._sync_q.get_nowait()
                 self._current_chunk_offset = 0
                 if self._server_ts_cursor_us == 0:
                     self._server_ts_cursor_us = self._current_chunk.server_timestamp_us
@@ -1244,11 +1245,14 @@ class AudioPlayer:
             self._insert_every_n_frames = interval_frames
             self._drop_every_n_frames = 0
 
-    def submit(self, server_timestamp_us: int, payload: bytes) -> None:  # noqa: PLR0915
+    def async_submit(self, server_timestamp_us: int, payload: bytes) -> None:  # noqa: PLR0915
         """
         Queue an audio payload for playback, intelligently handling gaps and overlaps.
 
         Fills gaps with silence and trims overlaps to ensure a continuous stream.
+
+        Must be called from the event loop thread. Uses the async side of the
+        janus queue to avoid unnecessary threading overhead.
 
         Args:
             server_timestamp_us: Server timestamp when this audio should play.
@@ -1336,7 +1340,7 @@ class AudioPlayer:
             gap_frames = (gap_us * self._format.sample_rate) // 1_000_000
             silence_bytes = gap_frames * self._format.frame_size
             silence = b"\x00" * silence_bytes
-            self._queue.put_nowait(
+            self._async_q.put_nowait(
                 _QueuedChunk(
                     server_timestamp_us=self._expected_next_timestamp,
                     audio_data=silence,
@@ -1381,19 +1385,19 @@ class AudioPlayer:
                 server_timestamp_us=server_timestamp_us,
                 audio_data=payload,
             )
-            self._queue.put_nowait(chunk)
+            self._async_q.put_nowait(chunk)
             # Track duration of queued audio
             self._queued_duration_us += chunk_duration_us
             # Update expected position for next chunk
             self._expected_next_timestamp = server_timestamp_us + chunk_duration_us
 
         # Start stream immediately when first chunk arrives
-        if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
+        if not self._stream_started and self._async_q.qsize() > 0 and self._stream is not None:
             self._stream_started = True
             self._stream_executor.submit(self._call_stream, self._stream.start)
             logger.info(
                 "Stream STARTED: %d chunks, %.2f seconds buffered",
-                self._queue.qsize(),
+                self._async_q.qsize(),
                 self._queued_duration_us / 1_000_000,
             )
 
