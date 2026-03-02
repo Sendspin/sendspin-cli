@@ -24,7 +24,6 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
-
 PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
 
 Please install PortAudio for your system:
