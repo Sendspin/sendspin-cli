@@ -494,6 +494,8 @@ class AudioPlayer:
 
     def clear(self) -> None:
         """Drop all queued audio chunks."""
+        if self._closed:
+            return
         # Clear deferred operation flag
         self._clear_requested = False
 
@@ -503,7 +505,7 @@ class AudioPlayer:
         self._stream_started = False
         stream = self._stream
         if stream is not None:
-            self._stream_executor.submit(stream.stop)
+            self._stream_executor.submit(self._stop_stream, stream)
 
         # Drain all queued chunks
         while True:
@@ -1252,6 +1254,9 @@ class AudioPlayer:
             server_timestamp_us: Server timestamp when this audio should play.
             payload: Raw PCM audio bytes.
         """
+        if self._closed:
+            return
+
         # Handle deferred operations from audio thread
         if self._clear_requested:
             self._clear_requested = False
@@ -1385,7 +1390,7 @@ class AudioPlayer:
         # Start stream immediately when first chunk arrives
         if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
             self._stream_started = True
-            self._stream_executor.submit(self._stream.start)
+            self._stream_executor.submit(self._start_stream, self._stream)
             logger.info(
                 "Stream STARTED: %d chunks, %.2f seconds buffered",
                 self._queue.qsize(),
@@ -1398,6 +1403,22 @@ class AudioPlayer:
         self._stream = None
         if stream is not None:
             self._stream_executor.submit(self._stop_and_close_stream, stream)
+
+    @staticmethod
+    def _start_stream(stream: sounddevice.RawOutputStream) -> None:
+        """Start a stream (runs in executor thread)."""
+        try:
+            stream.start()
+        except Exception:
+            logger.exception("Failed to start audio stream")
+
+    @staticmethod
+    def _stop_stream(stream: sounddevice.RawOutputStream) -> None:
+        """Stop a stream (runs in executor thread)."""
+        try:
+            stream.stop()
+        except Exception:
+            logger.exception("Failed to stop audio stream")
 
     @staticmethod
     def _stop_and_close_stream(stream: sounddevice.RawOutputStream) -> None:
