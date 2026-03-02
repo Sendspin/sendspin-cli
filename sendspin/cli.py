@@ -25,26 +25,6 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(__name__)
 
 
-class _LazyFileHandler(logging.Handler):
-    """A logging handler that creates the log file only when the first record is emitted."""
-
-    def __init__(self, filename: str) -> None:
-        super().__init__()
-        self._filename = filename
-        self._inner: logging.FileHandler | None = None
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if self._inner is None:
-            self._inner = logging.FileHandler(self._filename)
-            self._inner.setFormatter(self.formatter)
-        self._inner.emit(record)
-
-    def close(self) -> None:
-        if self._inner is not None:
-            self._inner.close()
-        super().close()
-
-
 PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
 
 Please install PortAudio for your system:
@@ -620,16 +600,15 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     if args.hook_stop is None:
         args.hook_stop = settings.hook_stop
 
-    # Set up logging: daemon uses stderr, TUI uses a lazy file handler
+    # Set up logging: daemon uses stderr, TUI writes to sendspin.log
     # so log output doesn't interfere with the Rich display.
     log_level = getattr(logging, args.log_level)
     if is_daemon:
         logging.basicConfig(level=log_level)
     else:
-        # In TUI mode, suppress logs below WARNING unless DEBUG was requested,
         if log_level > logging.DEBUG:
             log_level = logging.WARNING
-        handler = _LazyFileHandler(os.path.join(os.getcwd(), "sendspin.log"))
+        handler = logging.FileHandler(os.path.join(os.getcwd(), "sendspin.log"), delay=True)
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logging.basicConfig(level=log_level, handlers=[handler])
 
