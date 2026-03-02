@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import os
 import signal
 import sys
 from dataclasses import dataclass, field
@@ -46,26 +45,6 @@ from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
 
 logger = logging.getLogger(__name__)
-
-
-class _LazyFileHandler(logging.Handler):
-    """A logging handler that creates the log file only when the first record is emitted."""
-
-    def __init__(self, filename: str) -> None:
-        super().__init__()
-        self._filename = filename
-        self._inner: logging.FileHandler | None = None
-
-    def emit(self, record: logging.LogRecord) -> None:
-        if self._inner is None:
-            self._inner = logging.FileHandler(self._filename)
-            self._inner.setFormatter(self.formatter)
-        self._inner.emit(record)
-
-    def close(self) -> None:
-        if self._inner is not None:
-            self._inner.close()
-        super().close()
 
 
 class ServerSwitchRequested(Exception):
@@ -277,22 +256,6 @@ class SendspinApp:
                 "Use 'sendspin daemon' for non-interactive/background operation."
             )
             return 1
-
-        # In interactive mode with UI, redirect logs to a file to avoid
-        # interfering with the Rich display. The file is created lazily
-        # only when the first warning is actually logged.
-        root_logger = logging.getLogger()
-        if root_logger.level != logging.DEBUG:
-            root_logger.setLevel(logging.WARNING)
-        # Replace the stderr handler (set up by basicConfig in cli.py) with a
-        # lazy file handler so log output doesn't interfere with the Rich display.
-        root_logger.removeHandler(root_logger.handlers[0])
-        log_path = os.path.join(os.getcwd(), "sendspin.log")
-        file_handler = _LazyFileHandler(log_path)
-        file_handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-        )
-        root_logger.addHandler(file_handler)
 
         # Store reference to current task so it can be cancelled on shutdown
         main_task = asyncio.current_task()
