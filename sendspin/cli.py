@@ -14,6 +14,7 @@ from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 from sendspin.hardware_volume import AVAILABLE as HW_VOLUME_AVAILABLE
+from sendspin.hardware_volume import UNAVAILABLE_REASON as HW_VOLUME_UNAVAILABLE_REASON
 from sendspin.hardware_volume import async_check_available as hw_volume_check_available
 from sendspin.settings import ClientSettings, get_client_settings, get_serve_settings
 
@@ -591,8 +592,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
             args.hardware_volume = is_daemon and HW_VOLUME_AVAILABLE
     if args.hardware_volume and not HW_VOLUME_AVAILABLE:
         raise CLIError(
-            "Hardware volume control is not available on this system. "
-            "Install pulsectl-asyncio on Linux, or use --hardware-volume false."
+            f"Hardware volume control is not available on this system. "
+            f"{HW_VOLUME_UNAVAILABLE_REASON or 'Use --hardware-volume false to disable.'}"
         )
     if args.hook_start is None:
         args.hook_start = settings.hook_start

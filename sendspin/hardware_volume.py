@@ -10,13 +10,24 @@ from collections.abc import Callable
 from typing import Any
 
 AVAILABLE = False
-if sys.platform.startswith("linux"):
+UNAVAILABLE_REASON: str | None = None
+if not sys.platform.startswith("linux"):
+    UNAVAILABLE_REASON = "Hardware volume control is only supported on Linux."
+else:
     try:
         import pulsectl_asyncio
 
         AVAILABLE = True
-    except (ImportError, OSError):
-        pass
+    except ImportError:
+        UNAVAILABLE_REASON = (
+            "pulsectl-asyncio package is not installed. "
+            "Install it with: pip install pulsectl-asyncio"
+        )
+    except OSError as _exc:
+        UNAVAILABLE_REASON = (
+            f"PulseAudio system library failed to load: {_exc}. "
+            "Install it with: sudo apt-get install libpulse0"
+        )
 
 logger = logging.getLogger(__name__)
 
