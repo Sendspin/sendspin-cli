@@ -284,8 +284,9 @@ class SendspinApp:
         root_logger = logging.getLogger()
         if root_logger.level != logging.DEBUG:
             root_logger.setLevel(logging.WARNING)
-        for handler in root_logger.handlers[:]:
-            root_logger.removeHandler(handler)
+        # Replace the stderr handler (set up by basicConfig in cli.py) with a
+        # lazy file handler so log output doesn't interfere with the Rich display.
+        root_logger.removeHandler(root_logger.handlers[0])
         log_path = os.path.join(os.getcwd(), "sendspin.log")
         file_handler = _LazyFileHandler(log_path)
         file_handler.setFormatter(
