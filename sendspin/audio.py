@@ -505,7 +505,7 @@ class AudioPlayer:
         self._stream_started = False
         stream = self._stream
         if stream is not None:
-            self._stream_executor.submit(self._stop_stream, stream)
+            self._stream_executor.submit(self._call_stream, stream.stop)
 
         # Drain all queued chunks
         while True:
@@ -1390,7 +1390,7 @@ class AudioPlayer:
         # Start stream immediately when first chunk arrives
         if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
             self._stream_started = True
-            self._stream_executor.submit(self._start_stream, self._stream)
+            self._stream_executor.submit(self._call_stream, self._stream.start)
             logger.info(
                 "Stream STARTED: %d chunks, %.2f seconds buffered",
                 self._queue.qsize(),
@@ -1402,29 +1402,15 @@ class AudioPlayer:
         stream = self._stream
         self._stream = None
         if stream is not None:
-            self._stream_executor.submit(self._stop_and_close_stream, stream)
+            self._stream_executor.submit(self._call_stream, stream.stop, stream.close)
 
     @staticmethod
-    def _start_stream(stream: sounddevice.RawOutputStream) -> None:
-        """Start a stream (runs in executor thread)."""
-        try:
-            stream.start()
-        except Exception:
-            logger.exception("Failed to start audio stream")
-
-    @staticmethod
-    def _stop_stream(stream: sounddevice.RawOutputStream) -> None:
-        """Stop a stream (runs in executor thread)."""
-        try:
-            stream.stop()
-        except Exception:
-            logger.exception("Failed to stop audio stream")
-
-    @staticmethod
-    def _stop_and_close_stream(stream: sounddevice.RawOutputStream) -> None:
-        """Stop and close a stream (runs in executor thread)."""
-        try:
-            stream.stop()
-            stream.close()
-        except Exception:
-            logger.exception("Failed to close audio output stream")
+    def _call_stream(
+        *calls: Callable[[], object],
+    ) -> None:
+        """Run stream operations with exception logging (runs in executor thread)."""
+        for call in calls:
+            try:
+                call()
+            except Exception:
+                logger.exception("Stream operation %s failed", call.__name__)
