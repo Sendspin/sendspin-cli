@@ -17,7 +17,6 @@ dependencies = [
   "aiosendspin~=4.3",
   "aiosendspin-mpris~=2.1.1",
   "av>=14.0.0",
-  "janus>=2.0.0",
   "numpy>=1.24.0",
   "pychromecast>=14.0.0",
   "pulsectl-asyncio>=1.2.2; platform_system == 'Linux'",

@@ -10,16 +10,16 @@ audio output devices.
 
 from __future__ import annotations
 
-import asyncio
 import collections
 import concurrent.futures
 import logging
+import queue
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Final, Protocol, cast
 
-import janus
 import numpy as np
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
@@ -282,15 +282,13 @@ class AudioPlayer:
     for accurate synchronization even when the time base changes during playback.
 
     Attributes:
-        _loop: The asyncio event loop used for scheduling.
         _compute_client_time: Function that converts server timestamps to client
-            timestamps (monotonic loop time), accounting for clock drift, offset,
+            timestamps (monotonic time), accounting for clock drift, offset,
             and static delay.
         _compute_server_time: Function that converts client timestamps (monotonic
             loop time) to server timestamps (inverse of _compute_client_time).
     """
 
-    _loop: asyncio.AbstractEventLoop
     _compute_client_time: Callable[[int], int]
     _compute_server_time: Callable[[int], int]
 
@@ -335,7 +333,6 @@ class AudioPlayer:
 
     def __init__(
         self,
-        loop: asyncio.AbstractEventLoop,
         compute_client_time: Callable[[int], int],
         compute_server_time: Callable[[int], int],
     ) -> None:
@@ -343,20 +340,16 @@ class AudioPlayer:
         Initialize the audio player.
 
         Args:
-            loop: The asyncio event loop to use for scheduling.
             compute_client_time: Function that converts server timestamps to client
                 timestamps (monotonic loop time), accounting for clock drift, offset,
                 and static delay.
             compute_server_time: Function that converts client timestamps (monotonic
                 loop time) to server timestamps (inverse of compute_client_time).
         """
-        self._loop = loop
         self._compute_client_time = compute_client_time
         self._compute_server_time = compute_server_time
         self._format: PCMFormat | None = None
-        self._janus_queue: janus.Queue[_QueuedChunk] = janus.Queue()
-        self._sync_q: janus.SyncQueue[_QueuedChunk] = self._janus_queue.sync_q
-        self._async_q: janus.AsyncQueue[_QueuedChunk] = self._janus_queue.async_q
+        self._queue: queue.Queue[_QueuedChunk] = queue.Queue()
         self._stream: sounddevice.RawOutputStream | None = None
         self._closed = False
         self._stream_started = False
@@ -485,13 +478,11 @@ class AudioPlayer:
         self._volume = max(0, min(100, volume))
         self._muted = muted
 
-    async def stop(self) -> None:
+    def stop(self) -> None:
         """Stop playback and release resources."""
         self._closed = True
         self._close_stream()
-        await self._loop.run_in_executor(None, self._stream_executor.shutdown, True)
-        self._janus_queue.close()
-        await self._janus_queue.wait_closed()
+        self._stream_executor.shutdown(wait=True)
 
     def clear(self) -> None:
         """Drop all queued audio chunks."""
@@ -501,18 +492,18 @@ class AudioPlayer:
         self._clear_requested = False
 
         # Stop the audio stream (but don't close it) to release ALSA device
-        # This allows the device to transition to 'closed' state when paused
-        # The stream will be restarted when new audio chunks arrive in async_submit()
+        # This allows the device to transition to 'closed' state when paused.
+        # The stream restarts when new chunks arrive in submit().
         self._stream_started = False
         stream = self._stream
         if stream is not None:
             self._stream_executor.submit(self._call_stream, stream.stop)
 
         # Drain all queued chunks
-        while not self._async_q.empty():
+        while True:
             try:
-                self._async_q.get_nowait()
-            except asyncio.QueueEmpty:
+                self._queue.get_nowait()
+            except queue.Empty:
                 break
         # Reset playback state
         self._playback_state = PlaybackState.INITIALIZING
@@ -563,7 +554,7 @@ class AudioPlayer:
             time: CFFI cdata structure with timing info (outputBufferDacTime, etc).
             status: Status flags (underrun, overflow, etc.).
         """
-        callback_start_us = int(self._loop.time() * 1_000_000)
+        callback_start_us = self._now_us()
 
         assert self._format is not None
 
@@ -699,20 +690,18 @@ class AudioPlayer:
         self._apply_volume(output_buffer, bytes_needed)
 
         # Track callback execution time for performance monitoring
-        callback_end_us = int(self._loop.time() * 1_000_000)
+        callback_end_us = self._now_us()
         self._callback_time_total_us += callback_end_us - callback_start_us
         self._callback_count += 1
 
     def _update_playback_position_from_dac(self, time: AudioTimeInfo) -> None:
         """Capture DAC and loop time simultaneously, update playback position.
 
-        Note: loop.time() is thread-safe - it's a wrapper around time.monotonic(),
-        which is a fast, thread-safe system call.
+        Uses time.monotonic(), which is thread-safe.
         """
         try:
             dac_time_us = int(time.outputBufferDacTime * 1_000_000)
-            # Safe to call from audio callback thread - just calls time.monotonic()
-            loop_time_us = int(self._loop.time() * 1_000_000)
+            loop_time_us = self._now_us()
 
             # Store complete calibration pair atomically
             self._dac_loop_calibrations.append((dac_time_us, loop_time_us))
@@ -751,7 +740,7 @@ class AudioPlayer:
 
         Updates server timestamp cursor if needed.
         """
-        self._current_chunk = self._sync_q.get_nowait()
+        self._current_chunk = self._queue.get_nowait()
         self._current_chunk_offset = 0
         # Initialize server cursor if needed
         if self._server_ts_cursor_us == 0:
@@ -770,7 +759,7 @@ class AudioPlayer:
 
         # Ensure we have a current chunk
         if self._current_chunk is None:
-            if self._sync_q.empty():
+            if self._queue.empty():
                 return None
             self._initialize_current_chunk()
 
@@ -817,7 +806,7 @@ class AudioPlayer:
         while bytes_written < total_bytes_needed:
             # Get frames from current chunk
             if self._current_chunk is None:
-                if self._sync_q.empty():
+                if self._queue.empty():
                     # No more data - pad with silence
                     silence_bytes = total_bytes_needed - bytes_written
                     result[bytes_written:] = b"\x00" * silence_bytes
@@ -882,9 +871,9 @@ class AudioPlayer:
         frame_size = self._format.frame_size
         while frames_to_skip > 0:
             if self._current_chunk is None:
-                if self._sync_q.empty():
+                if self._queue.empty():
                     break
-                self._current_chunk = self._sync_q.get_nowait()
+                self._current_chunk = self._queue.get_nowait()
                 self._current_chunk_offset = 0
                 if self._server_ts_cursor_us == 0:
                     self._server_ts_cursor_us = self._current_chunk.server_timestamp_us
@@ -956,6 +945,11 @@ class AudioPlayer:
         """Get the current playback position in server timestamp space."""
         return self._last_known_playback_position_us
 
+    @staticmethod
+    def _now_us() -> int:
+        """Return current monotonic time in microseconds."""
+        return int(time.monotonic() * 1_000_000)
+
     def get_timing_metrics(self) -> dict[str, float]:
         """Return current timing metrics for monitoring."""
         return {
@@ -967,7 +961,7 @@ class AudioPlayer:
     def _log_chunk_timing(self, _server_timestamp_us: int) -> None:
         """Log sync error and buffer status for debugging sync issues."""
         if self._sync_error_filter.is_synchronized:
-            now_us = int(self._loop.time() * 1_000_000)
+            now_us = self._now_us()
             if now_us - self._last_sync_error_log_us >= 1_000_000:
                 self._last_sync_error_log_us = now_us
                 # Calculate playback speed relative to source timeline.
@@ -1013,7 +1007,7 @@ class AudioPlayer:
 
     def _smooth_sync_error(self, error_us: int) -> None:
         """Update Kalman filtered sync error to optimally track error and drift."""
-        now_us = int(self._loop.time() * 1_000_000)
+        now_us = self._now_us()
         # Use fixed max_error representing expected jitter/noise (5ms)
         max_error_us = 5_000
         self._sync_error_filter.update(
@@ -1109,9 +1103,7 @@ class AudioPlayer:
             self._scheduled_start_loop_time_us = self._compute_client_time(server_timestamp_us)
         except Exception:
             logger.exception("Failed to compute client time for start")
-            self._scheduled_start_loop_time_us = int(
-                self._loop.time() * self._MICROSECONDS_PER_SECOND
-            )
+            self._scheduled_start_loop_time_us = self._now_us()
 
     def _handle_start_gating(
         self,
@@ -1143,7 +1135,7 @@ class AudioPlayer:
             can_drop_frames = True  # DAC gating allows frame dropping when late
         elif self._scheduled_start_loop_time_us is not None:
             # Loop-based gating: fallback when DAC timing unavailable
-            loop_now_us = int(self._loop.time() * self._MICROSECONDS_PER_SECOND)
+            loop_now_us = self._now_us()
             delta_us = self._scheduled_start_loop_time_us - loop_now_us
             target_time_us = self._scheduled_start_loop_time_us
             current_time_us = loop_now_us
@@ -1202,7 +1194,7 @@ class AudioPlayer:
             return
 
         # Re-anchor only if error is very large and cooldown has elapsed
-        now_loop_us = int(self._loop.time() * 1_000_000)
+        now_loop_us = self._now_us()
         if (
             abs_err > self._REANCHOR_THRESHOLD_US
             and self._playback_state == PlaybackState.PLAYING
@@ -1245,14 +1237,11 @@ class AudioPlayer:
             self._insert_every_n_frames = interval_frames
             self._drop_every_n_frames = 0
 
-    def async_submit(self, server_timestamp_us: int, payload: bytes) -> None:  # noqa: PLR0915
+    def submit(self, server_timestamp_us: int, payload: bytes) -> None:  # noqa: PLR0915
         """
         Queue an audio payload for playback, intelligently handling gaps and overlaps.
 
         Fills gaps with silence and trims overlaps to ensure a continuous stream.
-
-        Must be called from the event loop thread. Uses the async side of the
-        janus queue to avoid unnecessary threading overhead.
 
         Args:
             server_timestamp_us: Server timestamp when this audio should play.
@@ -1280,7 +1269,7 @@ class AudioPlayer:
             )
             return
 
-        now_us = int(self._loop.time() * 1_000_000)
+        now_us = self._now_us()
 
         # On first real chunk, schedule start time aligned to server timeline
         if self._scheduled_start_loop_time_us is None:
@@ -1340,7 +1329,7 @@ class AudioPlayer:
             gap_frames = (gap_us * self._format.sample_rate) // 1_000_000
             silence_bytes = gap_frames * self._format.frame_size
             silence = b"\x00" * silence_bytes
-            self._async_q.put_nowait(
+            self._queue.put_nowait(
                 _QueuedChunk(
                     server_timestamp_us=self._expected_next_timestamp,
                     audio_data=silence,
@@ -1385,19 +1374,19 @@ class AudioPlayer:
                 server_timestamp_us=server_timestamp_us,
                 audio_data=payload,
             )
-            self._async_q.put_nowait(chunk)
+            self._queue.put_nowait(chunk)
             # Track duration of queued audio
             self._queued_duration_us += chunk_duration_us
             # Update expected position for next chunk
             self._expected_next_timestamp = server_timestamp_us + chunk_duration_us
 
         # Start stream immediately when first chunk arrives
-        if not self._stream_started and self._async_q.qsize() > 0 and self._stream is not None:
+        if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
             self._stream_started = True
             self._stream_executor.submit(self._call_stream, self._stream.start)
             logger.info(
                 "Stream STARTED: %d chunks, %.2f seconds buffered",
-                self._async_q.qsize(),
+                self._queue.qsize(),
                 self._queued_duration_us / 1_000_000,
             )
 
