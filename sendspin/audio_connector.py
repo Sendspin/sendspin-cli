@@ -184,9 +184,6 @@ class _AudioSyncWorker:
                     player.set_volume(software_volume, muted=software_muted)
                 continue
 
-            if not isinstance(item, _ChunkWorkItem):
-                continue
-
             fmt = item.fmt
             if current_format != fmt:
                 current_format = fmt
