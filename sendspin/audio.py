@@ -695,10 +695,7 @@ class AudioPlayer:
         self._callback_count += 1
 
     def _update_playback_position_from_dac(self, time: AudioTimeInfo) -> None:
-        """Capture DAC and loop time simultaneously, update playback position.
-
-        Uses time.monotonic(), which is thread-safe.
-        """
+        """Capture DAC and loop time simultaneously, update playback position."""
         try:
             dac_time_us = int(time.outputBufferDacTime * 1_000_000)
             loop_time_us = self._now_us()
@@ -759,9 +756,10 @@ class AudioPlayer:
 
         # Ensure we have a current chunk
         if self._current_chunk is None:
-            if self._queue.empty():
+            try:
+                self._initialize_current_chunk()
+            except queue.Empty:
                 return None
-            self._initialize_current_chunk()
 
         chunk = self._current_chunk
         assert chunk is not None
@@ -806,12 +804,13 @@ class AudioPlayer:
         while bytes_written < total_bytes_needed:
             # Get frames from current chunk
             if self._current_chunk is None:
-                if self._queue.empty():
+                try:
+                    self._initialize_current_chunk()
+                except queue.Empty:
                     # No more data - pad with silence
                     silence_bytes = total_bytes_needed - bytes_written
                     result[bytes_written:] = b"\x00" * silence_bytes
                     break
-                self._initialize_current_chunk()
 
             # Calculate how much we can read from current chunk
             assert self._current_chunk is not None
@@ -871,9 +870,10 @@ class AudioPlayer:
         frame_size = self._format.frame_size
         while frames_to_skip > 0:
             if self._current_chunk is None:
-                if self._queue.empty():
+                try:
+                    self._current_chunk = self._queue.get_nowait()
+                except queue.Empty:
                     break
-                self._current_chunk = self._queue.get_nowait()
                 self._current_chunk_offset = 0
                 if self._server_ts_cursor_us == 0:
                     self._server_ts_cursor_us = self._current_chunk.server_timestamp_us
