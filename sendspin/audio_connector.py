@@ -8,7 +8,7 @@ import queue
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from aiosendspin.models.core import StreamStartMessage
 from aiosendspin.models.types import AudioCodec, ClientStateType, Roles
@@ -181,12 +181,14 @@ class _AudioSyncWorker:
 
             if item_type is _SetVolumeWorkItem:
                 if self._use_software_volume:
-                    software_volume = item.volume
-                    software_muted = item.muted
+                    volume_item = cast(_SetVolumeWorkItem, item)
+                    software_volume = volume_item.volume
+                    software_muted = volume_item.muted
                     player.set_volume(software_volume, muted=software_muted)
                 continue
 
-            fmt = item.fmt
+            chunk_item = cast(_ChunkWorkItem, item)
+            fmt = chunk_item.fmt
             if current_format != fmt:
                 current_format = fmt
                 player.set_format(fmt, device=self._audio_device)
@@ -206,7 +208,7 @@ class _AudioSyncWorker:
                 if self._use_software_volume:
                     player.set_volume(software_volume, muted=software_muted)
 
-            payload = item.audio_data
+            payload = chunk_item.audio_data
             if fmt.codec == AudioCodec.FLAC:
                 if flac_decoder is None:
                     flac_decoder = FlacDecoder(fmt)
@@ -214,7 +216,7 @@ class _AudioSyncWorker:
                 if not payload:
                     continue
 
-            player.submit(item.server_timestamp_us, payload)
+            player.submit(chunk_item.server_timestamp_us, payload)
 
         player.stop()
 
