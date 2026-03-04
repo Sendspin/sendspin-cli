@@ -170,14 +170,16 @@ class _AudioSyncWorker:
             except Exception:
                 break
 
-            if isinstance(item, _StopWorkItem):
+            item_type = type(item)
+
+            if item_type is _StopWorkItem:
                 break
 
-            if isinstance(item, _ClearWorkItem):
+            if item_type is _ClearWorkItem:
                 player.clear()
                 continue
 
-            if isinstance(item, _SetVolumeWorkItem):
+            if item_type is _SetVolumeWorkItem:
                 if self._use_software_volume:
                     software_volume = item.volume
                     software_muted = item.muted
