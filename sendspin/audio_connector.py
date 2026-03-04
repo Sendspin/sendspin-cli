@@ -26,15 +26,33 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
-class _AudioWorkItem:
-    """Unit of work for the synchronous audio worker thread."""
+class _ChunkWorkItem:
+    """Audio chunk submission work for the synchronous audio worker."""
 
-    kind: str
-    server_timestamp_us: int = 0
-    audio_data: bytes = b""
-    fmt: AudioFormat | None = None
-    volume: int = 100
-    muted: bool = False
+    server_timestamp_us: int
+    audio_data: bytes
+    fmt: AudioFormat
+
+
+@dataclass(slots=True)
+class _ClearWorkItem:
+    """Queue-clear work for the synchronous audio worker."""
+
+
+@dataclass(slots=True)
+class _SetVolumeWorkItem:
+    """Software volume update work for the synchronous audio worker."""
+
+    volume: int
+    muted: bool
+
+
+@dataclass(slots=True)
+class _StopWorkItem:
+    """Stop signal for the synchronous audio worker."""
+
+
+type _AudioWorkItem = _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _StopWorkItem
 
 
 class _AudioSyncWorker:
@@ -50,8 +68,8 @@ class _AudioSyncWorker:
     ) -> None:
         self._audio_device = audio_device
         self._use_software_volume = use_software_volume
-        self._volume = volume
-        self._muted = muted
+        self._initial_volume = volume
+        self._initial_muted = muted
 
         self._queue: queue.Queue[_AudioWorkItem] | None = None
         self._thread: threading.Thread | None = None
@@ -74,27 +92,22 @@ class _AudioSyncWorker:
         )
         self._thread.start()
 
+    def is_running(self) -> bool:
+        """Whether the worker thread is currently alive."""
+        return self._thread is not None and self._thread.is_alive()
+
     def submit_chunk(self, server_timestamp_us: int, audio_data: bytes, fmt: AudioFormat) -> None:
         """Submit one incoming audio chunk for processing."""
-        self._enqueue(
-            _AudioWorkItem(
-                kind="chunk",
-                server_timestamp_us=server_timestamp_us,
-                audio_data=audio_data,
-                fmt=fmt,
-            )
-        )
+        self._enqueue(_ChunkWorkItem(server_timestamp_us, audio_data, fmt))
 
     def clear(self) -> None:
         """Clear queued audio on worker."""
-        self._enqueue(_AudioWorkItem(kind="clear"))
+        self._enqueue(_ClearWorkItem())
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Update software volume and forward to worker if enabled."""
-        self._volume = volume
-        self._muted = muted
         if self._use_software_volume:
-            self._enqueue(_AudioWorkItem(kind="set_volume", volume=volume, muted=muted))
+            self._enqueue(_SetVolumeWorkItem(volume=volume, muted=muted))
 
     async def stop(self) -> None:
         """Stop worker thread and close queue resources."""
@@ -107,7 +120,7 @@ class _AudioSyncWorker:
             return
 
         try:
-            queue_obj.put_nowait(_AudioWorkItem(kind="stop"))
+            queue_obj.put_nowait(_StopWorkItem())
         except queue.Full:
             while True:
                 try:
@@ -115,7 +128,7 @@ class _AudioSyncWorker:
                 except queue.Empty:
                     break
             try:
-                queue_obj.put_nowait(_AudioWorkItem(kind="stop"))
+                queue_obj.put_nowait(_StopWorkItem())
             except queue.Full:
                 logger.warning("Failed to enqueue audio worker stop sentinel")
 
@@ -130,7 +143,7 @@ class _AudioSyncWorker:
         try:
             queue_obj.put_nowait(item)
         except queue.Full:
-            logger.warning("Audio worker queue full; dropping %s", item.kind)
+            logger.warning("Audio worker queue full; dropping %s", type(item).__name__)
 
     def _run(
         self,
@@ -145,9 +158,11 @@ class _AudioSyncWorker:
         player = AudioPlayer(compute_play_time, compute_server_time)
         current_format: AudioFormat | None = None
         flac_decoder: FlacDecoder | None = None
+        software_volume = self._initial_volume
+        software_muted = self._initial_muted
 
         if self._use_software_volume:
-            player.set_volume(self._volume, muted=self._muted)
+            player.set_volume(software_volume, muted=software_muted)
 
         while True:
             try:
@@ -155,19 +170,21 @@ class _AudioSyncWorker:
             except Exception:
                 break
 
-            if item.kind == "stop":
+            if isinstance(item, _StopWorkItem):
                 break
 
-            if item.kind == "clear":
+            if isinstance(item, _ClearWorkItem):
                 player.clear()
                 continue
 
-            if item.kind == "set_volume":
+            if isinstance(item, _SetVolumeWorkItem):
                 if self._use_software_volume:
-                    player.set_volume(item.volume, muted=item.muted)
+                    software_volume = item.volume
+                    software_muted = item.muted
+                    player.set_volume(software_volume, muted=software_muted)
                 continue
 
-            if item.kind != "chunk" or item.fmt is None:
+            if not isinstance(item, _ChunkWorkItem):
                 continue
 
             fmt = item.fmt
@@ -188,7 +205,7 @@ class _AudioSyncWorker:
                     flac_decoder = None
 
                 if self._use_software_volume:
-                    player.set_volume(self._volume, muted=self._muted)
+                    player.set_volume(software_volume, muted=software_muted)
 
             payload = item.audio_data
             if fmt.codec == AudioCodec.FLAC:
@@ -339,7 +356,7 @@ class AudioStreamHandler:
             List of unsubscribe functions for all registered listeners.
         """
         self._client = client
-        self._ensure_audio_worker()
+        self._start_audio_worker(client)
 
         return [
             client.add_audio_chunk_listener(self._on_audio_chunk),
@@ -348,12 +365,8 @@ class AudioStreamHandler:
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
 
-    def _ensure_audio_worker(self) -> None:
-        """Ensure sync worker exists and is running."""
-        client = self._client
-        if client is None:
-            return
-
+    def _start_audio_worker(self, client: SendspinClient) -> None:
+        """Start sync worker once during attach and fail fast if unavailable."""
         if self._audio_worker is None:
             self._audio_worker = _AudioSyncWorker(
                 audio_device=self._audio_device,
@@ -363,14 +376,28 @@ class AudioStreamHandler:
             )
 
         self._audio_worker.start(client.compute_play_time, client.compute_server_time)
+        if not self._audio_worker.is_running():
+            raise RuntimeError("Audio worker failed to start")
+
+    def _require_audio_worker(self) -> _AudioSyncWorker:
+        """Get a running audio worker or raise immediately."""
+        worker = self._audio_worker
+        if worker is None or not worker.is_running():
+            raise RuntimeError("Audio worker is not running")
+        return worker
+
+    def _clear_audio_worker(self) -> None:
+        """Clear worker queue when worker is available."""
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.clear()
 
     def _on_audio_chunk(
         self, server_timestamp_us: int, audio_data: bytes, fmt: AudioFormat
     ) -> None:
         """Handle incoming audio chunks by enqueueing them to the sync worker."""
         assert self._client is not None, "Received audio chunk but client is not attached"
-
-        self._ensure_audio_worker()
+        worker = self._require_audio_worker()
 
         pcm_format = fmt.pcm_format
         if self._current_format != fmt:
@@ -383,13 +410,11 @@ class AudioStreamHandler:
                     pcm_format.channels,
                 )
 
-        if self._audio_worker is not None:
-            self._audio_worker.submit_chunk(server_timestamp_us, audio_data, fmt)
+        worker.submit_chunk(server_timestamp_us, audio_data, fmt)
 
     def _on_stream_start(self, _message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""
-        if self._audio_worker is not None:
-            self._audio_worker.clear()
+        self._clear_audio_worker()
 
         if not self._stream_active:
             self._stream_active = True
@@ -401,8 +426,7 @@ class AudioStreamHandler:
         if roles is not None and Roles.PLAYER.value not in roles:
             return
 
-        if self._audio_worker is not None:
-            self._audio_worker.clear()
+        self._clear_audio_worker()
 
         if self._stream_active:
             self._stream_active = False
@@ -412,13 +436,11 @@ class AudioStreamHandler:
     def _on_stream_clear(self, roles: list[str] | None) -> None:
         """Handle stream clear by clearing audio queue (e.g., for seek operations)."""
         if roles is None or Roles.PLAYER.value in roles:
-            if self._audio_worker is not None:
-                self._audio_worker.clear()
+            self._clear_audio_worker()
 
     def clear_queue(self) -> None:
         """Clear the audio queue to prevent desync."""
-        if self._audio_worker is not None:
-            self._audio_worker.clear()
+        self._clear_audio_worker()
 
     async def cleanup(self) -> None:
         """Stop audio worker, hardware monitoring, and clear resources."""
