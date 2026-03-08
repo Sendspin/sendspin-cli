@@ -62,7 +62,7 @@ jobs:
             archs: x86_64
             qemu: false
           - os: ubuntu-latest
-            archs: aarch64 armv7l
+            archs: aarch64
             qemu: true
           - os: macos-latest
             archs: x86_64 arm64
