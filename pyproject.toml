@@ -49,6 +49,9 @@ test = [
   "ruff==0.14.5",
 ]
 
+[tool.setuptools.packages.find]
+include = ["sendspin*"]
+
 [tool.setuptools.package-data]
 "sendspin.serve" = ["web/*"]
 
