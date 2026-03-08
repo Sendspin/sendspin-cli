@@ -687,7 +687,7 @@ class AudioPlayer:
             self._current_chunk_offset = 0
 
         # Apply volume scaling to the output
-        self._apply_volume(output_buffer, bytes_needed)
+        self._apply_volume(output_buffer)
 
         # Track callback execution time for performance monitoring
         callback_end_us = self._now_us()
@@ -1023,7 +1023,7 @@ class AudioPlayer:
         if num_bytes > 0:
             output_buffer[offset : offset + num_bytes] = b"\x00" * num_bytes
 
-    def _apply_volume(self, output_buffer: memoryview, num_bytes: int) -> None:
+    def _apply_volume(self, output_buffer: memoryview) -> None:
         """
         Apply volume scaling to the output buffer.
 
@@ -1034,7 +1034,7 @@ class AudioPlayer:
 
         if muted or volume == 0:
             # Fill with silence
-            self._fill_silence(output_buffer, 0, num_bytes)
+            self._fill_silence(output_buffer, 0, len(output_buffer))
             return
 
         if volume == 100:

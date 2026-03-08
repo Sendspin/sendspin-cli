@@ -44,12 +44,8 @@ static PyObject *apply_volume(PyObject *self, PyObject *args) {
             if (s & 0x800000)
                 s |= (int32_t)0xFF000000;
             /* Fixed-point multiply with rounding */
-            int64_t scaled = ((int64_t)s * (int64_t)scale + ROUND_TERM) >> FRAC_BITS;
-            /* Clip to 24-bit range */
-            if (scaled > 8388607) scaled = 8388607;
-            if (scaled < -8388608) scaled = -8388608;
+            int32_t out = (int32_t)(((int64_t)s * (int64_t)scale + ROUND_TERM) >> FRAC_BITS);
             /* Pack back to 24-bit LE */
-            int32_t out = (int32_t)scaled;
             p[0] = (uint8_t)(out & 0xFF);
             p[1] = (uint8_t)((out >> 8) & 0xFF);
             p[2] = (uint8_t)((out >> 16) & 0xFF);
@@ -61,11 +57,7 @@ static PyObject *apply_volume(PyObject *self, PyObject *args) {
         Py_ssize_t count = len / 4;
         for (Py_ssize_t i = 0; i < count; i++) {
             int64_t s = (int64_t)samples[i] * (int64_t)scale + ROUND_TERM;
-            int64_t result = s >> FRAC_BITS;
-            /* Clip to 32-bit range */
-            if (result > 2147483647LL) result = 2147483647LL;
-            if (result < -2147483648LL) result = -2147483648LL;
-            samples[i] = (int32_t)result;
+            samples[i] = (int32_t)(s >> FRAC_BITS);
         }
         break;
     }
