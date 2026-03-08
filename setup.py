@@ -8,8 +8,8 @@ class OptionalBuildExt(build_ext):
     """A build_ext that treats C extensions as optional.
 
     If compilation fails (e.g. missing compiler or headers), the error is
-    reported but does not abort the build, allowing the pure-Python numpy
-    fallback to be used at runtime.
+    reported but does not abort the build, allowing the numpy fallback to be
+    used at runtime.
     """
 
     def run(self):
@@ -18,8 +18,8 @@ class OptionalBuildExt(build_ext):
         except Exception as exc:
             print(
                 "WARNING: Building C extensions for sendspin failed; "
-                "falling back to pure-Python implementation. "
-                f"Error: {exc}"
+                "falling back to numpy implementation. "
+                f"Error: {exc}",
             )
 
     def build_extension(self, ext):
@@ -29,7 +29,7 @@ class OptionalBuildExt(build_ext):
             print(
                 f"WARNING: Failed to build extension {ext.name!r}; "
                 "continuing without it. "
-                f"Error: {exc}"
+                f"Error: {exc}",
             )
 
 
