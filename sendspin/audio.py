@@ -22,7 +22,14 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
-from sendspin._volume import apply_volume as _c_apply_volume
+
+try:
+    from sendspin._volume import apply_volume as _c_apply_volume
+except ImportError:
+    _c_apply_volume = None
+    logging.getLogger(__name__).warning(
+        "C volume extension unavailable; falling back to numpy (slower)"
+    )
 from aiosendspin.models.player import SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec
 from sounddevice import CallbackFlags
@@ -1044,11 +1051,56 @@ class AudioPlayer:
         amplitude = (volume / 100.0) ** 1.5
 
         bit_depth = self._format.bit_depth if self._format else 16
+        num_bytes = len(output_buffer)
 
-        # Fixed-point volume scaling via C extension
-        bytes_per_sample = bit_depth // 8
-        scale = int(amplitude * 4294967296)  # 2**32 fixed-point
-        _c_apply_volume(output_buffer, bytes_per_sample, scale)
+        if _c_apply_volume is not None:
+            # Fast path: fixed-point volume scaling via C extension
+            bytes_per_sample = bit_depth // 8
+            scale = int(amplitude * 4294967296)  # 2**32 fixed-point
+            _c_apply_volume(output_buffer, bytes_per_sample, scale)
+        elif bit_depth == 24:
+            self._apply_volume_24bit(output_buffer, num_bytes, amplitude)
+        else:
+            import numpy as np
+
+            if bit_depth == 32:
+                dtype_str = "int32"
+                clip_min, clip_max = -2147483648, 2147483647
+            else:  # 16-bit default
+                dtype_str = "int16"
+                clip_min, clip_max = -32768, 32767
+
+            samples = np.frombuffer(output_buffer[:num_bytes], dtype=dtype_str).copy()
+            scaled = np.clip(samples.astype(np.float64) * amplitude, clip_min, clip_max)
+            output_buffer[:num_bytes] = scaled.astype(dtype_str).tobytes()
+
+    def _apply_volume_24bit(
+        self, output_buffer: memoryview, num_bytes: int, amplitude: float
+    ) -> None:
+        """Apply volume scaling to packed 24-bit audio data (numpy fallback)."""
+        import numpy as np
+
+        num_samples = num_bytes // 3
+        if num_samples == 0:
+            return
+
+        raw = np.frombuffer(output_buffer, dtype=np.uint8, count=num_bytes).reshape(-1, 3)
+        samples_i32 = (
+            raw[:, 0].astype(np.int32)
+            | (raw[:, 1].astype(np.int32) << 8)
+            | (raw[:, 2].astype(np.int32) << 16)
+        )
+        samples_i32 = np.where(
+            samples_i32 & 0x800000, samples_i32 | np.int32(-0x1000000), samples_i32
+        )
+        scaled = np.clip(samples_i32.astype(np.float64) * amplitude, -8388608, 8388607).astype(
+            np.int32
+        )
+        result = np.empty((num_samples, 3), dtype=np.uint8)
+        result[:, 0] = scaled & 0xFF
+        result[:, 1] = (scaled >> 8) & 0xFF
+        result[:, 2] = (scaled >> 16) & 0xFF
+        output_buffer[:num_bytes] = result.tobytes()
 
     def _compute_and_set_loop_start(self, server_timestamp_us: int) -> None:
         """Compute and set scheduled start time from server timestamp."""
