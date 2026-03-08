@@ -27,7 +27,7 @@ try:
     from sendspin._volume import apply_volume as _c_apply_volume
 except ImportError:
     _c_apply_volume = None
-    logging.getLogger(__name__).warning(
+    logging.getLogger(__name__).info(
         "C volume extension unavailable; falling back to numpy (slower)"
     )
 from aiosendspin.models.player import SupportedAudioFormat
