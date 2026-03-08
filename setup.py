@@ -12,7 +12,7 @@ class OptionalBuildExt(build_ext):
     used at runtime.
     """
 
-    def run(self):
+    def run(self) -> None:
         try:
             super().run()
         except Exception as exc:
@@ -22,7 +22,7 @@ class OptionalBuildExt(build_ext):
                 f"Error: {exc}",
             )
 
-    def build_extension(self, ext):
+    def build_extension(self, ext: Extension) -> None:
         try:
             super().build_extension(ext)
         except Exception as exc:
