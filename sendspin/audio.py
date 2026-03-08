@@ -30,6 +30,7 @@ except ImportError:
     logging.getLogger(__name__).info(
         "C volume extension unavailable; falling back to numpy (slower)"
     )
+    import numpy as np
 from aiosendspin.models.player import SupportedAudioFormat
 from aiosendspin.models.types import AudioCodec
 from sounddevice import CallbackFlags
@@ -1061,8 +1062,6 @@ class AudioPlayer:
         elif bit_depth == 24:
             self._apply_volume_24bit(output_buffer, num_bytes, amplitude)
         else:
-            import numpy as np
-
             if bit_depth == 32:
                 dtype_str = "int32"
                 clip_min, clip_max = -2147483648, 2147483647
@@ -1078,7 +1077,6 @@ class AudioPlayer:
         self, output_buffer: memoryview, num_bytes: int, amplitude: float
     ) -> None:
         """Apply volume scaling to packed 24-bit audio data (numpy fallback)."""
-        import numpy as np
 
         num_samples = num_bytes // 3
         if num_samples == 0:
