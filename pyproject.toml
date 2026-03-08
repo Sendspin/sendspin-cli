@@ -139,6 +139,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "sendspin/cli.py" = ["T201"]
 "sendspin/serve/__init__.py" = ["T201"]
+"setup.py" = ["T201"]
 
 select = ["ALL"]
 
