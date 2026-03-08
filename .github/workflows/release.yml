@@ -43,7 +43,7 @@ jobs:
       - name: Install build dependencies
         run: pip install build
       - name: Set Python project version from tag
-        run: sed -i 's/^version = ".*"/version = "${{ needs.validate.outputs.version }}"/' pyproject.toml
+        run: sed -i 's/^version = "0.0.0"/version = "${{ needs.validate.outputs.version }}"/' pyproject.toml
       - name: Build sdist
         run: python3 -m build --sdist
       - uses: actions/upload-artifact@v5
@@ -79,9 +79,9 @@ jobs:
       - name: Set Python project version from tag
         shell: python
         run: |
-          import re, pathlib
+          import pathlib
           p = pathlib.Path("pyproject.toml")
-          p.write_text(re.sub(r'^version = ".*"', 'version = "${{ needs.validate.outputs.version }}"', p.read_text(), count=1, flags=re.MULTILINE))
+          p.write_text(p.read_text().replace('version = "0.0.0"', 'version = "${{ needs.validate.outputs.version }}"', 1))
       - name: Set up QEMU
         if: matrix.qemu
         uses: docker/setup-qemu-action@v3
