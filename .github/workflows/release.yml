@@ -41,20 +41,9 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install build dependencies
-        run: pip install build tomli tomli-w
+        run: pip install build
       - name: Set Python project version from tag
-        shell: python
-        run: |-
-          import tomli
-          import tomli_w
-
-          with open("pyproject.toml", "rb") as f:
-            pyproject = tomli.load(f)
-
-          pyproject["project"]["version"] = "${{ needs.validate.outputs.version }}"
-
-          with open("pyproject.toml", "wb") as f:
-            tomli_w.dump(pyproject, f)
+        run: sed -i 's/^version = ".*"/version = "${{ needs.validate.outputs.version }}"/' pyproject.toml
       - name: Build sdist
         run: python3 -m build --sdist
       - uses: actions/upload-artifact@v5
@@ -87,21 +76,12 @@ jobs:
         uses: actions/setup-python@v6.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - name: Install build dependencies
-        run: pip install tomli tomli-w
       - name: Set Python project version from tag
         shell: python
-        run: |-
-          import tomli
-          import tomli_w
-
-          with open("pyproject.toml", "rb") as f:
-            pyproject = tomli.load(f)
-
-          pyproject["project"]["version"] = "${{ needs.validate.outputs.version }}"
-
-          with open("pyproject.toml", "wb") as f:
-            tomli_w.dump(pyproject, f)
+        run: |
+          import re, pathlib
+          p = pathlib.Path("pyproject.toml")
+          p.write_text(re.sub(r'^version = ".*"', 'version = "${{ needs.validate.outputs.version }}"', p.read_text(), count=1, flags=re.MULTILINE))
       - name: Set up QEMU
         if: matrix.qemu
         uses: docker/setup-qemu-action@v3
