@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING, Final, Protocol, cast
 
 import sounddevice
 from aiosendspin.client.time_sync import SendspinTimeFilter
+from aiosendspin.models.player import SupportedAudioFormat
+from aiosendspin.models.types import AudioCodec
+from sounddevice import CallbackFlags
 
 try:
     from sendspin._volume import apply_volume as _c_apply_volume
@@ -31,9 +34,6 @@ except ImportError:
         "C volume extension unavailable; falling back to numpy (slower)"
     )
     import numpy as np
-from aiosendspin.models.player import SupportedAudioFormat
-from aiosendspin.models.types import AudioCodec
-from sounddevice import CallbackFlags
 
 if TYPE_CHECKING:
     from aiosendspin.client import AudioFormat, PCMFormat
