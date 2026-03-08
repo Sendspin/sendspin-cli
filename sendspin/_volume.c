@@ -1,6 +1,7 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include <stdint.h>
+#include <string.h>
 
 /* Fixed-point precision: 32 fractional bits */
 #define FRAC_BITS 32
@@ -35,11 +36,13 @@ static PyObject *apply_volume(PyObject *self, PyObject *args) {
         break;
     }
     case 2: {
-        int16_t *samples = (int16_t *)data;
         Py_ssize_t count = len / 2;
         for (Py_ssize_t i = 0; i < count; i++) {
-            int64_t s = (int64_t)samples[i] * (int64_t)scale + ROUND_TERM;
-            samples[i] = (int16_t)(s >> FRAC_BITS);
+            int16_t sample;
+            memcpy(&sample, data + i * 2, 2);
+            int64_t s = (int64_t)sample * (int64_t)scale + ROUND_TERM;
+            int16_t out = (int16_t)(s >> FRAC_BITS);
+            memcpy(data + i * 2, &out, 2);
         }
         break;
     }
@@ -61,11 +64,13 @@ static PyObject *apply_volume(PyObject *self, PyObject *args) {
         break;
     }
     case 4: {
-        int32_t *samples = (int32_t *)data;
         Py_ssize_t count = len / 4;
         for (Py_ssize_t i = 0; i < count; i++) {
-            int64_t s = (int64_t)samples[i] * (int64_t)scale + ROUND_TERM;
-            samples[i] = (int32_t)(s >> FRAC_BITS);
+            int32_t sample;
+            memcpy(&sample, data + i * 4, 4);
+            int64_t s = (int64_t)sample * (int64_t)scale + ROUND_TERM;
+            int32_t out = (int32_t)(s >> FRAC_BITS);
+            memcpy(data + i * 4, &out, 4);
         }
         break;
     }
