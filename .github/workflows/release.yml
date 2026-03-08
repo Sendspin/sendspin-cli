@@ -90,6 +90,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.3
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CIBW_ENVIRONMENT: "SENDSPIN_REQUIRE_C_EXT=1"
           CIBW_BUILD: cp312-* cp313-*
           CIBW_ARCHS: ${{ matrix.archs }}
