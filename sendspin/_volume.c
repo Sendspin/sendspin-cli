@@ -17,6 +17,14 @@ static PyObject *apply_volume(PyObject *self, PyObject *args) {
     uint8_t *data = (uint8_t *)buf.buf;
     Py_ssize_t len = buf.len;
 
+    if (bytes_per_sample <= 0 || (len % bytes_per_sample) != 0) {
+        PyBuffer_Release(&buf);
+        PyErr_Format(PyExc_ValueError,
+                     "buffer length (%zd) is not a multiple of bytes_per_sample (%d)",
+                     len, bytes_per_sample);
+        return NULL;
+    }
+
     switch (bytes_per_sample) {
     case 1: {
         int8_t *samples = (int8_t *)data;
