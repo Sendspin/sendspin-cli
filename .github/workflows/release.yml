@@ -63,12 +63,24 @@ jobs:
           path: ./dist/*.tar.gz
 
   build-wheels:
-    name: Build wheels (${{ matrix.os }})
+    name: Build wheels (${{ matrix.os }}, ${{ matrix.archs }})
     needs: ['validate']
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            archs: x86_64
+            qemu: false
+          - os: ubuntu-latest
+            archs: aarch64 armv7l
+            qemu: true
+          - os: macos-latest
+            archs: x86_64 arm64
+            qemu: false
+          - os: windows-latest
+            archs: AMD64
+            qemu: false
     steps:
       - uses: actions/checkout@v5.0.1
       - name: Set up Python ${{ env.PYTHON_VERSION }}
@@ -91,22 +103,20 @@ jobs:
           with open("pyproject.toml", "wb") as f:
             tomli_w.dump(pyproject, f)
       - name: Set up QEMU
-        if: runner.os == 'Linux'
+        if: matrix.qemu
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: arm64
+          platforms: arm64,arm
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.3
         env:
           CIBW_ENVIRONMENT: "SENDSPIN_REQUIRE_C_EXT=1"
           CIBW_BUILD: cp312-* cp313-*
-          CIBW_ARCHS_LINUX: x86_64 aarch64
-          CIBW_ARCHS_MACOS: x86_64 arm64
-          CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ARCHS: ${{ matrix.archs }}
           CIBW_SKIP: "*-musllinux_*"
       - uses: actions/upload-artifact@v5
         with:
-          name: dist-wheels-${{ matrix.os }}
+          name: dist-wheels-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
 
   publish:
