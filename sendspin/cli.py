@@ -486,12 +486,13 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
     return await run_server(serve_config)
 
 
-async def _run_daemon_mode(args: argparse.Namespace, settings: ClientSettings) -> int:
+async def _run_daemon_mode(
+    args: argparse.Namespace, settings: ClientSettings, audio_device: AudioDevice
+) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
-    audio_device = _resolve_audio_device(args.audio_device)
 
     daemon_args = DaemonArgs(
         audio_device=audio_device,
@@ -612,18 +613,23 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
         logging.basicConfig(level=log_level, handlers=[handler])
 
-    if args.hardware_volume and not await hw_volume_check_available():
-        LOGGER.warning("PulseAudio server not reachable, falling back to software volume control")
+    audio_device = _resolve_audio_device(args.audio_device)
+
+    if args.hardware_volume and not await hw_volume_check_available(audio_device):
+        LOGGER.warning(
+            "PulseAudio server not reachable or no matching sink for device %r, "
+            "falling back to software volume control",
+            audio_device.name,
+        )
         args.hardware_volume = False
 
     # Handle daemon subcommand
     if args.command == "daemon":
-        return await _run_daemon_mode(args, settings)
+        return await _run_daemon_mode(args, settings, audio_device)
 
     from sendspin.tui.app import AppArgs, SendspinApp
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
-    audio_device = _resolve_audio_device(args.audio_device)
 
     app_args = AppArgs(
         audio_device=audio_device,

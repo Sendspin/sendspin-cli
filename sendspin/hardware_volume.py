@@ -7,7 +7,10 @@ import contextlib
 import logging
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from sendspin.audio import AudioDevice
 
 AVAILABLE = False
 UNAVAILABLE_REASON: str | None = None
@@ -34,7 +37,7 @@ logger = logging.getLogger(__name__)
 VolumeChangeCallback = Callable[[int, bool], None]
 
 
-async def async_check_available(timeout: float = 2.0) -> bool:
+async def async_check_available(audio_device: AudioDevice, timeout: float = 2.0) -> bool:
     """Check if PulseAudio is actually reachable at runtime.
 
     Returns True only if we can connect to the PulseAudio server.
@@ -50,9 +53,60 @@ async def async_check_available(timeout: float = 2.0) -> bool:
         async with asyncio.timeout(timeout):
             async with pulsectl_asyncio.PulseAsync("sendspin-cli-check") as client:
                 await client.server_info()
+                sink = await _get_sink(audio_device, client)
+                if sink is None:
+                    return False
         return True
     except Exception:  # noqa: BLE001
         return False
+
+
+def _sink_matches_device(sink: Any, device_name: str) -> bool:
+    """Return True if *sink* corresponds to the given PortAudio *device_name*."""
+    card_name = sink.proplist.get("alsa.card_name", "")
+    alsa_name = sink.proplist.get("alsa.name", "")
+    if card_name and alsa_name:
+        # PortAudio format: "<card_name>: <alsa_name> (hw:...)"
+        logger.debug(
+            "Hardware volume: checking sink %r with alsa.card_name=%r and alsa.name=%r against device name %r",
+            sink.name,
+            card_name,
+            alsa_name,
+            device_name,
+        )
+        prefix = f"{card_name}: {alsa_name}"
+        return device_name.startswith(prefix)
+    logger.debug(
+        "Hardware volume: sink %r missing alsa.card_name or alsa.name proplist fields, skipping match",
+        sink.name,
+    )
+    return False
+
+
+async def _get_sink(audio_device: AudioDevice, client: pulsectl_asyncio.PulseAsync) -> Any | None:
+    """Return the PulseAudio sink corresponding to *audio_device*, or None if not found."""
+    sinks = await client.sink_list()
+    if not sinks:
+        logger.error("Hardware volume: no PulseAudio sinks available")
+        return None
+
+    if audio_device.is_default:
+        server_info = await client.server_info()
+        sink = next((s for s in sinks if s.name == server_info.default_sink_name), None)
+        if sink is None:
+            sink = sinks[0]
+        return sink
+
+    device_name = audio_device.name
+    matched = next(
+        (s for s in sinks if _sink_matches_device(s, device_name)),
+        None,
+    )
+    if matched is not None:
+        logger.debug("Hardware volume: matched sink %r for device %r", matched.name, device_name)
+    else:
+        logger.debug("Hardware volume: no sink matched device %r", device_name)
+    return matched
 
 
 class HardwareVolumeController:
@@ -62,8 +116,9 @@ class HardwareVolumeController:
     before creating an instance. Methods assume PulseAudio is functional.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, audio_device: AudioDevice) -> None:
         """Initialize the controller."""
+        self._audio_device = audio_device
         self._watch_task: asyncio.Task[None] | None = None
 
     async def set_state(self, volume: int, *, muted: bool) -> None:
@@ -81,7 +136,7 @@ class HardwareVolumeController:
             raise ValueError(f"Volume must be 0-100, got {volume}")
 
         async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
-            sink = await self._get_default_sink(client)
+            sink = await _get_sink(self._audio_device, client)
             if sink is None:
                 raise RuntimeError("No PulseAudio sink available for hardware volume")
 
@@ -99,7 +154,7 @@ class HardwareVolumeController:
                 cannot be read.
         """
         async with pulsectl_asyncio.PulseAsync("sendspin-cli") as client:
-            sink = await self._get_default_sink(client)
+            sink = await _get_sink(self._audio_device, client)
             if sink is None:
                 raise RuntimeError("No PulseAudio sink available for hardware volume read")
 
@@ -116,15 +171,6 @@ class HardwareVolumeController:
             volume = max(0, min(100, int(round(float(volume_flat) * 100))))
             muted = bool(sink.mute)
             return volume, muted
-
-    async def _get_default_sink(self, client: pulsectl_asyncio.PulseAsync) -> Any | None:
-        """Return default sink if available, otherwise first sink."""
-        server_info = await client.server_info()
-        sinks = await client.sink_list()
-        sink = next((item for item in sinks if item.name == server_info.default_sink_name), None)
-        if sink is None and sinks:
-            sink = sinks[0]
-        return sink
 
     async def start_monitoring(self, callback: VolumeChangeCallback) -> None:
         """Start listening for external hardware volume changes.

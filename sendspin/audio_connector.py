@@ -271,7 +271,7 @@ class AudioStreamHandler:
 
         self._hw_volume: HardwareVolumeController | None = None
         if use_hardware_volume:
-            self._hw_volume = HardwareVolumeController()
+            self._hw_volume = HardwareVolumeController(audio_device)
 
     @property
     def volume(self) -> int:
