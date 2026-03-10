@@ -486,6 +486,17 @@ class AudioPlayer:
         self._volume = max(0, min(100, volume))
         self._muted = muted
 
+    def is_drained(self) -> bool:
+        """Return True when the internal audio queue is empty.
+
+        Thread-safe: called from the worker thread while the PortAudio
+        callback thread updates ``_current_chunk``.  Also returns True
+        when the stream is not actively playing (nothing to drain).
+        """
+        if not self._stream_started:
+            return True
+        return self._queue.empty() and self._current_chunk is None
+
     def stop(self) -> None:
         """Stop playback and release resources."""
         self._closed = True

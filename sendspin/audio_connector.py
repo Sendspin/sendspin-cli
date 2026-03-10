@@ -6,6 +6,7 @@ import asyncio
 import logging
 import queue
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -192,6 +193,41 @@ class _AudioSyncWorker:
             chunk_item = cast(_ChunkWorkItem, item)
             fmt = chunk_item.fmt
             if current_format != fmt:
+                # Format changed: drain old-format audio before switching
+                # to prevent pitch shift from old PCM played at new sample rate.
+                buffered_chunks: list[_ChunkWorkItem] = [chunk_item]
+                drained = player.is_drained()
+                deadline = time.monotonic() + 60.0
+
+                while not drained and time.monotonic() < deadline:
+                    try:
+                        drain_item = queue_obj.get(timeout=0.01)
+                    except queue.Empty:
+                        drained = player.is_drained()
+                        continue
+
+                    drain_type = type(drain_item)
+                    if drain_type is _StopWorkItem:
+                        player.stop()
+                        return
+                    if drain_type is _ClearWorkItem:
+                        player.clear()
+                        drained = True
+                        break
+                    if drain_type is _SetVolumeWorkItem:
+                        vol = cast(_SetVolumeWorkItem, drain_item)
+                        software_volume = vol.volume
+                        software_muted = vol.muted
+                        player.set_volume(software_volume, muted=software_muted)
+                        continue
+                    # Buffer incoming new-format chunks during drain
+                    buffered_chunks.append(cast(_ChunkWorkItem, drain_item))
+                    drained = player.is_drained()
+
+                if not drained:
+                    logger.warning("Drain timeout during format switch; forcing clear")
+                    player.clear()
+
                 current_format = fmt
                 player.set_format(fmt, device=self._audio_device)
 
@@ -209,6 +245,18 @@ class _AudioSyncWorker:
 
                 if self._use_software_volume:
                     player.set_volume(software_volume, muted=software_muted)
+
+                # Process buffered new-format chunks
+                for buffered in buffered_chunks:
+                    payload = buffered.audio_data
+                    if fmt.codec == AudioCodec.FLAC:
+                        if flac_decoder is None:
+                            flac_decoder = FlacDecoder(fmt)
+                        payload = flac_decoder.decode(payload)
+                        if not payload:
+                            continue
+                    player.submit(buffered.server_timestamp_us, payload)
+                continue
 
             payload = chunk_item.audio_data
             if fmt.codec == AudioCodec.FLAC:
