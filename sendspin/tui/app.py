@@ -7,8 +7,8 @@ import contextlib
 import logging
 import signal
 import sys
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from dataclasses import dataclass, field, fields as dataclass_fields
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
@@ -27,6 +27,17 @@ from aiosendspin.models.player import (
     PlayerCommandPayload,
     SupportedAudioFormat,
 )
+from aiosendspin.models.visualizer import ClientHelloVisualizerSupport
+
+try:
+    from aiosendspin.models.visualizer import VisualizerFrame
+except ImportError:
+    VisualizerFrame = Any
+
+try:
+    from aiosendspin.models.visualizer import ClientHelloVisualizerSpectrum
+except ImportError:
+    ClientHelloVisualizerSpectrum = None
 from aiosendspin.models.types import (
     MediaCommand,
     PlaybackStateType,
@@ -44,6 +55,7 @@ from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import SendspinUI
 from sendspin.utils import create_task, get_device_info
+from sendspin.visualizer_connector import VisualizerHandler
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +233,8 @@ class AppArgs:
     volume_controller: VolumeController | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
+    visualizer_enabled: bool = True
+    visualizer_smoothing_enabled: bool = True
 
 
 class SendspinApp:
@@ -240,11 +254,54 @@ class SendspinApp:
 
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
+        self._visualizer_handler: VisualizerHandler | None = None
         self._settings = args.settings
         self._discovery = ServiceDiscovery()
         self._connection_manager = ConnectionManager(self._discovery)
         self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
+
+    @staticmethod
+    def _ensure_draft_visualizer_api() -> None:
+        """Fail fast when an outdated aiosendspin package is installed."""
+        if Roles.VISUALIZER.value != "visualizer@_draft_r1":
+            raise RuntimeError(
+                "Installed aiosendspin does not support visualizer@_draft_r1. "
+                "Please upgrade/reinstall aiosendspin from the current refactor branch."
+            )
+        if not hasattr(SendspinClient, "add_visualizer_listener"):
+            raise RuntimeError(
+                "Installed aiosendspin client lacks visualizer listener API. "
+                "Please upgrade/reinstall aiosendspin from the current refactor branch."
+            )
+
+    @staticmethod
+    def _build_visualizer_support() -> ClientHelloVisualizerSupport:
+        """Build draft-r1 visualizer support payload for client/hello."""
+        support_fields = {f.name for f in dataclass_fields(ClientHelloVisualizerSupport)}
+        if not {"types", "batch_max", "spectrum"}.issubset(support_fields):
+            raise RuntimeError(
+                "Installed aiosendspin visualizer support model is outdated. "
+                "Please upgrade/reinstall aiosendspin from the current refactor branch."
+            )
+        if ClientHelloVisualizerSpectrum is None:
+            raise RuntimeError(
+                "Installed aiosendspin lacks ClientHelloVisualizerSpectrum. "
+                "Please upgrade/reinstall aiosendspin from the current refactor branch."
+            )
+
+        return ClientHelloVisualizerSupport(
+            buffer_capacity=65536,
+            types=["loudness", "spectrum"],
+            batch_max=8,
+            spectrum=ClientHelloVisualizerSpectrum(
+                n_disp_bins=48,
+                scale="mel",
+                f_min=20,
+                f_max=20000,
+                rate_max=30,
+            ),
+        )
 
     async def run(self) -> int:  # noqa: PLR0915
         """Run the application."""
@@ -293,16 +350,20 @@ class SendspinApp:
                 supported_formats = [f for f in supported_formats if f != args.preferred_format]
                 supported_formats.insert(0, args.preferred_format)
 
+            self._ensure_draft_visualizer_api()
+            visualizer_support = self._build_visualizer_support()
+
             self._client = SendspinClient(
                 client_id=args.client_id,
                 client_name=args.client_name,
-                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA],
+                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA, Roles.VISUALIZER],
                 device_info=get_device_info(),
                 player_support=ClientHelloPlayerSupport(
                     supported_formats=supported_formats,
                     buffer_capacity=32_000_000,
                     supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
                 ),
+                visualizer_support=visualizer_support,
                 static_delay_ms=delay,
                 initial_volume=self._audio_handler.volume,
                 initial_muted=self._audio_handler.muted,
@@ -318,6 +379,8 @@ class SendspinApp:
                 player_volume=self._audio_handler.volume,
                 player_muted=self._audio_handler.muted,
                 use_external_volume=self._audio_handler.uses_external_volume_controller,
+                visualizer_enabled=args.visualizer_enabled,
+                visualizer_smoothing_enabled=args.visualizer_smoothing_enabled,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
@@ -330,6 +393,11 @@ class SendspinApp:
             self._client.add_controller_state_listener(self._handle_server_state)
             self._client.add_server_command_listener(self._handle_server_command)
             self._audio_handler.attach_client(self._client)
+
+            self._visualizer_handler = VisualizerHandler(
+                on_frame=self._handle_visualizer_frame,
+            )
+            self._visualizer_handler.attach_client(self._client)
 
             if self._mpris:
                 self._mpris.start()
@@ -689,6 +757,11 @@ class SendspinApp:
         """Handle audio format changes by updating the UI."""
         assert self._ui is not None
         self._ui.set_audio_format(codec, sample_rate, bit_depth, channels)
+
+    def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
+        """Handle a visualizer frame from the connector."""
+        if self._ui is not None:
+            self._ui.set_visualizer_frame(frame.spectrum, frame.loudness)
 
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""

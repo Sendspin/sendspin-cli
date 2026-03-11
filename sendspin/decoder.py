@@ -87,7 +87,9 @@ class FlacDecoder:
         extract the 34-byte STREAMINFO. Otherwise, generate it from params.
         """
         if self._codec_header and len(self._codec_header) >= _FLAC_HEADER_PREFIX_SIZE + 34:
-            return self._codec_header[_FLAC_HEADER_PREFIX_SIZE : _FLAC_HEADER_PREFIX_SIZE + 34]
+            return bytes(
+                self._codec_header[_FLAC_HEADER_PREFIX_SIZE : _FLAC_HEADER_PREFIX_SIZE + 34]
+            )
 
         # Fallback: generate STREAMINFO from parameters (codec_header is optional per spec)
         streaminfo = bytearray(34)

@@ -7,12 +7,12 @@ from aiohttp import web
 from aiosendspin.server import SendspinServer
 
 
-class SendspinPlayerServer(SendspinServer):
+class SendspinPlayerServer(SendspinServer):  # type: ignore[misc]
     """SendspinServer that serves an embedded web player at /."""
 
     def _create_web_application(self) -> web.Application:
         """Create web app with embedded player and static file serving."""
-        app = super()._create_web_application()
+        app: web.Application = super()._create_web_application()
 
         # Get path to web assets directory
         web_path = Path(str(files("sendspin.serve.web")))

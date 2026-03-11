@@ -6,8 +6,9 @@ import asyncio
 import contextlib
 import logging
 import signal
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+import time
+from dataclasses import dataclass, fields as dataclass_fields
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
@@ -15,8 +16,16 @@ from aiosendspin.models.core import (
     ClientGoodbyeMessage,
     ClientGoodbyePayload,
     ServerCommandPayload,
+    StreamStartMessage,
 )
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
+from aiosendspin.models.visualizer import ClientHelloVisualizerSupport
+
+try:
+    from aiosendspin.models.visualizer import ClientHelloVisualizerSpectrum, VisualizerFrame
+except ImportError:
+    ClientHelloVisualizerSpectrum = None
+    VisualizerFrame = Any
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
     GoodbyeReason,
@@ -29,6 +38,7 @@ from sendspin.audio_connector import AudioStreamHandler
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
 from sendspin.utils import create_task, get_device_info
+from sendspin.visualizer_connector import VisualizerHandler
 
 if TYPE_CHECKING:
     from sendspin.volume_controller import VolumeController
@@ -73,11 +83,16 @@ class SendspinDaemon:
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
+        self._visualizer_handler: VisualizerHandler | None = None
+        self._visualizer_batch_count: int = 0
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
         assert self._audio_handler is not None
         client_roles = [Roles.PLAYER]
+        visualizer_support = self._build_visualizer_support()
+        if visualizer_support is not None:
+            client_roles.append(Roles.VISUALIZER)
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
@@ -96,9 +111,106 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
+            visualizer_support=visualizer_support,
             static_delay_ms=static_delay_ms,
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
+        )
+
+    @staticmethod
+    def _build_visualizer_support() -> ClientHelloVisualizerSupport | None:
+        """Build draft-r1 visualizer support payload for daemon mode."""
+        support_fields = {f.name for f in dataclass_fields(ClientHelloVisualizerSupport)}
+        if not {"types", "batch_max", "spectrum"}.issubset(support_fields):
+            logger.warning(
+                "Installed aiosendspin visualizer support model is outdated; "
+                "daemon will continue without visualizer role"
+            )
+            return None
+        return ClientHelloVisualizerSupport(
+            buffer_capacity=65536,
+            types=["loudness", "spectrum"],
+            batch_max=8,
+            spectrum=ClientHelloVisualizerSpectrum(
+                n_disp_bins=48,
+                scale="mel",
+                f_min=20,
+                f_max=20000,
+                rate_max=30,
+            ),
+        )
+
+    def _attach_visualizer_debug(self, client: SendspinClient) -> None:
+        """Attach visualizer debug callbacks for daemon mode."""
+        if not hasattr(client, "add_visualizer_listener"):
+            logger.warning(
+                "Installed aiosendspin client lacks visualizer listener API; "
+                "visualizer debug disabled"
+            )
+            return
+        # Raw binary tap: log every visualization binary payload before parsing.
+        raw_handler = getattr(client, "_handle_visualization_data", None)
+        if callable(raw_handler):
+
+            def _wrapped_visualization_data(payload: bytes) -> None:
+                logger.info(
+                    "Visualizer raw binary received: bytes=%d first8=%s",
+                    len(payload),
+                    payload[:8].hex(),
+                )
+                raw_handler(payload)
+
+            setattr(client, "_handle_visualization_data", _wrapped_visualization_data)
+            logger.info("Visualizer raw binary tap attached")
+
+        self._visualizer_batch_count = 0
+        client.add_visualizer_listener(self._on_visualizer_batch)
+        client.add_stream_start_listener(self._on_stream_start_debug)
+        self._visualizer_handler = VisualizerHandler(on_frame=self._on_visualizer_due_frame)
+        self._visualizer_handler.attach_client(client)
+
+    def _on_visualizer_batch(self, frames: list[VisualizerFrame]) -> None:
+        """Short log for each incoming visualizer binary batch."""
+        self._visualizer_batch_count += 1
+        if not frames:
+            logger.info("Visualizer batch #%d received: empty", self._visualizer_batch_count)
+            return
+        latest = frames[-1]
+        bins = len(latest.spectrum) if latest.spectrum is not None else 0
+        logger.info(
+            "Visualizer batch #%d received: frames=%d latest_ts=%d bins=%d loud=%s",
+            self._visualizer_batch_count,
+            len(frames),
+            latest.timestamp_us,
+            bins,
+            latest.loudness,
+        )
+
+    def _on_stream_start_debug(self, message: StreamStartMessage) -> None:
+        """Log stream/start payload shape for visualizer diagnostics."""
+        has_player = message.payload.player is not None
+        has_visualizer = message.payload.visualizer is not None
+        vis_types = (
+            message.payload.visualizer.get("types")
+            if isinstance(message.payload.visualizer, dict)
+            else None
+        )
+        logger.info(
+            "Stream/start received: player=%s visualizer=%s types=%s",
+            has_player,
+            has_visualizer,
+            vis_types,
+        )
+
+    def _on_visualizer_due_frame(self, frame: VisualizerFrame) -> None:
+        """Print one line whenever a frame should be visualized (timestamp due)."""
+        if frame.timestamp_us == 0 and frame.spectrum is None and frame.loudness is None:
+            return
+        bins = len(frame.spectrum) if frame.spectrum is not None else 0
+        print(  # noqa: T201
+            "[viz-due] "
+            f"mono_us={int(time.monotonic() * 1_000_000)} "
+            f"server_ts={frame.timestamp_us} bins={bins} loud={frame.loudness}"
         )
 
     async def run(self) -> int:
@@ -182,6 +294,7 @@ class SendspinDaemon:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
         self._audio_handler.attach_client(self._client)
+        self._attach_visualizer_debug(self._client)
         self._server_url = self._args.url
         self._client.add_server_command_listener(self._handle_server_command)
         await self._connection_loop(self._args.url)
@@ -210,6 +323,9 @@ class SendspinDaemon:
 
     async def _handle_disconnect(self, *, stop_mpris: bool = True) -> None:
         """Reset connection-scoped state and optionally stop MPRIS."""
+        if self._visualizer_handler is not None:
+            self._visualizer_handler.detach()
+            self._visualizer_handler = None
         if stop_mpris and self._mpris is not None:
             self._mpris.stop()
             self._mpris = None
@@ -245,6 +361,7 @@ class SendspinDaemon:
             client = self._create_client(self._static_delay_ms)
             self._client = client
             self._audio_handler.attach_client(client)
+            self._attach_visualizer_debug(client)
             client.add_server_command_listener(self._handle_server_command)
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)

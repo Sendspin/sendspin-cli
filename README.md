@@ -136,7 +136,8 @@ Settings are stored in `~/.config/sendspin/`:
   "listen_port": 8927,
   "use_mpris": true,
   "use_hardware_volume": true,
-  "hook_set_volume": "/usr/local/bin/set-avr-volume"
+  "hook_set_volume": "/usr/local/bin/set-avr-volume",
+  "visualizer_enabled": true
 }
 ```
 
@@ -170,6 +171,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `hook_set_volume` | string | TUI/daemon | Script to run for external volume control (`--hook-set-volume`). Receives the effective volume 0-100 as the last argument |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
+| `visualizer_enabled` | boolean | TUI | Enable audio visualizer (default: true) |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
 | `source_format` | string | serve | ffmpeg container format for audio source |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
@@ -310,6 +312,20 @@ Hooks receive these environment variables:
 - `SENDSPIN_SERVER_URL` - Connected server URL. Only available if client initiated the connection to the server.
 - `SENDSPIN_CLIENT_ID` - Client identifier
 - `SENDSPIN_CLIENT_NAME` - Client friendly name
+
+### Visualizer
+
+The TUI includes a real-time audio spectrum visualizer that displays frequency data received from the server. The visualizer is enabled by default.
+
+**Toggle the visualizer:**
+
+Press `v` during playback to toggle the visualizer on or off. The setting is persisted.
+
+**Disable the visualizer on startup:**
+
+```bash
+sendspin --no-visualizer
+```
 
 ### Debugging & Troubleshooting
 

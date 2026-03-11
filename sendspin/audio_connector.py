@@ -462,7 +462,7 @@ class AudioStreamHandler:
 
         worker.submit_chunk(server_timestamp_us, audio_data, fmt)
 
-    def _on_stream_start(self, _message: StreamStartMessage) -> None:
+    def _on_stream_start(self, message: StreamStartMessage) -> None:
         """Handle stream start by clearing stale audio chunks."""
         assert self._client is not None, "Received stream start but client is not attached"
         if self._audio_worker is None or not self._audio_worker.is_running():
