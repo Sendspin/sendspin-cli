@@ -102,6 +102,7 @@ class SendspinDaemon:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             static_delay_ms=static_delay_ms,
+            state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
         )
@@ -339,6 +340,14 @@ class SendspinDaemon:
         elif player_cmd.command == PlayerCommand.MUTE and player_cmd.mute is not None:
             self._audio_handler.set_volume(self._audio_handler.volume, muted=player_cmd.mute)
             logger.info("Server %s player", "muted" if player_cmd.mute else "unmuted")
+        elif (
+            player_cmd.command == PlayerCommand.SET_STATIC_DELAY
+            and player_cmd.static_delay_ms is not None
+        ):
+            # Client library already applied the delay change; persist to settings
+            assert self._client is not None
+            self._settings.update(static_delay_ms=self._client.static_delay_ms)
+            logger.info("Server set delay: %dms", player_cmd.static_delay_ms)
 
     def _handle_format_change(
         self, codec: str | None, sample_rate: int, bit_depth: int, channels: int

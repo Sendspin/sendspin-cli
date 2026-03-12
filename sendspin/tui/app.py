@@ -305,6 +305,7 @@ class SendspinApp:
             ),
             visualizer_support=visualizer_support,
             static_delay_ms=delay,
+            state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
         )
@@ -769,6 +770,16 @@ class SendspinApp:
             self._ui.add_event(
                 "Server muted player" if player_cmd.mute else "Server unmuted player"
             )
+        elif (
+            player_cmd.command == PlayerCommand.SET_STATIC_DELAY
+            and player_cmd.static_delay_ms is not None
+        ):
+            # Client library already applied the delay change;
+            # update UI and persist to settings
+            assert self._client is not None
+            self._ui.set_delay(self._client.static_delay_ms)
+            self._settings.update(static_delay_ms=self._client.static_delay_ms)
+            self._ui.add_event(f"Server set delay: {player_cmd.static_delay_ms}ms")
 
     def _handle_format_change(
         self, codec: str | None, sample_rate: int, bit_depth: int, channels: int

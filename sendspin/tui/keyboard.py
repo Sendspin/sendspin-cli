@@ -112,7 +112,8 @@ class CommandHandler:
         client = self._get_client()
         if client is None:
             return
-        client.set_static_delay_ms(client.static_delay_ms + delta)
+        new_delay = max(0, min(5000, client.static_delay_ms + delta))
+        client.set_static_delay_ms(new_delay)
         self._ui.set_delay(client.static_delay_ms)
         self._settings.update(static_delay_ms=client.static_delay_ms)
 
