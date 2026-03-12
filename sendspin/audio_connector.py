@@ -212,6 +212,7 @@ class _AudioSyncWorker:
                         return
                     if drain_type is _ClearWorkItem:
                         player.clear()
+                        buffered_chunks.clear()
                         drained = True
                         break
                     if drain_type is _SetVolumeWorkItem:
@@ -250,8 +251,7 @@ class _AudioSyncWorker:
                 for buffered in buffered_chunks:
                     payload = buffered.audio_data
                     if fmt.codec == AudioCodec.FLAC:
-                        if flac_decoder is None:
-                            flac_decoder = FlacDecoder(fmt)
+                        assert flac_decoder is not None
                         payload = flac_decoder.decode(payload)
                         if not payload:
                             continue
