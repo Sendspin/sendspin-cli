@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
 set -eu
 
-my_path=$(git rev-parse --show-toplevel)
-exec "${my_path}/scripts/run-in-env.sh" python -m sendspin.cli "$@"
+cd "$(git rev-parse --show-toplevel)"
+exec uv run --no-sync sendspin "$@"
