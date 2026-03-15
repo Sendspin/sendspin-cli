@@ -13,6 +13,11 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any, Protocol
 
+from sendspin.alsa_volume import AVAILABLE as ALSA_AVAILABLE
+from sendspin.alsa_volume import (
+    AlsaVolumeController,
+    async_check_alsa_available as alsa_volume_check_available,
+)
 from sendspin.hardware_volume import AVAILABLE as HW_VOLUME_AVAILABLE
 from sendspin.hardware_volume import HardwareVolumeController
 from sendspin.hardware_volume import UNAVAILABLE_REASON as HW_VOLUME_UNAVAILABLE_REASON
@@ -678,14 +683,17 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         if settings.use_hardware_volume is not None:
             args.hardware_volume = settings.use_hardware_volume
         else:
-            args.hardware_volume = is_daemon and HW_VOLUME_AVAILABLE
+            args.hardware_volume = is_daemon and (HW_VOLUME_AVAILABLE or ALSA_AVAILABLE)
     if args.hook_set_volume is None:
         args.hook_set_volume = settings.hook_set_volume
     if not args.hook_set_volume and args.hardware_volume and not HW_VOLUME_AVAILABLE:
-        raise CLIError(
-            f"Hardware volume control is not available on this system. "
-            f"{HW_VOLUME_UNAVAILABLE_REASON or 'Use --hardware-volume false to disable.'}"
-        )
+        # ALSA volume control (via amixer) does not require PulseAudio, so
+        # only error out when we are also not on Linux (where ALSA is available).
+        if not ALSA_AVAILABLE:
+            raise CLIError(
+                f"Hardware volume control is not available on this system. "
+                f"{HW_VOLUME_UNAVAILABLE_REASON or 'Use --hardware-volume false to disable.'}"
+            )
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -705,24 +713,32 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
 
     audio_device = _resolve_audio_device(args.audio_device)
 
-    if (
-        not args.hook_set_volume
-        and args.hardware_volume
-        and not await hw_volume_check_available(audio_device)
-    ):
-        LOGGER.warning(
-            "PulseAudio server not reachable or no matching sink for device %r, "
-            "falling back to software volume control",
-            audio_device.name,
-        )
-        args.hardware_volume = False
-
     volume_controller: VolumeController | None = None
     if args.hook_set_volume:
         LOGGER.info("Using hook-based external volume control via %s", args.hook_set_volume)
         volume_controller = HookVolumeController(args.hook_set_volume, settings)
     elif args.hardware_volume:
-        volume_controller = HardwareVolumeController(audio_device)
+        # Try ALSA direct control first (works for hw: devices without PulseAudio).
+        alsa_info = await alsa_volume_check_available(audio_device)
+        if alsa_info is not None:
+            card, element = alsa_info
+            LOGGER.info(
+                "Using ALSA mixer volume control: card %d, element %r",
+                card,
+                element,
+            )
+            volume_controller = AlsaVolumeController(card=card, element=element)
+        elif await hw_volume_check_available(audio_device):
+            # Fall back to PulseAudio for virtual devices or when ALSA has no mixer.
+            volume_controller = HardwareVolumeController(audio_device)
+        else:
+            LOGGER.warning(
+                "No volume control available for device %r "
+                "(no ALSA mixer controls and PulseAudio/PipeWire not reachable), "
+                "falling back to software volume control",
+                audio_device.name,
+            )
+            args.hardware_volume = False
 
     # Handle daemon subcommand
     if args.command == "daemon":
