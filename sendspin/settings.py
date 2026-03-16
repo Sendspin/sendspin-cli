@@ -61,7 +61,9 @@ class BaseSettings:
     async def load(self) -> None:
         """Load settings from disk."""
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._load)
+        needs_save = await loop.run_in_executor(None, self._load)
+        if needs_save:
+            self._schedule_save()
 
     async def flush(self) -> None:
         """Immediately save any pending changes to disk."""
@@ -86,8 +88,11 @@ class BaseSettings:
         self._debounce_save_handle = None
         loop.run_in_executor(None, self._save)
 
-    def _load(self) -> None:
-        """Load settings from the settings file (blocking I/O)."""
+    def _load(self) -> bool:
+        """Load settings from the settings file (blocking I/O).
+
+        Returns True if a save is needed (e.g., migration applied).
+        """
         raise NotImplementedError
 
     def _save(self) -> None:
@@ -179,11 +184,12 @@ class ClientSettings(BaseSettings):
         if changed:
             self._schedule_save()
 
-    def _load(self) -> None:
+    def _load(self) -> bool:
         """Load settings from the settings file (blocking I/O)."""
+        needs_save = False
         if self._settings_file is None or not self._settings_file.exists():
             logger.debug("Settings file does not exist: %s", self._settings_file)
-            return
+            return False
 
         try:
             data = json.loads(self._settings_file.read_text())
@@ -194,6 +200,14 @@ class ClientSettings(BaseSettings):
             self.player_volume = data.get("player_volume", 25)
             self.player_muted = data.get("player_muted", False)
             self.static_delay_ms = data.get("static_delay_ms", 0.0)
+            # Migrate old sign convention: negative values meant "play earlier",
+            # new convention uses positive values (0-5000) for the same effect.
+            if self.static_delay_ms < 0:
+                self.static_delay_ms = min(5000.0, -self.static_delay_ms)
+                needs_save = True
+            elif self.static_delay_ms > 5000:
+                self.static_delay_ms = 5000.0
+                needs_save = True
             self.last_server_url = data.get("last_server_url")
             self.client_id = data.get("client_id")
             self.audio_device = data.get("audio_device")
@@ -214,6 +228,7 @@ class ClientSettings(BaseSettings):
             )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+        return needs_save
 
 
 @dataclass
@@ -249,11 +264,11 @@ class ServeSettings(BaseSettings):
         if changed:
             self._schedule_save()
 
-    def _load(self) -> None:
+    def _load(self) -> bool:
         """Load settings from the settings file (blocking I/O)."""
         if self._settings_file is None or not self._settings_file.exists():
             logger.debug("Settings file does not exist: %s", self._settings_file)
-            return
+            return False
 
         try:
             data = json.loads(self._settings_file.read_text())
@@ -266,6 +281,7 @@ class ServeSettings(BaseSettings):
             logger.info("Loaded settings from %s", self._settings_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+        return False
 
 
 async def get_client_settings(
