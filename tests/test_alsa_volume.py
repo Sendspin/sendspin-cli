@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
+from typing import NoReturn
 from types import SimpleNamespace
 
 import sendspin.alsa_volume as _alsa_mod
@@ -25,11 +27,14 @@ class _FakeProcess:
         return self._stdout, self._stderr
 
 
-def _amixer_exec(stdout: str, returncode: int = 0):
+_AmixerExecFactory = Callable[..., Awaitable[_FakeProcess]]
+
+
+def _amixer_exec(stdout: str, returncode: int = 0) -> _AmixerExecFactory:
     """Return an async factory that produces a fake amixer process."""
     proc = _FakeProcess(returncode=returncode, stdout=stdout.encode())
 
-    async def factory(*args, **kwargs):
+    async def factory(*args: object, **kwargs: object) -> _FakeProcess:
         return proc
 
     return factory
@@ -71,7 +76,7 @@ def test_find_mixer_element_digital(monkeypatch) -> None:
     sget_with_pvolume = "  Capabilities: pvolume pswitch\n"
     sget_without_pvolume = "  Capabilities: enum\n"
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols.encode())
         # 'Analogue' is first in scontrols but has pvolume too; however
@@ -96,7 +101,7 @@ def test_find_mixer_element_master(monkeypatch) -> None:
     sget_pvolume = "  Capabilities: pvolume pswitch\n"
     sget_no_pvolume = "  Capabilities: enum\n"
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols.encode())
         if "Master" in argv:
@@ -133,7 +138,7 @@ def test_find_mixer_element_none_on_amixer_failure(monkeypatch) -> None:
 def test_find_mixer_element_none_when_amixer_not_found(monkeypatch) -> None:
     """Gracefully handle amixer not being installed."""
 
-    async def not_found(*args, **kwargs):
+    async def not_found(*args: object, **kwargs: object) -> NoReturn:
         raise FileNotFoundError("amixer")
 
     async def exercise() -> str | None:
@@ -158,7 +163,7 @@ def test_find_mixer_element_capability_scan_fallback(monkeypatch) -> None:
         "  Playback channels: Front Left - Front Right\n"
     )
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols_output.encode())
         # sget calls: return capabilities based on element name
@@ -178,7 +183,7 @@ def test_find_mixer_element_capability_scan_skips_capture_only(monkeypatch) -> N
     scontrols_output = "Simple mixer control 'Mic',0\n"
     sget_mic = "Simple mixer control 'Mic',0\n  Capabilities: cvolume cswitch\n"
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols_output.encode())
         return _FakeProcess(stdout=sget_mic.encode())
@@ -197,7 +202,7 @@ def test_set_state_calls_amixer_sset(monkeypatch) -> None:
     """set_state runs amixer sset with percentage and mute/unmute."""
     calls: list[tuple[str, ...]] = []
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         calls.append(argv)
         return _FakeProcess()
 
@@ -214,7 +219,7 @@ def test_set_state_muted(monkeypatch) -> None:
     """When muted, amixer is called with 'mute'."""
     calls: list[tuple[str, ...]] = []
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         calls.append(argv)
         return _FakeProcess()
 
@@ -342,7 +347,7 @@ def test_alsa_available_for_hw_device_with_mixer(monkeypatch) -> None:
     scontrols = "Simple mixer control 'Digital',0\n"
     sget_pvolume = "  Capabilities: pvolume pswitch\n"
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols.encode())
         return _FakeProcess(stdout=sget_pvolume.encode())
@@ -411,7 +416,7 @@ def test_hifiberry_dac_discovery(monkeypatch) -> None:
     sget_with_pvolume = "  Capabilities: pvolume pswitch\n"
     sget_without_pvolume = "  Capabilities: enum\n"
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=_HIFIBERRY_SCONTROLS.encode())
         if "Digital" in argv:
@@ -431,7 +436,7 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
     """Set and read volume on a simulated HiFiBerry DAC+ HAT."""
     calls: list[tuple[str, ...]] = []
 
-    async def fake_exec(*argv, **kwargs):
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         calls.append(argv)
         # Return sget-style output for get_state calls
         return _FakeProcess(stdout=_HIFIBERRY_SGET_74.encode())
