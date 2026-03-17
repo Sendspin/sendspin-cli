@@ -91,22 +91,30 @@ uv tool upgrade sendspin
 pip install --upgrade sendspin
 ```
 
-**If installed as systemd daemon:**
+**If installed as systemd daemon (Linux):**
 
-The systemd daemon preserves your configuration during updates. Simply upgrade the package:
+The simplest way to update is to re-run the install script — it detects the existing installation and upgrades it automatically:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/install-systemd.sh | sudo bash
+```
+
+The script upgrades the package, preserves your configuration, and restarts the service.
+
+Alternatively, you can upgrade manually:
 
 ```bash
 # Upgrade sendspin (the daemon installer uses uv by default)
-uv tool upgrade sendspin
+sudo -u sendspin bash -l -c "uv tool upgrade sendspin"
 
-# Or if you installed with pip
-pip install --upgrade sendspin
+# Or if you run sendspin as your own user
+uv tool upgrade sendspin
 
 # Restart the service to use the new version
 sudo systemctl restart sendspin
 ```
 
-Your client name, audio device selection, and other settings in `/etc/default/sendspin` are preserved during the update.
+Your client name, audio device selection, and other settings in `~/.config/sendspin/` are preserved during the update.
 
 > **Note:** You do **not** need to uninstall and reinstall when updating. Your configuration (client name, audio device, delay settings) is stored separately and will be preserved.
 
