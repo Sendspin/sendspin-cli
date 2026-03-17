@@ -79,14 +79,28 @@ def test_find_mixer_element_digital(monkeypatch) -> None:
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols.encode())
-        # 'Analogue' is first in scontrols but has pvolume too; however
-        # the real HiFiBerry lists it before Digital. We simulate that
-        # only 'Digital' has pvolume to test the scan skips non-pvolume.
-        if "Analogue" in argv:
-            return _FakeProcess(stdout=sget_without_pvolume.encode())
-        if "Digital" in argv:
+        # On real HiFiBerry DAC+ (PCM5122), both Analogue and Digital
+        # have pvolume. The preference logic should pick Digital.
+        if "Analogue" in argv or "Digital" in argv:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
+
+    async def exercise() -> str | None:
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        return await find_mixer_element(1)
+
+    assert asyncio.run(exercise()) == "Digital"
+
+
+def test_find_mixer_element_prefers_digital_over_analogue(monkeypatch) -> None:
+    """When both Analogue and Digital have pvolume, Digital is preferred."""
+    scontrols = "Simple mixer control 'Analogue',0\nSimple mixer control 'Digital',0\n"
+    sget_with_pvolume = "  Capabilities: pvolume pswitch\n"
+
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
+        if "scontrols" in argv:
+            return _FakeProcess(stdout=scontrols.encode())
+        return _FakeProcess(stdout=sget_with_pvolume.encode())
 
     async def exercise() -> str | None:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
@@ -419,7 +433,8 @@ def test_hifiberry_dac_discovery(monkeypatch) -> None:
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=_HIFIBERRY_SCONTROLS.encode())
-        if "Digital" in argv:
+        # Both Analogue and Digital have pvolume on real hardware.
+        if "Analogue" in argv or "Digital" in argv:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
 
