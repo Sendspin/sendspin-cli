@@ -45,6 +45,7 @@ async def _has_playback_volume(card: int, element: str) -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
             "amixer",
+            "-M",
             "-c",
             str(card),
             "sget",
@@ -148,6 +149,7 @@ class AlsaVolumeController:
         mute_arg = "mute" if muted else "unmute"
         proc = await asyncio.create_subprocess_exec(
             "amixer",
+            "-M",
             "-c",
             self._card,
             "sset",
@@ -169,6 +171,7 @@ class AlsaVolumeController:
         """Read ALSA mixer volume and mute state."""
         proc = await asyncio.create_subprocess_exec(
             "amixer",
+            "-M",
             "-c",
             self._card,
             "sget",

@@ -1059,8 +1059,11 @@ class AudioPlayer:
         if volume == 100:
             return
 
-        # Power curve for natural volume control (gentler at high volumes)
-        amplitude = (volume / 100.0) ** 1.5
+        # Linear amplitude scaling – the protocol's delta-based group volume
+        # mechanism already adjusts player volumes proportionally, so a steep
+        # power curve here compounds the reduction and makes low volumes
+        # inaudible too quickly.
+        amplitude = volume / 100.0
 
         bit_depth = self._format.bit_depth if self._format else 16
         num_bytes = len(output_buffer)

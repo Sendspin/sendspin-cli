@@ -212,7 +212,7 @@ def test_set_state_calls_amixer_sset(monkeypatch) -> None:
         await ctrl.set_state(75, muted=False)
 
     asyncio.run(exercise())
-    assert calls == [("amixer", "-c", "1", "sset", "Digital", "playback", "75%", "unmute")]
+    assert calls == [("amixer", "-M", "-c", "1", "sset", "Digital", "playback", "75%", "unmute")]
 
 
 def test_set_state_muted(monkeypatch) -> None:
@@ -229,7 +229,7 @@ def test_set_state_muted(monkeypatch) -> None:
         await ctrl.set_state(50, muted=True)
 
     asyncio.run(exercise())
-    assert calls == [("amixer", "-c", "1", "sset", "Digital", "playback", "50%", "mute")]
+    assert calls == [("amixer", "-M", "-c", "1", "sset", "Digital", "playback", "50%", "mute")]
 
 
 # -- AlsaVolumeController.get_state ------------------------------------------
@@ -447,11 +447,21 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 
         # Server sends volume command -> controller sets ALSA mixer
         await ctrl.set_state(74, muted=False)
-        assert calls[-1] == ("amixer", "-c", "1", "sset", "Digital", "playback", "74%", "unmute")
+        assert calls[-1] == (
+            "amixer",
+            "-M",
+            "-c",
+            "1",
+            "sset",
+            "Digital",
+            "playback",
+            "74%",
+            "unmute",
+        )
 
         # Read back the volume
         volume, muted = await ctrl.get_state()
-        assert calls[-1] == ("amixer", "-c", "1", "sget", "Digital")
+        assert calls[-1] == ("amixer", "-M", "-c", "1", "sget", "Digital")
         assert volume == 74
         assert muted is False
 
