@@ -116,6 +116,25 @@ sudo systemctl restart sendspin
 
 Your client name, audio device selection, and other settings in `~/.config/sendspin/` are preserved during the update.
 
+**Testing a development branch:**
+
+You can install directly from a Git branch to test unreleased changes:
+
+```bash
+# Install a specific branch (use --force to replace the current installation)
+uv tool install --force 'sendspin @ git+https://github.com/Sendspin/sendspin-cli.git@branch-name'
+
+# For a systemd daemon running as the dedicated sendspin user
+sudo -u sendspin bash -l -c "uv tool install --force 'sendspin @ git+https://github.com/Sendspin/sendspin-cli.git@branch-name'"
+sudo systemctl restart sendspin
+```
+
+To switch back to the latest stable release:
+
+```bash
+uv tool install --force sendspin
+```
+
 > **Note:** You do **not** need to uninstall and reinstall when updating. Your configuration (client name, audio device, delay settings) is stored separately and will be preserved.
 
 ## Configuration Options
