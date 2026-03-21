@@ -202,7 +202,7 @@ body.is-listening .card {
 }
 
 .control-card {
-  overflow: hidden;
+  overflow: visible;
   padding: 18px;
 }
 
@@ -276,30 +276,25 @@ body.is-listening #listen-toggle-btn {
   opacity: 0;
   overflow: hidden;
   margin-top: 0;
-  padding-top: 0;
-  border-top: 1px solid transparent;
   transform: translateY(-32px);
   transform-origin: top center;
   transition:
     max-height 0.55s cubic-bezier(0.22, 1, 0.36, 1),
     opacity 0.28s ease,
     margin-top 0.55s ease,
-    padding-top 0.55s ease,
-    border-color 0.35s ease,
     transform 0.55s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .control-card.is-expanded .sync-panel {
   max-height: 420px;
   opacity: 1;
+  overflow: visible;
   margin-top: 18px;
-  padding-top: 18px;
-  border-top-color: rgba(255, 255, 255, 0.18);
   transform: translateY(0);
 }
 
 .sync-panel-header,
-.sync-gauge {
+.sync-graph-shell {
   opacity: 0;
   transform: translateY(-12px);
   transition:
@@ -308,7 +303,7 @@ body.is-listening #listen-toggle-btn {
 }
 
 .control-card.is-expanded .sync-panel-header,
-.control-card.is-expanded .sync-gauge {
+.control-card.is-expanded .sync-graph-shell {
   opacity: 1;
   transform: translateY(0);
 }
@@ -317,15 +312,16 @@ body.is-listening #listen-toggle-btn {
   transition-delay: 0.08s;
 }
 
-.control-card.is-expanded .sync-gauge {
+.control-card.is-expanded .sync-graph-shell {
   transition-delay: 0.14s;
 }
 
 .sync-panel-header {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 10px;
 }
 
 .sync-panel-title {
@@ -336,224 +332,56 @@ body.is-listening #listen-toggle-btn {
   text-transform: uppercase;
 }
 
-.sync-badge {
-  font-size: 12px;
-  color: var(--text-secondary);
-  background: rgba(0, 0, 0, 0.18);
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.sync-badge.sync-good {
-  color: #ffffff;
-  background: rgba(24, 94, 61, 0.88);
-  border-color: rgba(187, 255, 214, 0.22);
-}
-
-.sync-badge.sync-warn {
-  color: #ffca28;
-}
-
-.sync-badge.sync-bad {
-  color: var(--error);
-}
-
-.sync-gauge {
-  display: flex;
-  justify-content: center;
-  padding: 10px 0 2px;
-}
-
-.sync-dial {
-  position: relative;
-  width: min(100%, 252px);
-  aspect-ratio: 1;
-  padding: 14px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 28% 24%,
-    #7c7c7c 0%,
-    #4a4a4a 18%,
-    #222222 48%,
-    #0b0b0b 100%
-  );
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.16),
-    inset 0 -10px 14px rgba(0, 0, 0, 0.65),
-    0 18px 30px rgba(0, 0, 0, 0.3);
-}
-
-body.is-listening .control-card.is-expanded .sync-dial {
-  animation: dial-breathe 4.5s ease-in-out infinite;
-}
-
-.sync-dial.sync-good {
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.16),
-    inset 0 -10px 14px rgba(0, 0, 0, 0.65),
-    0 0 18px rgba(76, 175, 80, 0.16),
-    0 18px 30px rgba(0, 0, 0, 0.3);
-}
-
-.sync-dial.sync-warn {
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.16),
-    inset 0 -10px 14px rgba(0, 0, 0, 0.65),
-    0 0 18px rgba(255, 202, 40, 0.14),
-    0 18px 30px rgba(0, 0, 0, 0.3);
-}
-
-.sync-dial.sync-bad {
-  box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.16),
-    inset 0 -10px 14px rgba(0, 0, 0, 0.65),
-    0 0 18px rgba(244, 67, 54, 0.14),
-    0 18px 30px rgba(0, 0, 0, 0.3);
-}
-
-.sync-dial-face {
-  position: absolute;
-  inset: 14px;
-  border-radius: 50%;
-  overflow: hidden;
-  background: radial-gradient(
-    circle at 50% 34%,
-    #2d2a25 0%,
-    #171513 58%,
-    #090807 100%
-  );
-  box-shadow:
-    inset 0 0 0 2px rgba(255, 244, 224, 0.08),
-    inset 0 16px 22px rgba(255, 255, 255, 0.04),
-    inset 0 -20px 26px rgba(0, 0, 0, 0.55);
-}
-
-.sync-dial-face::before {
-  content: "";
-  position: absolute;
-  inset: 8%;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 228, 180, 0.08);
-}
-
-.sync-dial-mark {
-  position: absolute;
-  inset: 0;
-  transform: rotate(var(--angle));
-}
-
-.sync-dial-mark::before {
-  content: "";
-  position: absolute;
-  top: 10%;
-  left: 50%;
-  width: 3px;
-  height: 15%;
-  background: linear-gradient(180deg, #fff0ca 0%, #b88d49 100%);
-  border-radius: 999px;
-  transform: translateX(-50%);
-  box-shadow: 0 0 4px rgba(255, 204, 128, 0.15);
-}
-
-.sync-dial-mark.minor::before {
-  width: 2px;
-  height: 11%;
-  opacity: 0.75;
-}
-
-.sync-dial-label {
-  position: absolute;
-  font-size: 12px;
+.sync-readout {
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.04em;
-  color: #cfb27a;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: rgba(239, 225, 187, 0.86);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 }
 
-.sync-dial-label-left {
-  top: 72%;
-  left: 22%;
-  transform: translate(-50%, -50%) rotate(-29.5deg);
+.sync-readout.sync-good {
+  color: #f5fff6;
 }
 
-.sync-dial-label-right {
-  top: 71%;
-  left: 77%;
-  transform: translate(-50%, -50%) rotate(29.5deg);
+.sync-readout.sync-warn {
+  color: #ffe082;
 }
 
-.sync-gauge-needle.sync-good {
-  background: var(--success);
+.sync-readout.sync-bad {
+  color: #ff9a92;
 }
 
-.sync-gauge-needle.sync-warn {
-  background: #ffca28;
+.sync-graph-shell {
+  position: relative;
+  height: 143px;
+  margin-left: -18px;
+  margin-right: -18px;
+  margin-bottom: -18px;
+  border-radius: 0 0 22px 22px;
+  overflow: hidden;
+  background: transparent;
 }
 
-.sync-gauge-needle.sync-bad {
-  background: var(--error);
+.sync-graph-shell.sync-good {
+  background: transparent;
 }
 
-.sync-dial-brand {
-  position: absolute;
-  top: 56%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  color: #efe1bb;
+.sync-graph-shell.sync-warn {
+  background: transparent;
 }
 
-.sync-dial-unit {
-  position: absolute;
-  top: 64%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  font-size: 9px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: rgba(239, 225, 187, 0.68);
+.sync-graph-shell.sync-bad {
+  background: transparent;
 }
 
-.sync-gauge-needle {
-  position: absolute;
-  left: 50%;
-  bottom: 50%;
-  width: 4px;
-  height: 35%;
-  border-radius: 999px 999px 3px 3px;
-  background: linear-gradient(180deg, #fff5df 0%, #d86149 26%, #671810 100%);
-  box-shadow:
-    0 0 10px rgba(216, 97, 73, 0.2),
-    0 0 0 1px rgba(255, 255, 255, 0.08);
-  transform: translateX(-50%) rotate(0deg);
-  transform-origin: center bottom;
-  transition:
-    transform 0.35s ease-out,
-    background 0.2s ease,
-    box-shadow 0.2s ease;
-}
-
-.sync-gauge-cap {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 32% 28%,
-    #fff6dd 0%,
-    #c79f59 34%,
-    #765626 65%,
-    #2a1b0a 100%
-  );
-  box-shadow:
-    inset 0 1px 2px rgba(255, 255, 255, 0.35),
-    0 2px 6px rgba(0, 0, 0, 0.45);
-  transform: translate(-50%, -50%);
+.sync-graph {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 0 0 22px 22px;
 }
 
 .share {
@@ -707,17 +535,6 @@ footer .separator {
   }
 }
 
-@keyframes dial-breathe {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-
-  50% {
-    transform: translateY(-3px) scale(1.01);
-  }
-}
-
 @media (max-width: 480px) {
   body {
     padding: 16px;
@@ -735,6 +552,13 @@ footer .separator {
   #listen-toggle-btn {
     min-height: 72px;
     font-size: 19px;
+  }
+
+  .sync-graph-shell {
+    height: 133px;
+    margin-left: -18px;
+    margin-right: -18px;
+    margin-bottom: -18px;
   }
 }
 

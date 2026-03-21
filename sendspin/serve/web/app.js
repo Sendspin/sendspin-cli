@@ -4,13 +4,20 @@
  */
 
 const MAX_VOLUME = 100;
-const SYNC_GAUGE_RANGE_MS = 50;
-const SYNC_DISPLAY_ALPHA = 0.18;
-const SYNC_DISPLAY_RESET_MS = 1000;
+const SYNC_GRAPH_RANGE_MS = 50;
+const SYNC_HISTORY_LENGTH = 180;
+const GRAPH_SAMPLE_INTERVAL_MS = 45;
 const UI_ACTIVATION_MS = 550;
 const START_HAPTIC_PATTERN = [18, 28, 24];
 const STOP_HAPTIC_PATTERN = [14];
 const SYNC_CLASSES = ["sync-good", "sync-warn", "sync-bad", "sync-idle"];
+const SYNC_PLACEHOLDER = "--.- ms";
+const TONE_COLORS = {
+  "sync-idle": [239, 225, 187],
+  "sync-good": [245, 255, 246],
+  "sync-warn": [255, 224, 130],
+  "sync-bad": [255, 154, 146],
+};
 
 // DOM elements
 const elements = {
@@ -19,8 +26,8 @@ const elements = {
   listenToggleBtn: document.getElementById("listen-toggle-btn"),
   syncPanel: document.getElementById("sync-panel"),
   syncStatus: document.getElementById("sync-status"),
-  syncDial: document.getElementById("sync-dial"),
-  syncGaugeNeedle: document.getElementById("sync-gauge-needle"),
+  syncGraphShell: document.getElementById("sync-graph-shell"),
+  syncGraph: document.getElementById("sync-graph"),
   shareCard: document.getElementById("share-card"),
   qrCode: document.getElementById("qr-code"),
   shareBtn: document.getElementById("share-btn"),
@@ -28,14 +35,17 @@ const elements = {
   castLink: document.getElementById("cast-link"),
 };
 
-// Player instance
+// Player instance and UI state
 let player = null;
 let syncUpdateInterval = null;
+let syncGraphFrame = null;
 let isListening = false;
 let isStarting = false;
 let showPostAnimationLabel = false;
-let smoothedSyncMs = null;
-let lastSyncSampleAtMs = 0;
+let currentSyncMs = null;
+let currentTone = "sync-idle";
+let graphLastSampleAtMs = 0;
+let graphHistory = [];
 
 // Auto-derive server URL from current page location
 const serverUrl = `${location.protocol}//${location.host}`;
@@ -60,59 +70,55 @@ function triggerHaptic(pattern) {
   }
 }
 
-function updateGaugeNeedle(syncMs) {
-  const clampedSyncMs = Math.max(
-    -SYNC_GAUGE_RANGE_MS,
-    Math.min(SYNC_GAUGE_RANGE_MS, syncMs),
-  );
-  const angle = (clampedSyncMs / SYNC_GAUGE_RANGE_MS) * 120;
-  elements.syncGaugeNeedle.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function resetDisplayedSync() {
-  smoothedSyncMs = null;
-  lastSyncSampleAtMs = 0;
+function rgba(color, alpha) {
+  const [red, green, blue] = color;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
-function getDisplayedSyncMs(syncMs) {
-  const nowMs = performance.now();
-  if (
-    smoothedSyncMs === null ||
-    nowMs - lastSyncSampleAtMs > SYNC_DISPLAY_RESET_MS
-  ) {
-    smoothedSyncMs = syncMs;
-  } else {
-    smoothedSyncMs += (syncMs - smoothedSyncMs) * SYNC_DISPLAY_ALPHA;
+function formatSyncValue(syncMs) {
+  const normalizedSyncMs = Math.abs(syncMs) < 0.05 ? 0 : syncMs;
+  return `${normalizedSyncMs.toFixed(1)} ms`;
+}
+
+function getSyncTone(syncMs) {
+  const absSyncMs = Math.abs(syncMs);
+  if (absSyncMs < 10) {
+    return "sync-good";
   }
-  lastSyncSampleAtMs = nowMs;
-  return smoothedSyncMs;
+  if (absSyncMs <= 25) {
+    return "sync-warn";
+  }
+  return "sync-bad";
+}
+
+function clearGraphHistory() {
+  graphHistory = [];
+  graphLastSampleAtMs = 0;
 }
 
 function setSyncTone(tone) {
+  currentTone = tone;
   elements.syncStatus.classList.remove(...SYNC_CLASSES);
-  elements.syncDial.classList.remove(...SYNC_CLASSES);
-  elements.syncGaugeNeedle.classList.remove(...SYNC_CLASSES);
+  elements.syncGraphShell.classList.remove(...SYNC_CLASSES);
   elements.syncStatus.classList.add(tone);
-  elements.syncDial.classList.add(tone);
-  elements.syncGaugeNeedle.classList.add(tone);
+  elements.syncGraphShell.classList.add(tone);
 }
 
-function setSyncDisplay({
-  label,
-  tone = "sync-idle",
-  needleMs = 0,
-}) {
+function setSyncDisplay({ label, tone = "sync-idle", syncMs = null }) {
+  currentSyncMs = syncMs;
   elements.syncStatus.textContent = label;
-  updateGaugeNeedle(needleMs);
   setSyncTone(tone);
 }
 
 function resetSyncDisplay() {
-  resetDisplayedSync();
   setSyncDisplay({
-    label: "Waiting",
+    label: SYNC_PLACEHOLDER,
     tone: "sync-idle",
-    needleMs: 0,
+    syncMs: null,
   });
 }
 
@@ -136,8 +142,243 @@ function updateUiState() {
 }
 
 function handlePlayerStateChange() {
-  if (!player) return;
+  if (!player) {
+    return;
+  }
   updateSyncStatus();
+}
+
+function getGraphContext() {
+  const canvas = elements.syncGraph;
+  const rect = canvas.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) {
+    return null;
+  }
+
+  const dpr = window.devicePixelRatio || 1;
+  const width = rect.width;
+  const height = rect.height;
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return null;
+  }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, width, height };
+}
+
+function getGraphMetrics(width, height) {
+  const left = 0;
+  const right = 18;
+  const top = 6;
+  const bottom = 6;
+  return {
+    width,
+    height,
+    left,
+    right,
+    top,
+    bottom,
+    plotWidth: width - left - right,
+    plotHeight: height - top - bottom,
+  };
+}
+
+function getGraphX(index, historyLength, metrics) {
+  const ageFromNewest = historyLength - 1 - index;
+  const ratio = ageFromNewest / Math.max(SYNC_HISTORY_LENGTH - 1, 1);
+  return metrics.width - metrics.right - ratio * metrics.plotWidth;
+}
+
+function getGraphY(syncMs, metrics) {
+  const clamped = clamp(syncMs, -SYNC_GRAPH_RANGE_MS, SYNC_GRAPH_RANGE_MS);
+  const ratio =
+    (SYNC_GRAPH_RANGE_MS - clamped) / (SYNC_GRAPH_RANGE_MS * 2);
+  return metrics.top + ratio * metrics.plotHeight;
+}
+
+function drawGraphGrid(ctx, metrics) {
+  const lines = [
+    { value: 50, label: "50", alpha: 0.16, dash: [] },
+    { value: 25, label: null, alpha: 0.08, dash: [4, 6] },
+    { value: 0, label: "0", alpha: 0.22, dash: [] },
+    { value: -25, label: null, alpha: 0.08, dash: [4, 6] },
+    { value: -50, label: "-50", alpha: 0.16, dash: [] },
+  ];
+
+  ctx.save();
+  ctx.font = '11px "SF Mono", "Monaco", "Menlo", monospace';
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+
+  for (const line of lines) {
+    const y = getGraphY(line.value, metrics);
+    ctx.beginPath();
+    ctx.setLineDash(line.dash);
+    ctx.moveTo(metrics.left, y);
+    ctx.lineTo(metrics.width - metrics.right, y);
+    ctx.strokeStyle = `rgba(255, 255, 255, ${line.alpha})`;
+    ctx.lineWidth = line.value === 0 ? 1.2 : 1;
+    ctx.stroke();
+
+    if (line.label !== null) {
+      const labelY = clamp(
+        y + (line.value > 0 ? 12 : line.value < 0 ? -12 : -10),
+        12,
+        metrics.height - 12,
+      );
+      ctx.fillStyle = "rgba(255, 255, 255, 0.46)";
+      ctx.fillText(line.label, metrics.width - 6, labelY);
+    }
+  }
+
+  ctx.restore();
+}
+
+function traceSmoothLine(ctx, points) {
+  if (points.length === 0) {
+    return;
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+
+  if (points.length === 1) {
+    return;
+  }
+
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const midX = (points[i].x + points[i + 1].x) / 2;
+    const midY = (points[i].y + points[i + 1].y) / 2;
+    ctx.quadraticCurveTo(points[i].x, points[i].y, midX, midY);
+  }
+
+  const lastPoint = points[points.length - 1];
+  ctx.quadraticCurveTo(lastPoint.x, lastPoint.y, lastPoint.x, lastPoint.y);
+}
+
+function drawSyncLine(ctx, metrics, history) {
+  const toneColor = TONE_COLORS[currentTone] ?? TONE_COLORS["sync-idle"];
+  const segments = [];
+  let currentSegment = [];
+
+  for (let i = 0; i < history.length; i += 1) {
+    const sample = history[i];
+    if (typeof sample.syncMs !== "number") {
+      if (currentSegment.length > 0) {
+        segments.push(currentSegment);
+        currentSegment = [];
+      }
+      continue;
+    }
+
+    currentSegment.push({
+      x: getGraphX(i, history.length, metrics),
+      y: getGraphY(sample.syncMs, metrics),
+    });
+  }
+
+  if (currentSegment.length > 0) {
+    segments.push(currentSegment);
+  }
+
+  if (segments.length === 0) {
+    return;
+  }
+
+  const strokeGradient = ctx.createLinearGradient(
+    metrics.left,
+    0,
+    metrics.width - metrics.right,
+    0,
+  );
+  strokeGradient.addColorStop(0, rgba(toneColor, 0.12));
+  strokeGradient.addColorStop(0.7, rgba(toneColor, 0.58));
+  strokeGradient.addColorStop(1, rgba(toneColor, 0.98));
+
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.strokeStyle = strokeGradient;
+  ctx.shadowBlur = 16;
+  ctx.shadowColor = rgba(toneColor, 0.28);
+
+  for (const segment of segments) {
+    traceSmoothLine(ctx, segment);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  const lastSegment = segments[segments.length - 1];
+  const lastPoint = lastSegment[lastSegment.length - 1];
+  if (!lastPoint) {
+    return;
+  }
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(lastPoint.x, lastPoint.y, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = rgba(toneColor, 0.98);
+  ctx.shadowBlur = 14;
+  ctx.shadowColor = rgba(toneColor, 0.42);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawSyncGraph() {
+  const graph = getGraphContext();
+  if (!graph) {
+    return;
+  }
+
+  const { ctx, width, height } = graph;
+  const metrics = getGraphMetrics(width, height);
+
+  ctx.clearRect(0, 0, width, height);
+  drawGraphGrid(ctx, metrics);
+  drawSyncLine(ctx, metrics, graphHistory);
+}
+
+function sampleGraphHistory() {
+  graphHistory.push({
+    syncMs: currentSyncMs,
+  });
+
+  if (graphHistory.length > SYNC_HISTORY_LENGTH) {
+    graphHistory.shift();
+  }
+}
+
+function syncGraphLoop(timestampMs) {
+  if (graphLastSampleAtMs === 0) {
+    graphLastSampleAtMs = timestampMs;
+    sampleGraphHistory();
+  }
+
+  while (timestampMs - graphLastSampleAtMs >= GRAPH_SAMPLE_INTERVAL_MS) {
+    graphLastSampleAtMs += GRAPH_SAMPLE_INTERVAL_MS;
+    sampleGraphHistory();
+  }
+
+  drawSyncGraph();
+  syncGraphFrame = window.requestAnimationFrame(syncGraphLoop);
+}
+
+function startSyncGraphLoop() {
+  if (syncGraphFrame !== null) {
+    return;
+  }
+  syncGraphFrame = window.requestAnimationFrame(syncGraphLoop);
 }
 
 /**
@@ -175,7 +416,9 @@ async function initPlayer() {
  * Update sync status display
  */
 function updateSyncStatus() {
-  if (!player) return;
+  if (!player) {
+    return;
+  }
 
   if (!player.isConnected) {
     disconnect();
@@ -189,61 +432,15 @@ function updateSyncStatus() {
       ? syncInfo.syncErrorMs
       : null;
 
-  if (!player.isPlaying) {
-    resetDisplayedSync();
-    setSyncDisplay({
-      label: "Waiting",
-      tone: "sync-idle",
-      needleMs: 0,
-    });
-    return;
-  }
-
-  if (syncMs === null) {
-    resetDisplayedSync();
-    setSyncDisplay({
-      label: "Measuring",
-      tone: "sync-idle",
-      needleMs: 0,
-    });
-    return;
-  }
-
-  const displayedSyncMs = getDisplayedSyncMs(syncMs);
-  const absSyncMs = Math.abs(displayedSyncMs);
-  const clockPrecision = syncInfo.clockPrecision;
-
-  if (clockPrecision && clockPrecision !== "precise") {
-    setSyncDisplay({
-      label: "Syncing",
-      tone: "sync-warn",
-      needleMs: displayedSyncMs,
-    });
-    return;
-  }
-
-  if (absSyncMs <= 10) {
-    setSyncDisplay({
-      label: "In Sync",
-      tone: "sync-good",
-      needleMs: displayedSyncMs,
-    });
-    return;
-  }
-
-  if (absSyncMs <= 25) {
-    setSyncDisplay({
-      label: "Adjusting",
-      tone: "sync-warn",
-      needleMs: displayedSyncMs,
-    });
+  if (!player.isPlaying || syncMs === null) {
+    resetSyncDisplay();
     return;
   }
 
   setSyncDisplay({
-    label: "Out of Sync",
-    tone: "sync-bad",
-    needleMs: displayedSyncMs,
+    label: formatSyncValue(syncMs),
+    tone: getSyncTone(syncMs),
+    syncMs,
   });
 }
 
@@ -256,13 +453,9 @@ async function startListening() {
   isStarting = true;
   showPostAnimationLabel = false;
   elements.listenToggleBtn.disabled = true;
+  clearGraphHistory();
   updateUiState();
-
-  setSyncDisplay({
-    label: "Connecting",
-    tone: "sync-idle",
-    needleMs: 0,
-  });
+  resetSyncDisplay();
 
   try {
     let connectPromise;
@@ -334,6 +527,7 @@ function disconnect() {
   showPostAnimationLabel = false;
   elements.listenToggleBtn.disabled = false;
 
+  clearGraphHistory();
   resetSyncDisplay();
   updateUiState();
 }
@@ -390,5 +584,6 @@ elements.shareBtn.addEventListener("click", async () => {
   }, 2000);
 });
 
+startSyncGraphLoop();
 updateUiState();
 resetSyncDisplay();

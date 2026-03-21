@@ -7,7 +7,7 @@
     <meta property="og:title" content="Sendspin Party" />
     <meta property="og:description" content="Experience multi-room audio with Sendspin - perfectly synchronized audio streaming across all your devices using the open Sendspin protocol." />
     <meta property="og:type" content="website" />
-    <link rel="stylesheet" href="styles.css?v=8" />
+    <link rel="stylesheet" href="styles.css?v=9" />
     <script src="https://unpkg.com/qrcode-generator@1.4.4/qrcode.js"></script>
   </head>
   <body>
@@ -27,28 +27,14 @@
         <div id="sync-panel" class="sync-panel" aria-hidden="true">
           <div class="sync-panel-header">
             <span class="sync-panel-title">Synchronization</span>
-            <span id="sync-status" class="sync-badge sync-idle">Waiting</span>
+            <span id="sync-status" class="sync-readout sync-idle">--.-</span>
           </div>
-          <div class="sync-gauge">
-            <div id="sync-dial" class="sync-dial">
-              <div class="sync-dial-face">
-                <span class="sync-dial-mark major" style="--angle: -120deg"></span>
-                <span class="sync-dial-mark minor" style="--angle: -90deg"></span>
-                <span class="sync-dial-mark major" style="--angle: -60deg"></span>
-                <span class="sync-dial-mark minor" style="--angle: -30deg"></span>
-                <span class="sync-dial-mark major" style="--angle: 0deg"></span>
-                <span class="sync-dial-mark minor" style="--angle: 30deg"></span>
-                <span class="sync-dial-mark major" style="--angle: 60deg"></span>
-                <span class="sync-dial-mark minor" style="--angle: 90deg"></span>
-                <span class="sync-dial-mark major" style="--angle: 120deg"></span>
-                <span class="sync-dial-label sync-dial-label-left">-50</span>
-                <span class="sync-dial-label sync-dial-label-right">+50</span>
-                <span class="sync-dial-brand">SYNC</span>
-                <span class="sync-dial-unit">milliseconds</span>
-                <div id="sync-gauge-needle" class="sync-gauge-needle"></div>
-                <div class="sync-gauge-cap"></div>
-              </div>
-            </div>
+          <div id="sync-graph-shell" class="sync-graph-shell sync-idle">
+            <canvas
+              id="sync-graph"
+              class="sync-graph"
+              aria-label="Synchronization graph"
+            ></canvas>
           </div>
         </div>
       </div>
@@ -110,6 +96,6 @@
       </footer>
     </div>
 
-    <script type="module" src="app.js?v=8"></script>
+    <script type="module" src="app.js?v=9"></script>
   </body>
 </html>
