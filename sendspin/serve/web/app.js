@@ -231,7 +231,7 @@ function drawGraphGrid(ctx, metrics) {
 
     if (line.label !== null) {
       const labelY = clamp(
-        y + (line.value > 0 ? 12 : line.value < 0 ? -12 : -10),
+        y + (line.value > 0 ? 12 : line.value < 0 ? -12 : 1),
         12,
         metrics.height - 12,
       );
