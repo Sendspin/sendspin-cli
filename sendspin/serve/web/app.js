@@ -506,30 +506,27 @@ async function startListening() {
 }
 
 function stopListening() {
-  isListening = false;
-  isStarting = false;
-  showPostAnimationLabel = false;
-
-  if (player?.isConnected) {
-    player.setMuted(true);
-  }
-
-  resetSyncDisplay();
-  updateUiState();
+  disconnect("user_request");
 }
 
 /**
  * Disconnect from the server
  */
-function disconnect() {
+function disconnect(reason = "shutdown") {
   if (syncUpdateInterval) {
     clearInterval(syncUpdateInterval);
     syncUpdateInterval = null;
   }
 
   if (player) {
-    player.disconnect();
+    const activePlayer = player;
     player = null;
+
+    try {
+      activePlayer.disconnect(reason);
+    } catch (err) {
+      console.warn("Failed to disconnect player:", err);
+    }
   }
 
   isListening = false;
