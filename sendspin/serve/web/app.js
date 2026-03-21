@@ -365,9 +365,19 @@ function syncGraphLoop(timestampMs) {
     sampleGraphHistory();
   }
 
-  while (timestampMs - graphLastSampleAtMs >= GRAPH_SAMPLE_INTERVAL_MS) {
-    graphLastSampleAtMs += GRAPH_SAMPLE_INTERVAL_MS;
+  const elapsedMs = timestampMs - graphLastSampleAtMs;
+  const resetThresholdMs = GRAPH_SAMPLE_INTERVAL_MS * SYNC_HISTORY_LENGTH;
+
+  // After long tab suspension, drop stale history instead of replaying it.
+  if (elapsedMs > resetThresholdMs) {
+    clearGraphHistory();
+    graphLastSampleAtMs = timestampMs;
     sampleGraphHistory();
+  } else {
+    while (timestampMs - graphLastSampleAtMs >= GRAPH_SAMPLE_INTERVAL_MS) {
+      graphLastSampleAtMs += GRAPH_SAMPLE_INTERVAL_MS;
+      sampleGraphHistory();
+    }
   }
 
   drawSyncGraph();
