@@ -6,6 +6,9 @@
   --card-live: rgba(255, 255, 255, 0.14);
   --card-border: rgba(255, 255, 255, 0.1);
   --card-border-live: rgba(255, 255, 255, 0.22);
+  --card-radius: 22px;
+  --control-card-padding: 18px;
+  --sync-graph-height: 143px;
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.72);
   --success: #4caf50;
@@ -133,7 +136,7 @@ body.is-listening header h1 {
   position: relative;
   background: var(--card-idle);
   border: 1px solid var(--card-border);
-  border-radius: 22px;
+  border-radius: var(--card-radius);
   padding: 20px;
   margin-bottom: 16px;
   backdrop-filter: blur(14px);
@@ -203,7 +206,7 @@ body.is-listening .card {
 
 .control-card {
   overflow: visible;
-  padding: 18px;
+  padding: var(--control-card-padding);
 }
 
 body.is-starting .control-card {
@@ -355,24 +358,12 @@ body.is-listening #listen-toggle-btn {
 
 .sync-graph-shell {
   position: relative;
-  height: 143px;
-  margin-left: -18px;
-  margin-right: -18px;
-  margin-bottom: -18px;
-  border-radius: 0 0 22px 22px;
+  height: var(--sync-graph-height);
+  margin-left: calc(var(--control-card-padding) * -1);
+  margin-right: calc(var(--control-card-padding) * -1);
+  margin-bottom: calc(var(--control-card-padding) * -1);
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
   overflow: hidden;
-  background: transparent;
-}
-
-.sync-graph-shell.sync-good {
-  background: transparent;
-}
-
-.sync-graph-shell.sync-warn {
-  background: transparent;
-}
-
-.sync-graph-shell.sync-bad {
   background: transparent;
 }
 
@@ -380,7 +371,7 @@ body.is-listening #listen-toggle-btn {
   display: block;
   width: 100%;
   height: 100%;
-  border-radius: 0 0 22px 22px;
+  border-radius: 0 0 var(--card-radius) var(--card-radius);
 }
 
 .share {
@@ -535,6 +526,11 @@ footer .separator {
 }
 
 @media (max-width: 480px) {
+  :root {
+    --card-radius: 20px;
+    --sync-graph-height: 133px;
+  }
+
   body {
     padding: 16px;
   }
@@ -545,7 +541,6 @@ footer .separator {
 
   .card {
     padding: 18px;
-    border-radius: 20px;
   }
 
   #listen-toggle-btn {
@@ -554,10 +549,9 @@ footer .separator {
   }
 
   .sync-graph-shell {
-    height: 133px;
-    margin-left: -18px;
-    margin-right: -18px;
-    margin-bottom: -18px;
+    margin-left: calc(var(--control-card-padding) * -1);
+    margin-right: calc(var(--control-card-padding) * -1);
+    margin-bottom: calc(var(--control-card-padding) * -1);
   }
 }
 
