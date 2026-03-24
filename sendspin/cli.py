@@ -173,16 +173,10 @@ def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bo
         help="Command to run when audio stream stops (receives SENDSPIN_* env vars)",
     )
     target.add_argument(
-        "--no-visualizer",
+        "--visualizer",
         action="store_true",
         default=argparse.SUPPRESS if suppress_defaults else False,
-        help="Disable the audio visualizer in the TUI",
-    )
-    target.add_argument(
-        "--no-visualizer-smoothing",
-        action="store_true",
-        default=argparse.SUPPRESS if suppress_defaults else False,
-        help="Disable visualizer interpolation/smoothing in the TUI",
+        help="Enable the audio spectrum visualizer in the TUI",
     )
 
 
@@ -706,11 +700,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
                 f"Hardware volume control is not available on this system. "
                 f"{HW_VOLUME_UNAVAILABLE_REASON or 'Use --hardware-volume false to disable.'}"
             )
-    # Keep visualizer enabled by default unless explicitly disabled via CLI flag.
-    args.visualizer_enabled = not getattr(args, "no_visualizer", False)
-    args.visualizer_smoothing_enabled = settings.visualizer_smoothing_enabled and not getattr(
-        args, "no_visualizer_smoothing", False
-    )
+    args.visualizer_enabled = getattr(args, "visualizer", False)
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -779,7 +769,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
         visualizer_enabled=args.visualizer_enabled,
-        visualizer_smoothing_enabled=args.visualizer_smoothing_enabled,
     )
 
     app = SendspinApp(app_args)

@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 import asyncio
-from dataclasses import dataclass
+import logging
+from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-try:
-    from aiosendspin.models.visualizer import VisualizerFrame
-except ImportError:
-
-    @dataclass
-    class VisualizerFrame:  # type: ignore[no-redef]
-        """Compatibility frame when aiosendspin lacks visualizer frame model."""
-
-        timestamp_us: int
-        loudness: int | None = None
-        f_peak: int | None = None
-        spectrum: list[int] | None = None
-
+from aiosendspin.models.core import StreamStartMessage
+from aiosendspin.models.visualizer import VisualizerFrame
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
@@ -47,7 +36,7 @@ class VisualizerHandler:
         self._on_frame = on_frame
         self._client: SendspinClient | None = None
         self._unsubscribes: list[Callable[[], None]] = []
-        self._pending: list[tuple[int, VisualizerFrame]] = []
+        self._pending: deque[tuple[int, VisualizerFrame]] = deque()
         self._timer: asyncio.TimerHandle | None = None
 
     def attach_client(self, client: SendspinClient) -> None:
@@ -55,19 +44,25 @@ class VisualizerHandler:
         self._client = client
         self._unsubscribes = [
             client.add_visualizer_listener(self._on_visualizer_data),
+            client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
+
+    def reset(self) -> None:
+        """Clear pending frames and cancel scheduled emissions."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._pending.clear()
+        self._on_frame(VisualizerFrame(timestamp_us=0))
 
     def detach(self) -> None:
         """Detach from the client and unregister listeners."""
         for unsub in self._unsubscribes:
             unsub()
         self._unsubscribes = []
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        self._pending.clear()
+        self.reset()
         self._client = None
 
     def _on_visualizer_data(self, frames: list[VisualizerFrame]) -> None:
@@ -90,8 +85,14 @@ class VisualizerHandler:
 
         if not self._pending:
             return
-        self._pending.sort(key=lambda item: item[0])
         self._schedule_next()
+
+    def _on_stream_start(self, _message: StreamStartMessage) -> None:
+        """Flush stale frames when a new stream begins."""
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        self._pending.clear()
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end for visualizer role."""
@@ -137,7 +138,7 @@ class VisualizerHandler:
         now_us = int(asyncio.get_running_loop().time() * 1_000_000)
         latest_due: VisualizerFrame | None = None
         while self._pending and self._pending[0][0] <= now_us:
-            _play_us, frame = self._pending.pop(0)
+            _play_us, frame = self._pending.popleft()
             latest_due = frame
 
         if latest_due is not None:

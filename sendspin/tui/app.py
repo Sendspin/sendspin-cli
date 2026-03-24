@@ -7,8 +7,8 @@ import contextlib
 import logging
 import signal
 import sys
-from dataclasses import dataclass, field, fields as dataclass_fields
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
@@ -27,17 +27,11 @@ from aiosendspin.models.player import (
     PlayerCommandPayload,
     SupportedAudioFormat,
 )
-from aiosendspin.models.visualizer import ClientHelloVisualizerSupport
-
-try:
-    from aiosendspin.models.visualizer import VisualizerFrame
-except ImportError:
-    VisualizerFrame = Any
-
-try:
-    from aiosendspin.models.visualizer import ClientHelloVisualizerSpectrum
-except ImportError:
-    ClientHelloVisualizerSpectrum = None
+from aiosendspin.models.visualizer import (
+    ClientHelloVisualizerSpectrum,
+    ClientHelloVisualizerSupport,
+    VisualizerFrame,
+)
 from aiosendspin.models.types import (
     MediaCommand,
     PlaybackStateType,
@@ -233,8 +227,7 @@ class AppArgs:
     volume_controller: VolumeController | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
-    visualizer_enabled: bool = True
-    visualizer_smoothing_enabled: bool = True
+    visualizer_enabled: bool = False
 
 
 class SendspinApp:
@@ -262,34 +255,8 @@ class SendspinApp:
         self._mpris: SendspinMpris | None = None
 
     @staticmethod
-    def _ensure_draft_visualizer_api() -> None:
-        """Fail fast when an outdated aiosendspin package is installed."""
-        if Roles.VISUALIZER.value != "visualizer@_draft_r1":
-            raise RuntimeError(
-                "Installed aiosendspin does not support visualizer@_draft_r1. "
-                "Please upgrade/reinstall aiosendspin from the current refactor branch."
-            )
-        if not hasattr(SendspinClient, "add_visualizer_listener"):
-            raise RuntimeError(
-                "Installed aiosendspin client lacks visualizer listener API. "
-                "Please upgrade/reinstall aiosendspin from the current refactor branch."
-            )
-
-    @staticmethod
     def _build_visualizer_support() -> ClientHelloVisualizerSupport:
-        """Build draft-r1 visualizer support payload for client/hello."""
-        support_fields = {f.name for f in dataclass_fields(ClientHelloVisualizerSupport)}
-        if not {"types", "batch_max", "spectrum"}.issubset(support_fields):
-            raise RuntimeError(
-                "Installed aiosendspin visualizer support model is outdated. "
-                "Please upgrade/reinstall aiosendspin from the current refactor branch."
-            )
-        if ClientHelloVisualizerSpectrum is None:
-            raise RuntimeError(
-                "Installed aiosendspin lacks ClientHelloVisualizerSpectrum. "
-                "Please upgrade/reinstall aiosendspin from the current refactor branch."
-            )
-
+        """Build visualizer support payload for client/hello."""
         return ClientHelloVisualizerSupport(
             buffer_capacity=65536,
             types=["loudness", "spectrum"],
@@ -350,13 +317,16 @@ class SendspinApp:
                 supported_formats = [f for f in supported_formats if f != args.preferred_format]
                 supported_formats.insert(0, args.preferred_format)
 
-            self._ensure_draft_visualizer_api()
-            visualizer_support = self._build_visualizer_support()
+            client_roles = [Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA]
+            visualizer_support = None
+            if args.visualizer_enabled:
+                visualizer_support = self._build_visualizer_support()
+                client_roles.append(Roles.VISUALIZER)
 
             self._client = SendspinClient(
                 client_id=args.client_id,
                 client_name=args.client_name,
-                roles=[Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA, Roles.VISUALIZER],
+                roles=client_roles,
                 device_info=get_device_info(),
                 player_support=ClientHelloPlayerSupport(
                     supported_formats=supported_formats,
@@ -380,7 +350,6 @@ class SendspinApp:
                 player_muted=self._audio_handler.muted,
                 use_external_volume=self._audio_handler.uses_external_volume_controller,
                 visualizer_enabled=args.visualizer_enabled,
-                visualizer_smoothing_enabled=args.visualizer_smoothing_enabled,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
@@ -394,10 +363,11 @@ class SendspinApp:
             self._client.add_server_command_listener(self._handle_server_command)
             self._audio_handler.attach_client(self._client)
 
-            self._visualizer_handler = VisualizerHandler(
-                on_frame=self._handle_visualizer_frame,
-            )
-            self._visualizer_handler.attach_client(self._client)
+            if args.visualizer_enabled:
+                self._visualizer_handler = VisualizerHandler(
+                    on_frame=self._handle_visualizer_frame,
+                )
+                self._visualizer_handler.attach_client(self._client)
 
             if self._mpris:
                 self._mpris.start()
@@ -464,12 +434,14 @@ class SendspinApp:
         finally:
             if self._mpris:
                 self._mpris.stop()
+            if self._visualizer_handler:
+                self._visualizer_handler.detach()
             if self._ui:
                 self._ui.stop()
             if self._audio_handler:
                 await self._audio_handler.shutdown()
-            assert self._client is not None
-            await self._client.disconnect()
+            if self._client is not None:
+                await self._client.disconnect()
             await self._discovery.stop()
             await self._settings.flush()
 
@@ -494,6 +466,8 @@ class SendspinApp:
         logger.info(message)
         self._ui.add_event(message)
         self._ui.set_disconnected(message)
+        if self._visualizer_handler:
+            self._visualizer_handler.reset()
         await self._audio_handler.handle_disconnect()
 
     async def _connect_cancellable(self, url: str) -> None:

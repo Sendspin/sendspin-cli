@@ -205,20 +205,6 @@ async def keyboard_loop(
             request_shutdown()
             break
 
-        # Handle 'v' to toggle visualizer
-        if key in "vV":
-            ui.highlight_shortcut("visualizer")
-            enabled = ui.toggle_visualizer()
-            settings.update(visualizer_enabled=enabled)
-            continue
-
-        # Handle 'x' to toggle visualizer smoothing
-        if key in "xX":
-            ui.highlight_shortcut("smoothing")
-            enabled = ui.toggle_visualizer_smoothing()
-            settings.update(visualizer_smoothing_enabled=enabled)
-            continue
-
         # Handle 's' to open server selector
         if key in "sS":
             ui.highlight_shortcut("server")
