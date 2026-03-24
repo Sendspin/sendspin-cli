@@ -50,7 +50,7 @@ def test_peaks_snap_to_bar_height():
 def test_peaks_hold_when_bars_drop():
     state = VisualizerState()
     state.update([65535, 65535], loudness=32768)
-    initial_spectrum = state.get_spectrum()
+    _ = state.get_spectrum()
     initial_peaks = state.get_peaks()
 
     state.update([0, 0], loudness=32768)
