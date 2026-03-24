@@ -85,6 +85,12 @@ def list_audio_devices() -> None:
             )
         if devices:
             print("\nTo select an audio device:\n  sendspin --audio-device 0")
+        if sys.platform.startswith("linux"):
+            print(
+                "\nTo use an ALSA plugin device (dmix, plug, etc.) not listed above:\n"
+                "  sendspin --audio-device <alsa-device-name>\n"
+                "  Example: sendspin --audio-device dmixer"
+            )
 
     except Exception as e:  # noqa: BLE001
         print(f"Error listing audio devices: {e}")
@@ -128,8 +134,9 @@ def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bo
         type=str,
         default=default,
         help=(
-            "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
-            "Use --list-audio-devices to see available devices."
+            "Audio output device by index (e.g., 0, 1, 2), name prefix (e.g., 'MacBook'), "
+            "or raw ALSA device name (e.g., 'dmixer', 'olohuone') for plugin devices like dmix. "
+            "Use --list-audio-devices to see enumerated devices."
         ),
     )
     target.add_argument(
@@ -455,7 +462,8 @@ def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
     """Resolve audio device from CLI argument.
 
     Args:
-        device_arg: Device specifier (index number, name prefix, or None for default).
+        device_arg: Device specifier (index number, name prefix, raw ALSA device
+            name, or None for default).
 
     Returns:
         The resolved AudioDevice.
@@ -477,11 +485,59 @@ def _resolve_audio_device(device_arg: str | None) -> AudioDevice:
         device = next((d for d in devices if d.name.startswith(device_arg)), None)
 
     if device is None:
-        kind = "Default" if device_arg is None else "Specified"
-        raise CLIError(f"{kind} audio device not found.")
+        if device_arg is None:
+            raise CLIError("Default audio device not found.")
 
-    LOGGER.info("Using audio device %d: %s", device.index, device.name)
+        # Not found in enumeration — try as a raw ALSA device name
+        device = _try_alsa_device(device_arg)
+        if device is None:
+            raise CLIError(
+                f"Audio device '{device_arg}' not found in enumerated devices "
+                "and could not be opened as an ALSA device."
+            )
+
+    LOGGER.info("Using audio device %s: %s", device.device_id, device.name)
     return device
+
+
+def _try_alsa_device(name: str) -> AudioDevice | None:
+    """Try to open a raw ALSA device by name.
+
+    This allows using ALSA plugin devices (dmix, plug, etc.) that are not
+    enumerated by PortAudio but can be opened by name. This is needed for
+    setups like dual mono where multiple clients share hardware via dmix.
+
+    Returns:
+        An AudioDevice if the ALSA device could be opened, None otherwise.
+    """
+    import sounddevice
+
+    from sendspin.audio import AudioDevice
+
+    try:
+        sounddevice.check_output_settings(device=name)
+    except sounddevice.PortAudioError:
+        return None
+
+    # Try to query device info from PortAudio
+    try:
+        info = sounddevice.query_devices(name, "output")
+        channels = int(info["max_output_channels"])
+        sample_rate = float(info["default_samplerate"])
+    except (sounddevice.PortAudioError, ValueError):
+        # PortAudio can't enumerate this device — use safe defaults.
+        # The actual format is negotiated with the server later.
+        channels = 2
+        sample_rate = 48000.0
+
+    return AudioDevice(
+        index=None,
+        name=name,
+        output_channels=channels,
+        sample_rate=sample_rate,
+        is_default=False,
+        alsa_device_name=name,
+    )
 
 
 def _resolve_client_info(client_id: str | None, client_name: str | None) -> tuple[str, str]:
@@ -524,10 +580,10 @@ def _resolve_audio_format(
     except ValueError as e:
         raise CLIError(str(e)) from None
 
-    if not validate_audio_format(fmt, device.index):
+    if not validate_audio_format(fmt, device.device_id):
         raise CLIError(
             f"Audio format '{format_arg}' is not supported by device "
-            f"'{device.name}' (index {device.index})."
+            f"'{device.name}' ({device.device_id})."
         )
 
     LOGGER.info("Using preferred audio format: %s", format_arg)

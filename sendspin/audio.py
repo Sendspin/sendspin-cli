@@ -53,18 +53,29 @@ class AudioDevice:
     """Represents an audio output device.
 
     Attributes:
-        index: Device index used for selection.
+        index: PortAudio device index, or None for string-named devices.
         name: Human-readable device name.
         output_channels: Number of output channels supported.
         sample_rate: Default sample rate in Hz.
         is_default: Whether this is the system default output device.
+        alsa_device_name: Raw ALSA device name for direct access (e.g. dmix
+            plugin devices). When set, this is used instead of index to open
+            the device via sounddevice.
     """
 
-    index: int
+    index: int | None
     name: str
     output_channels: int
     sample_rate: float
     is_default: bool
+    alsa_device_name: str | None = None
+
+    @property
+    def device_id(self) -> int | str | None:
+        """Return the identifier to pass to sounddevice APIs."""
+        if self.alsa_device_name is not None:
+            return self.alsa_device_name
+        return self.index
 
 
 def query_devices() -> list[AudioDevice]:
@@ -92,7 +103,7 @@ def query_devices() -> list[AudioDevice]:
     return result
 
 
-def _check_format(device: int | None, rate: int, channels: int, dtype: str) -> bool:
+def _check_format(device: int | str | None, rate: int, channels: int, dtype: str) -> bool:
     """Check if a specific audio format is supported by the device."""
     try:
         sounddevice.check_output_settings(
@@ -104,7 +115,7 @@ def _check_format(device: int | None, rate: int, channels: int, dtype: str) -> b
 
 
 def detect_supported_audio_formats(
-    device: int | None = None,
+    device: int | str | None = None,
 ) -> list[SupportedAudioFormat]:
     """Detect supported audio formats by testing dimensions independently.
 
@@ -221,7 +232,7 @@ def parse_audio_format(format_str: str) -> SupportedAudioFormat:
     )
 
 
-def validate_audio_format(fmt: SupportedAudioFormat, device: int | None) -> bool:
+def validate_audio_format(fmt: SupportedAudioFormat, device: int | str | None) -> bool:
     """Validate that an audio format's PCM dimensions are supported by the device.
 
     Checks sample rate, bit depth, and channel count independently against the
@@ -453,7 +464,7 @@ class AudioPlayer:
             blocksize=self._BLOCKSIZE,
             callback=self._audio_callback,
             latency="high",
-            device=device.index,
+            device=device.device_id,
         )
         logger.info(
             "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",

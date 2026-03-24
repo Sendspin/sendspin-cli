@@ -161,7 +161,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `last_server_url` | string | TUI/daemon | Server URL (used as default for `--url`) |
 | `name` | string | All | Friendly name for client or server (`--name`) |
 | `client_id` | string | TUI/daemon | Unique client identifier (`--id`) |
-| `audio_device` | string | TUI/daemon | Audio device index or name prefix (`--audio-device`) |
+| `audio_device` | string | TUI/daemon | Audio device index, name prefix, or ALSA device name (`--audio-device`) |
 | `audio_format` | string | TUI/daemon | Preferred audio format (`--audio-format`, e.g., `flac:48000:24:2`) |
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
 | `listen_port` | integer | daemon/serve | Listen port (`--port`, default: 8927) |
@@ -221,6 +221,23 @@ sendspin --audio-device 2
 ```bash
 sendspin --audio-device "MacBook"
 ```
+
+**Or by raw ALSA device name (Linux):**
+```bash
+sendspin --audio-device dmixer
+```
+
+This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `--list-audio-devices`. For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
+
+```bash
+# Room 1: left channel via dmix
+sendspin daemon --name "Living Room" --audio-device olohuone
+
+# Room 2: right channel via dmix
+sendspin daemon --name "Kitchen" --audio-device keittio
+```
+
+This requires an `/etc/asound.conf` with dmix and plug devices that route to the appropriate channels. See your ALSA documentation for details on configuring dmix.
 
 This is particularly useful when running `sendspin daemon` on headless devices or when you want to route audio to a specific output.
 
