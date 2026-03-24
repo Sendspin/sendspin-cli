@@ -103,11 +103,11 @@ def query_devices() -> list[AudioDevice]:
     return result
 
 
-def _check_format(device: AudioDevice | None, rate: int, channels: int, dtype: str) -> bool:
+def _check_format(device: AudioDevice, rate: int, channels: int, dtype: str) -> bool:
     """Check if a specific audio format is supported by the device."""
     try:
         sounddevice.check_output_settings(
-            device=device.device_id if device else None,
+            device=device.device_id,
             samplerate=rate,
             channels=channels,
             dtype=dtype,
@@ -118,7 +118,7 @@ def _check_format(device: AudioDevice | None, rate: int, channels: int, dtype: s
 
 
 def detect_supported_audio_formats(
-    device: AudioDevice | None = None,
+    device: AudioDevice,
 ) -> list[SupportedAudioFormat]:
     """Detect supported audio formats by testing dimensions independently.
 
@@ -131,7 +131,7 @@ def detect_supported_audio_formats(
     done client-side before playback.
 
     Args:
-        device: Audio device. None for default device.
+        device: Audio device to check formats against.
 
     Returns:
         List of supported audio formats, with FLAC formats first (preferred).
@@ -235,7 +235,7 @@ def parse_audio_format(format_str: str) -> SupportedAudioFormat:
     )
 
 
-def validate_audio_format(fmt: SupportedAudioFormat, device: AudioDevice | None) -> bool:
+def validate_audio_format(fmt: SupportedAudioFormat, device: AudioDevice) -> bool:
     """Validate that an audio format's PCM dimensions are supported by the device.
 
     Checks sample rate, bit depth, and channel count independently against the
@@ -243,7 +243,7 @@ def validate_audio_format(fmt: SupportedAudioFormat, device: AudioDevice | None)
 
     Args:
         fmt: The audio format to validate.
-        device: Audio device. None for default device.
+        device: Audio device to check formats against.
 
     Returns:
         True if the device supports the format dimensions.
