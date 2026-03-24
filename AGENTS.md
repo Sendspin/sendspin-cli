@@ -94,11 +94,10 @@ Daemon mode for headless operation (via `sendspin daemon` or deprecated `--headl
 - **Signal handling**: SIGINT/SIGTERM for graceful shutdown
 
 ### `sendspin/audio_devices.py`
-Audio device listing, resolution, and format validation. Responsibilities:
-- **Device listing**: Enumerates PortAudio devices and ALSA plugin devices (via `aplay -L`)
-- **Device resolution**: Resolves `--audio-device` argument by index, name prefix, or raw ALSA device name
-- **ALSA device fallback**: Opens ALSA plugin devices (dmix, plug) not enumerated by PortAudio
-- **Format validation**: Validates preferred audio formats against the resolved device
+Audio device resolution and ALSA device listing. Responsibilities:
+- **Device resolution**: Resolves `--audio-device` argument by index, name prefix, or raw ALSA device name (via `resolve_audio_device()`)
+- **ALSA device listing**: Enumerates ALSA PCM devices via `aplay -L` for display in `--list-audio-devices`
+- **ALSA device fallback**: Opens ALSA plugin devices (dmix, plug) not enumerated by PortAudio, using safe defaults if PortAudio can't query device info
 
 ### `sendspin/audio.py`
 Time-synchronized audio playback engine. Responsibilities:
