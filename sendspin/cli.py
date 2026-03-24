@@ -580,7 +580,7 @@ def _resolve_audio_format(
     except ValueError as e:
         raise CLIError(str(e)) from None
 
-    if not validate_audio_format(fmt, device.device_id):
+    if not validate_audio_format(fmt, device):
         raise CLIError(
             f"Audio format '{format_arg}' is not supported by device "
             f"'{device.name}' ({device.device_id})."

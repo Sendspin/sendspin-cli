@@ -81,7 +81,7 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
 
-        supported_formats = detect_supported_audio_formats(self._args.audio_device.device_id)
+        supported_formats = detect_supported_audio_formats(self._args.audio_device)
         if self._args.preferred_format is not None:
             supported_formats = [f for f in supported_formats if f != self._args.preferred_format]
             supported_formats.insert(0, self._args.preferred_format)
