@@ -231,10 +231,10 @@ This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `
 
 ```bash
 # Room 1: left channel via dmix
-sendspin daemon --name "Living Room" --audio-device olohuone
+sendspin daemon --name "Living Room" --audio-device living_room
 
 # Room 2: right channel via dmix
-sendspin daemon --name "Kitchen" --audio-device keittio
+sendspin daemon --name "Kitchen" --audio-device kitchen
 ```
 
 This requires an `/etc/asound.conf` with dmix and plug devices that route to the appropriate channels. See your ALSA documentation for details on configuring dmix.
