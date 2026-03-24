@@ -73,7 +73,13 @@ def list_audio_devices() -> None:
 
     from sendspin.audio_devices import list_alsa_devices
 
-    devices = query_devices()
+    try:
+        devices = query_devices()
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print(PORTAUDIO_NOT_FOUND_MESSAGE)
+            sys.exit(1)
+        raise
 
     print("Available audio output devices:")
     print()
