@@ -644,7 +644,7 @@ elements.listenToggleBtn.addEventListener("click", async () => {
 });
 
 const sdkImport = import(
-  "https://unpkg.com/@sendspin/sendspin-js@2.0.4/dist/index.js?module",
+  "https://unpkg.com/@sendspin/sendspin-js@2.0.5/dist/index.js?module",
 );
 
 // QR Code generation (using qrcode-generator loaded via script tag)
