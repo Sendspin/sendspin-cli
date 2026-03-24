@@ -132,24 +132,19 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
     )
 
 
-def resolve_audio_format(
-    format_arg: str | None, device: AudioDevice
-) -> SupportedAudioFormat | None:
+def resolve_audio_format(format_arg: str, device: AudioDevice) -> SupportedAudioFormat:
     """Parse and validate a preferred audio format against the audio device.
 
     Args:
-        format_arg: Format string (e.g., "flac:48000:24:2") or None.
+        format_arg: Format string (e.g., "flac:48000:24:2").
         device: The resolved audio device to validate against.
 
     Returns:
-        The parsed SupportedAudioFormat, or None if no format was specified.
+        The parsed SupportedAudioFormat.
 
     Raises:
         DeviceError: If the format string is invalid or unsupported by the device.
     """
-    if format_arg is None:
-        return None
-
     try:
         fmt = parse_audio_format(format_arg)
     except ValueError as e:
@@ -161,5 +156,4 @@ def resolve_audio_format(
             f"'{device.name}' ({device.device_id})."
         )
 
-    logger.info("Using preferred audio format: %s", format_arg)
     return fmt

@@ -27,6 +27,8 @@ from sendspin.settings import ClientSettings, get_client_settings, get_serve_set
 from sendspin.volume_controller import VolumeController
 
 if TYPE_CHECKING:
+    from aiosendspin.models.player import SupportedAudioFormat
+
     from sendspin.audio import AudioDevice
 
 LOGGER = logging.getLogger(__name__)
@@ -61,7 +63,14 @@ def arg_str_to_bool(v: str) -> bool:
 
 def list_audio_devices() -> None:
     """List all available audio output devices."""
-    from sendspin.audio import query_devices
+    try:
+        from sendspin.audio import query_devices
+    except OSError as e:
+        if "PortAudio library not found" in str(e):
+            print(PORTAUDIO_NOT_FOUND_MESSAGE)
+            sys.exit(1)
+        raise
+
     from sendspin.audio_devices import list_alsa_devices
 
     devices = query_devices()
@@ -465,6 +474,20 @@ def _resolve_client_info(client_id: str | None, client_name: str | None) -> tupl
     )
 
 
+def _resolve_preferred_format(
+    format_arg: str | None, device: AudioDevice
+) -> SupportedAudioFormat | None:
+    """Resolve the preferred audio format, if specified."""
+    if format_arg is None:
+        return None
+
+    from sendspin.audio_devices import resolve_audio_format
+
+    fmt = resolve_audio_format(format_arg, device)
+    LOGGER.info("Using preferred audio format: %s", format_arg)
+    return fmt
+
+
 async def _run_serve_mode(args: argparse.Namespace) -> int:
     """Run the server mode."""
     from sendspin.serve import ServeConfig, run_server
@@ -513,7 +536,6 @@ async def _run_daemon_mode(
     volume_controller: VolumeController | None,
 ) -> int:
     """Run the client in daemon mode (no UI)."""
-    from sendspin.audio_devices import resolve_audio_format
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
@@ -527,7 +549,7 @@ async def _run_daemon_mode(
         static_delay_ms=args.static_delay_ms,
         listen_port=args.listen_port,
         use_mpris=args.use_mpris,
-        preferred_format=resolve_audio_format(args.audio_format, audio_device),
+        preferred_format=_resolve_preferred_format(args.audio_format, audio_device),
         volume_controller=volume_controller,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
@@ -555,13 +577,7 @@ def main() -> int:
     if args.command == PLAYER_APP_SENTINEL:
         # Handle player-only actions before starting async runtime.
         if args.list_audio_devices:
-            try:
-                list_audio_devices()
-            except OSError as e:
-                if "PortAudio library not found" in str(e):
-                    print(PORTAUDIO_NOT_FOUND_MESSAGE)
-                    return 1
-                raise
+            list_audio_devices()
             return 0
 
         if args.list_servers:
@@ -588,7 +604,7 @@ def main() -> int:
 
 async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
-    from sendspin.audio_devices import resolve_audio_device, resolve_audio_format
+    from sendspin.audio_devices import resolve_audio_device
 
     # Handle deprecated --headless flag early so all downstream logic
     # can simply check args.command == "daemon".
@@ -699,7 +715,7 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
-        preferred_format=resolve_audio_format(args.audio_format, audio_device),
+        preferred_format=_resolve_preferred_format(args.audio_format, audio_device),
         volume_controller=volume_controller,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
