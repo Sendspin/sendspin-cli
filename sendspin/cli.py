@@ -85,16 +85,58 @@ def list_audio_devices() -> None:
             )
         if devices:
             print("\nTo select an audio device:\n  sendspin --audio-device 0")
+
         if sys.platform.startswith("linux"):
-            print(
-                "\nTo use an ALSA plugin device (dmix, plug, etc.) not listed above:\n"
-                "  sendspin --audio-device <alsa-device-name>\n"
-                "  Example: sendspin --audio-device dmixer"
-            )
+            alsa_devices = _list_alsa_devices()
+            if alsa_devices:
+                print("\nALSA devices (use by name with --audio-device):")
+                print()
+                for name, description in alsa_devices:
+                    print(f"  {name}")
+                    if description:
+                        print(f"       {description}")
 
     except Exception as e:  # noqa: BLE001
         print(f"Error listing audio devices: {e}")
         sys.exit(1)
+
+
+def _list_alsa_devices() -> list[tuple[str, str]]:
+    """List ALSA PCM devices from ``aplay -L``.
+
+    Returns a list of (device_name, description) tuples for output devices.
+    Returns an empty list if aplay is not available.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            ["aplay", "-L"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+    if result.returncode != 0:
+        return []
+
+    devices: list[tuple[str, str]] = []
+    lines = result.stdout.splitlines()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Device names start at column 0, descriptions are indented
+        if line and not line[0].isspace():
+            name = line.strip()
+            description = ""
+            if i + 1 < len(lines) and lines[i + 1].startswith("    "):
+                description = lines[i + 1].strip()
+            devices.append((name, description))
+        i += 1
+
+    return devices
 
 
 def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bool = False) -> None:
