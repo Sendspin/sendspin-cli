@@ -4,14 +4,10 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from typing import TYPE_CHECKING
 
 import sounddevice
 
-from sendspin.audio import AudioDevice, parse_audio_format, query_devices, validate_audio_format
-
-if TYPE_CHECKING:
-    from aiosendspin.models.player import SupportedAudioFormat
+from sendspin.audio import AudioDevice, query_devices
 
 logger = logging.getLogger(__name__)
 
@@ -130,30 +126,3 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
         is_default=False,
         alsa_device_name=name,
     )
-
-
-def resolve_audio_format(format_arg: str, device: AudioDevice) -> SupportedAudioFormat:
-    """Parse and validate a preferred audio format against the audio device.
-
-    Args:
-        format_arg: Format string (e.g., "flac:48000:24:2").
-        device: The resolved audio device to validate against.
-
-    Returns:
-        The parsed SupportedAudioFormat.
-
-    Raises:
-        DeviceError: If the format string is invalid or unsupported by the device.
-    """
-    try:
-        fmt = parse_audio_format(format_arg)
-    except ValueError as e:
-        raise DeviceError(str(e)) from None
-
-    if not validate_audio_format(fmt, device):
-        raise DeviceError(
-            f"Audio format '{format_arg}' is not supported by device "
-            f"'{device.name}' ({device.device_id})."
-        )
-
-    return fmt

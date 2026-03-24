@@ -487,9 +487,20 @@ def _resolve_preferred_format(
     if format_arg is None:
         return None
 
-    from sendspin.audio_devices import resolve_audio_format
+    from sendspin.audio import parse_audio_format, validate_audio_format
+    from sendspin.audio_devices import DeviceError
 
-    fmt = resolve_audio_format(format_arg, device)
+    try:
+        fmt = parse_audio_format(format_arg)
+    except ValueError as e:
+        raise DeviceError(str(e)) from None
+
+    if not validate_audio_format(fmt, device):
+        raise DeviceError(
+            f"Audio format '{format_arg}' is not supported by device "
+            f"'{device.name}' ({device.device_id})."
+        )
+
     LOGGER.info("Using preferred audio format: %s", format_arg)
     return fmt
 
