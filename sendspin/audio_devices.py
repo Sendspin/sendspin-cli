@@ -1,78 +1,31 @@
-"""Audio device listing, resolution, and format validation for the CLI."""
+"""Audio device resolution and format validation."""
 
 from __future__ import annotations
 
 import logging
-import sys
+import subprocess
 from typing import TYPE_CHECKING
+
+import sounddevice
+
+from sendspin.audio import AudioDevice, parse_audio_format, query_devices, validate_audio_format
 
 if TYPE_CHECKING:
     from aiosendspin.models.player import SupportedAudioFormat
 
-    from sendspin.audio import AudioDevice
-
 logger = logging.getLogger(__name__)
-
-PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
-
-Please install PortAudio for your system:
-  • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2
-  • macOS: brew install portaudio
-  • Other systems: https://www.portaudio.com/"""
 
 
 class DeviceError(Exception):
     """Raised when an audio device cannot be found or opened."""
 
 
-def list_audio_devices() -> None:
-    """List all available audio output devices and print to stdout."""
-    try:
-        from sendspin.audio import query_devices
-    except OSError as e:
-        if "PortAudio library not found" in str(e):
-            print(PORTAUDIO_NOT_FOUND_MESSAGE)
-            sys.exit(1)
-        raise
-
-    try:
-        devices = query_devices()
-
-        print("Available audio output devices:")
-        print()
-        for device in devices:
-            default_marker = " (default)" if device.is_default else ""
-            print(
-                f"  [{device.index}] {device.name}{default_marker}\n"
-                f"       Channels: {device.output_channels}, "
-                f"Sample rate: {device.sample_rate} Hz"
-            )
-        if devices:
-            print("\nTo select an audio device:\n  sendspin --audio-device 0")
-
-        if sys.platform.startswith("linux"):
-            alsa_devices = _list_alsa_devices()
-            if alsa_devices:
-                print("\nALSA devices (use by name with --audio-device):")
-                print()
-                for name, description in alsa_devices:
-                    print(f"  {name}")
-                    if description:
-                        print(f"       {description}")
-
-    except Exception as e:  # noqa: BLE001
-        print(f"Error listing audio devices: {e}")
-        sys.exit(1)
-
-
-def _list_alsa_devices() -> list[tuple[str, str]]:
+def list_alsa_devices() -> list[tuple[str, str]]:
     """List ALSA PCM devices from ``aplay -L``.
 
     Returns a list of (device_name, description) tuples for output devices.
     Returns an empty list if aplay is not available.
     """
-    import subprocess
-
     try:
         result = subprocess.run(
             ["aplay", "-L"],  # noqa: S607
@@ -116,8 +69,6 @@ def resolve_audio_device(device_arg: str | None) -> AudioDevice:
     Raises:
         DeviceError: If the device cannot be found.
     """
-    from sendspin.audio import query_devices
-
     devices = query_devices()
 
     # Find device by: default, index, or name prefix
@@ -155,10 +106,6 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
     Returns:
         An AudioDevice if the ALSA device could be opened, None otherwise.
     """
-    import sounddevice
-
-    from sendspin.audio import AudioDevice
-
     try:
         sounddevice.check_output_settings(device=name)
     except sounddevice.PortAudioError:
@@ -202,8 +149,6 @@ def resolve_audio_format(
     """
     if format_arg is None:
         return None
-
-    from sendspin.audio import parse_audio_format, validate_audio_format
 
     try:
         fmt = parse_audio_format(format_arg)

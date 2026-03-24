@@ -13,13 +13,6 @@ from collections.abc import Sequence
 from importlib.metadata import version
 from typing import TYPE_CHECKING, Any, Protocol
 
-from sendspin.audio_devices import (
-    PORTAUDIO_NOT_FOUND_MESSAGE,
-    DeviceError,
-    list_audio_devices,
-    resolve_audio_device,
-    resolve_audio_format,
-)
 from sendspin.alsa_volume import AVAILABLE as ALSA_AVAILABLE
 from sendspin.alsa_volume import (
     AlsaVolumeController,
@@ -37,6 +30,13 @@ if TYPE_CHECKING:
     from sendspin.audio import AudioDevice
 
 LOGGER = logging.getLogger(__name__)
+
+PORTAUDIO_NOT_FOUND_MESSAGE = """Error: PortAudio library not found.
+
+Please install PortAudio for your system:
+  • Debian/Ubuntu/Raspberry Pi: sudo apt-get install libportaudio2
+  • macOS: brew install portaudio
+  • Other systems: https://www.portaudio.com/"""
 
 PLAYER_APP_SENTINEL = "player"
 EXPLICIT_APPS = frozenset({PLAYER_APP_SENTINEL, "daemon", "serve"})
@@ -57,6 +57,36 @@ def arg_str_to_bool(v: str) -> bool:
     if s == "false":
         return False
     raise argparse.ArgumentTypeError("Expected true or false")
+
+
+def list_audio_devices() -> None:
+    """List all available audio output devices."""
+    from sendspin.audio import query_devices
+    from sendspin.audio_devices import list_alsa_devices
+
+    devices = query_devices()
+
+    print("Available audio output devices:")
+    print()
+    for device in devices:
+        default_marker = " (default)" if device.is_default else ""
+        print(
+            f"  [{device.index}] {device.name}{default_marker}\n"
+            f"       Channels: {device.output_channels}, "
+            f"Sample rate: {device.sample_rate} Hz"
+        )
+    if devices:
+        print("\nTo select an audio device:\n  sendspin --audio-device 0")
+
+    if sys.platform.startswith("linux"):
+        alsa_devices = list_alsa_devices()
+        if alsa_devices:
+            print("\nALSA devices (use by name with --audio-device):")
+            print()
+            for name, description in alsa_devices:
+                print(f"  {name}")
+                if description:
+                    print(f"       {description}")
 
 
 def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bool = False) -> None:
@@ -483,6 +513,7 @@ async def _run_daemon_mode(
     volume_controller: VolumeController | None,
 ) -> int:
     """Run the client in daemon mode (no UI)."""
+    from sendspin.audio_devices import resolve_audio_format
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
@@ -524,7 +555,13 @@ def main() -> int:
     if args.command == PLAYER_APP_SENTINEL:
         # Handle player-only actions before starting async runtime.
         if args.list_audio_devices:
-            list_audio_devices()
+            try:
+                list_audio_devices()
+            except OSError as e:
+                if "PortAudio library not found" in str(e):
+                    print(PORTAUDIO_NOT_FOUND_MESSAGE)
+                    return 1
+                raise
             return 0
 
         if args.list_servers:
@@ -534,6 +571,8 @@ def main() -> int:
         if args.list_clients:
             asyncio.run(list_clients())
             return 0
+
+    from sendspin.audio_devices import DeviceError
 
     try:
         return asyncio.run(_run_client_mode(args))
@@ -549,6 +588,8 @@ def main() -> int:
 
 async def _run_client_mode(args: argparse.Namespace) -> int:
     """Run the client in TUI or daemon mode."""
+    from sendspin.audio_devices import resolve_audio_device, resolve_audio_format
+
     # Handle deprecated --headless flag early so all downstream logic
     # can simply check args.command == "daemon".
     if getattr(args, "headless", False):
