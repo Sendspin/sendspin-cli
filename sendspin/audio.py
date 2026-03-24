@@ -70,11 +70,16 @@ class AudioDevice:
     is_default: bool
     alsa_device_name: str | None = None
 
+    def __post_init__(self) -> None:
+        if self.index is None and self.alsa_device_name is None:
+            raise ValueError("AudioDevice must have an index or alsa_device_name")
+
     @property
-    def device_id(self) -> int | str | None:
+    def device_id(self) -> int | str:
         """Return the identifier to pass to sounddevice APIs."""
         if self.alsa_device_name is not None:
             return self.alsa_device_name
+        assert self.index is not None  # guaranteed by __post_init__
         return self.index
 
 
