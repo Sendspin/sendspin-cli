@@ -29,7 +29,7 @@ from sendspin.volume_controller import VolumeController
 if TYPE_CHECKING:
     from aiosendspin.models.player import SupportedAudioFormat
 
-    from sendspin.audio import AudioDevice
+    from sendspin.audio_devices import AudioDevice
 
 LOGGER = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def arg_str_to_bool(v: str) -> bool:
 def list_audio_devices() -> None:
     """List all available audio output devices."""
     try:
-        from sendspin.audio import query_devices
+        from sendspin.audio_devices import query_devices
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)

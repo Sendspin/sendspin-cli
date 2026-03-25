@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING, cast
 from aiosendspin.models.core import StreamStartMessage
 from aiosendspin.models.types import AudioCodec, ClientStateType, Roles
 
-from sendspin.audio import AudioDevice, AudioPlayer
+from sendspin.audio import AudioPlayer
+from sendspin.audio_devices import AudioDevice
 from sendspin.decoder import FlacDecoder
 from sendspin.utils import create_task
 

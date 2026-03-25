@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from sendspin.volume_controller import VolumeChangeCallback
 
 if TYPE_CHECKING:
-    from sendspin.audio import AudioDevice
+    from sendspin.audio_devices import AudioDevice
 
 AVAILABLE = False
 UNAVAILABLE_REASON: str | None = None

@@ -1,15 +1,74 @@
-"""Audio device resolution and format validation."""
+"""Audio device resolution and ALSA device listing."""
 
 from __future__ import annotations
 
 import logging
 import subprocess
+from dataclasses import dataclass
 
 import sounddevice
 
-from sendspin.audio import AudioDevice, query_devices
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class AudioDevice:
+    """Represents an audio output device.
+
+    Attributes:
+        index: PortAudio device index, or None for string-named devices.
+        name: Human-readable device name.
+        output_channels: Number of output channels supported.
+        sample_rate: Default sample rate in Hz.
+        is_default: Whether this is the system default output device.
+        alsa_device_name: Raw ALSA device name for direct access (e.g. dmix
+            plugin devices). When set, this is used instead of index to open
+            the device via sounddevice.
+    """
+
+    index: int | None
+    name: str
+    output_channels: int
+    sample_rate: float
+    is_default: bool
+    alsa_device_name: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.index is None and self.alsa_device_name is None:
+            raise ValueError("AudioDevice must have an index or alsa_device_name")
+
+    @property
+    def device_id(self) -> int | str:
+        """Return the identifier to pass to sounddevice APIs."""
+        if self.alsa_device_name is not None:
+            return self.alsa_device_name
+        assert self.index is not None  # guaranteed by __post_init__
+        return self.index
+
+
+def query_devices() -> list[AudioDevice]:
+    """Query all available audio output devices.
+
+    Returns:
+        List of AudioDevice objects for devices with output channels.
+    """
+    devices = sounddevice.query_devices()
+    default_output = int(sounddevice.default.device[1])
+
+    result: list[AudioDevice] = []
+    for i in range(len(devices)):
+        dev = devices[i]
+        if dev["max_output_channels"] > 0:
+            result.append(
+                AudioDevice(
+                    index=i,
+                    name=str(dev["name"]),
+                    output_channels=int(dev["max_output_channels"]),
+                    sample_rate=float(dev["default_samplerate"]),
+                    is_default=(i == default_output),
+                )
+            )
+    return result
 
 
 def list_alsa_devices() -> list[tuple[str, str]]:
