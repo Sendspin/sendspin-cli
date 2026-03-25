@@ -135,7 +135,11 @@ def test_audio_worker_restarts_on_stream_start_after_disconnect(monkeypatch) -> 
         assert not _FakeWorker.instances[0].running
 
         fmt = _make_format()
-        handler._on_stream_start(object())
+        # Simulate a player stream/start message (payload.player must be set)
+        stream_start = SimpleNamespace(
+            payload=SimpleNamespace(player=SimpleNamespace(), visualizer=None)
+        )
+        handler._on_stream_start(stream_start)
 
         assert len(_FakeWorker.instances) == 2
         restarted_worker = _FakeWorker.instances[1]
@@ -146,6 +150,38 @@ def test_audio_worker_restarts_on_stream_start_after_disconnect(monkeypatch) -> 
         handler._on_audio_chunk(123_456, b"payload", fmt)
 
         assert restarted_worker.submitted == [(123_456, b"payload", fmt)]
+
+    asyncio.run(exercise())
+
+
+def test_visualizer_stream_start_does_not_clear_audio_worker(monkeypatch) -> None:
+    """A visualizer-only stream/start must not touch the audio worker."""
+    monkeypatch.setattr(audio_connector, "_AudioSyncWorker", _FakeWorker)
+    _FakeWorker.instances.clear()
+
+    async def exercise() -> None:
+        handler = AudioStreamHandler(
+            audio_device=SimpleNamespace(index=0, name="Fake Device"),
+            volume=10,
+            muted=False,
+        )
+        client = _FakeClient()
+        handler.attach_client(client)
+        await asyncio.sleep(0)
+
+        assert len(_FakeWorker.instances) == 1
+        worker = _FakeWorker.instances[0]
+        assert worker.running
+
+        # Send a visualizer-only stream/start (no player payload)
+        vis_stream_start = SimpleNamespace(
+            payload=SimpleNamespace(player=None, visualizer=SimpleNamespace())
+        )
+        handler._on_stream_start(vis_stream_start)
+
+        # Worker should be untouched — still the same one, still running
+        assert len(_FakeWorker.instances) == 1
+        assert worker.running
 
     asyncio.run(exercise())
 
