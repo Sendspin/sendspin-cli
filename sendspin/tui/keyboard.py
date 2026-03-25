@@ -26,14 +26,14 @@ class CommandHandler:
 
     def __init__(
         self,
-        client: SendspinClient,
+        get_client: Callable[[], SendspinClient | None],
         state: AppState,
         audio_handler: AudioStreamHandler,
         ui: SendspinUI,
         settings: ClientSettings,
     ) -> None:
         """Initialize the command handler."""
-        self._client = client
+        self._get_client = get_client
         self._state = state
         self._audio_handler = audio_handler
         self._ui = ui
@@ -44,7 +44,9 @@ class CommandHandler:
         if command not in self._state.supported_commands:
             self._ui.add_event(f"Server does not support {command.value}")
             return
-        await self._client.send_group_command(command)
+        client = self._get_client()
+        if client is not None:
+            await client.send_group_command(command)
 
     async def toggle_play_pause(self) -> None:
         """Toggle between play and pause."""
@@ -72,7 +74,9 @@ class CommandHandler:
             return
         current = self._state.volume or 0
         target = max(0, min(100, current + delta))
-        await self._client.send_group_command(MediaCommand.VOLUME, volume=target)
+        client = self._get_client()
+        if client is not None:
+            await client.send_group_command(MediaCommand.VOLUME, volume=target)
 
     async def toggle_group_mute(self) -> None:
         """Toggle group mute state."""
@@ -80,7 +84,9 @@ class CommandHandler:
             self._ui.add_event("Server does not support mute control")
             return
         muted = not self._state.muted
-        await self._client.send_group_command(MediaCommand.MUTE, mute=muted)
+        client = self._get_client()
+        if client is not None:
+            await client.send_group_command(MediaCommand.MUTE, mute=muted)
 
     async def cycle_repeat(self) -> None:
         """Cycle repeat mode: OFF -> ALL -> ONE -> OFF."""
@@ -102,9 +108,12 @@ class CommandHandler:
 
     async def adjust_delay(self, delta: float) -> None:
         """Adjust static delay by delta milliseconds."""
-        self._client.set_static_delay_ms(self._client.static_delay_ms + delta)
-        self._ui.set_delay(self._client.static_delay_ms)
-        self._settings.update(static_delay_ms=self._client.static_delay_ms)
+        client = self._get_client()
+        if client is None:
+            return
+        client.set_static_delay_ms(client.static_delay_ms + delta)
+        self._ui.set_delay(client.static_delay_ms)
+        self._settings.update(static_delay_ms=client.static_delay_ms)
 
     def close_server_selector(self) -> None:
         """Close the server selector panel."""
@@ -112,7 +121,7 @@ class CommandHandler:
 
 
 async def keyboard_loop(
-    client: SendspinClient,
+    get_client: Callable[[], SendspinClient | None],
     state: AppState,
     audio_handler: AudioStreamHandler,
     ui: SendspinUI,
@@ -120,11 +129,12 @@ async def keyboard_loop(
     show_server_selector: Callable[[], None],
     on_server_selected: Callable[[], Awaitable[None]],
     request_shutdown: Callable[[], None],
+    on_toggle_visualizer: Callable[[], Awaitable[None]],
 ) -> None:
     """Run the keyboard input loop.
 
     Args:
-        client: Sendspin client instance.
+        get_client: Callable returning the current Sendspin client instance.
         state: Application state.
         audio_handler: Audio stream handler.
         ui: UI instance.
@@ -132,8 +142,9 @@ async def keyboard_loop(
         show_server_selector: Function to show the server selector UI.
         on_server_selected: Async callback when a server is selected.
         request_shutdown: Callback to request application shutdown.
+        on_toggle_visualizer: Async callback to toggle the visualizer.
     """
-    handler = CommandHandler(client, state, audio_handler, ui, settings)
+    handler = CommandHandler(get_client, state, audio_handler, ui, settings)
 
     # Key dispatch table: key -> (highlight_name | None, action)
     # Actions can be sync or async. For keys that need case-insensitive matching, use lowercase.
@@ -144,6 +155,7 @@ async def keyboard_loop(
         "g": ("switch", lambda: handler.send_media_command(MediaCommand.SWITCH)),
         "r": ("repeat", handler.cycle_repeat),
         "x": ("shuffle", handler.toggle_shuffle),
+        "v": ("visualizer", on_toggle_visualizer),
         # Delay adjustment
         ",": ("delay-", lambda: handler.adjust_delay(-10)),
         ".": ("delay+", lambda: handler.adjust_delay(10)),

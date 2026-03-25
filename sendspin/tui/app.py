@@ -375,7 +375,7 @@ class SendspinApp:
             # Start keyboard loop for interactive control
             create_task(
                 keyboard_loop(
-                    self._client,
+                    lambda: self._client,
                     self._state,
                     self._audio_handler,
                     self._ui,
@@ -383,6 +383,7 @@ class SendspinApp:
                     self._show_server_selector,
                     self._on_server_selected,
                     request_shutdown,
+                    on_toggle_visualizer=self._toggle_visualizer,
                 )
             )
 
@@ -731,6 +732,9 @@ class SendspinApp:
         """Handle audio format changes by updating the UI."""
         assert self._ui is not None
         self._ui.set_audio_format(codec, sample_rate, bit_depth, channels)
+
+    async def _toggle_visualizer(self) -> None:
+        """Toggle the visualizer on/off."""
 
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""
