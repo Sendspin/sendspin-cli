@@ -259,7 +259,7 @@ class AudioPlayer:
             pcm_format.channels,
             pcm_format.bit_depth,
             self._BLOCKSIZE,
-            device,
+            device.device_id,
         )
 
     @property
