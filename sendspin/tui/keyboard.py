@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -165,14 +166,36 @@ async def keyboard_loop(
         "[": ("group-down", lambda: handler.change_group_volume(-5)),
     }
 
-    # Interactive mode with single keypress input using readchar
     loop = asyncio.get_running_loop()
+    key_queue: asyncio.Queue[str] = asyncio.Queue()
+    stop_reader = threading.Event()
+
+    def read_keys() -> None:
+        """Read keys on a daemon thread and forward them to the event loop."""
+        while not stop_reader.is_set():
+            try:
+                key = readchar.readkey()
+            except KeyboardInterrupt:
+                key = "\x03"
+            except Exception:  # noqa: BLE001
+                logger.exception("Keyboard input failed")
+                return
+
+            if stop_reader.is_set():
+                return
+
+            try:
+                loop.call_soon_threadsafe(key_queue.put_nowait, key)
+            except RuntimeError:
+                return
+
+    threading.Thread(target=read_keys, name="sendspin-keyboard", daemon=True).start()
 
     while True:
         try:
-            # Run blocking readkey in executor to not block the event loop
-            key = await loop.run_in_executor(None, readchar.readkey)
+            key = await key_queue.get()
         except (asyncio.CancelledError, KeyboardInterrupt):
+            stop_reader.set()
             request_shutdown()
             break
 
