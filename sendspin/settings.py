@@ -118,6 +118,7 @@ class ClientSettings(BaseSettings):
     hook_set_volume: str | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
+    visualizer: bool = False
 
     def update(
         self,
@@ -137,6 +138,7 @@ class ClientSettings(BaseSettings):
         hook_set_volume: str | None = None,
         hook_start: str | None = None,
         hook_stop: str | None = None,
+        visualizer: bool | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = False
@@ -166,6 +168,7 @@ class ClientSettings(BaseSettings):
                     "hook_set_volume": hook_set_volume,
                     "hook_start": hook_start,
                     "hook_stop": hook_stop,
+                    "visualizer": visualizer,
                 }
             )
             or changed
@@ -198,6 +201,7 @@ class ClientSettings(BaseSettings):
             self.hook_set_volume = data.get("hook_set_volume")
             self.hook_start = data.get("hook_start")
             self.hook_stop = data.get("hook_stop")
+            self.visualizer = data.get("visualizer", False)
             logger.info(
                 "Loaded settings from %s: volume=%d%%, muted=%s",
                 self._settings_file,
