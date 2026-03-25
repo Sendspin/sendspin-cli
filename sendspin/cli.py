@@ -91,7 +91,7 @@ def list_audio_devices() -> None:
             f"Sample rate: {device.sample_rate} Hz"
         )
     if devices:
-        print("\nTo select an audio device:\n  sendspin --audio-device 0")
+        print(f"\nTo select an audio device:\n  sendspin --audio-device {devices[0].index}")
 
     if sys.platform.startswith("linux"):
         alsa_devices = list_alsa_devices()
