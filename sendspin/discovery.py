@@ -252,13 +252,16 @@ async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient
     Returns:
         List of discovered clients (Sendspin clients and Chromecast devices).
     """
+    cast_browser_cls: type | None = None
+    cast_listener_cls: type | None = None
     try:
         from pychromecast.discovery import CastBrowser, SimpleCastListener
+
+        cast_browser_cls = CastBrowser
+        cast_listener_cls = SimpleCastListener
     except ModuleNotFoundError as exc:
         if exc.name not in {"pychromecast", "pychromecast.discovery"}:
             raise
-        CastBrowser = None
-        SimpleCastListener = None
         logger.debug(
             "Chromecast discovery disabled because the optional cast extra is not installed"
         )
@@ -268,10 +271,10 @@ async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient
 
     async with AsyncZeroconf() as zeroconf:
         chromecast_browser = None
-        if CastBrowser is not None and SimpleCastListener is not None:
+        if cast_browser_cls is not None and cast_listener_cls is not None:
             # Start Chromecast discovery (non-blocking) when the optional dependency is present.
-            chromecast_browser = CastBrowser(
-                SimpleCastListener(),
+            chromecast_browser = cast_browser_cls(
+                cast_listener_cls(),
                 zeroconf.zeroconf,
             )
             chromecast_browser.start_discovery()

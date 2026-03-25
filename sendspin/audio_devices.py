@@ -12,10 +12,6 @@ from sendspin.audio import AudioDevice, query_devices
 logger = logging.getLogger(__name__)
 
 
-class DeviceError(Exception):
-    """Raised when an audio device cannot be found or opened."""
-
-
 def list_alsa_devices() -> list[tuple[str, str]]:
     """List ALSA PCM devices from ``aplay -L``.
 
@@ -63,7 +59,7 @@ def resolve_audio_device(device_arg: str | None) -> AudioDevice:
         The resolved AudioDevice.
 
     Raises:
-        DeviceError: If the device cannot be found.
+        ValueError: If the device cannot be found.
     """
     devices = query_devices()
 
@@ -78,12 +74,12 @@ def resolve_audio_device(device_arg: str | None) -> AudioDevice:
 
     if device is None:
         if device_arg is None:
-            raise DeviceError("Default audio device not found.")
+            raise ValueError("Default audio device not found.")
 
         # Not found in enumeration — try as a raw ALSA device name
         device = _try_alsa_device(device_arg)
         if device is None:
-            raise DeviceError(
+            raise ValueError(
                 f"Audio device '{device_arg}' not found in enumerated devices "
                 "and could not be opened as an ALSA device."
             )

@@ -488,15 +488,11 @@ def _resolve_preferred_format(
         return None
 
     from sendspin.audio import parse_audio_format, validate_audio_format
-    from sendspin.audio_devices import DeviceError
 
-    try:
-        fmt = parse_audio_format(format_arg)
-    except ValueError as e:
-        raise DeviceError(str(e)) from None
+    fmt = parse_audio_format(format_arg)
 
     if not validate_audio_format(fmt, device):
-        raise DeviceError(
+        raise ValueError(
             f"Audio format '{format_arg}' is not supported by device "
             f"'{device.name}' ({device.device_id})."
         )
@@ -605,13 +601,14 @@ def main() -> int:
             asyncio.run(list_clients())
             return 0
 
-    from sendspin.audio_devices import DeviceError
-
     try:
         return asyncio.run(_run_client_mode(args))
-    except (CLIError, DeviceError) as e:
+    except CLIError as e:
         print(f"Error: {e}")
-        return e.exit_code if isinstance(e, CLIError) else 1
+        return e.exit_code
+    except ValueError as e:
+        print(f"Error: {e}")
+        return 1
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)
