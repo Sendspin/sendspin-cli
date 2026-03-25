@@ -24,8 +24,7 @@ from aiosendspin.models.types import (
     Roles,
 )
 
-from sendspin.audio import detect_supported_audio_formats
-from sendspin.audio_devices import AudioDevice
+from sendspin.audio_devices import AudioDevice, detect_supported_audio_formats
 from sendspin.audio_connector import AudioStreamHandler
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings

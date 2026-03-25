@@ -487,7 +487,7 @@ def _resolve_preferred_format(
     if format_arg is None:
         return None
 
-    from sendspin.audio import parse_audio_format, validate_audio_format
+    from sendspin.audio_devices import parse_audio_format, validate_audio_format
 
     fmt = parse_audio_format(format_arg)
 
