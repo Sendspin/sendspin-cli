@@ -179,6 +179,11 @@ async def keyboard_loop(
                 key = "\x03"
             except Exception:  # noqa: BLE001
                 logger.exception("Keyboard input failed")
+                try:
+                    loop.call_soon_threadsafe(request_shutdown)
+                    loop.call_soon_threadsafe(key_queue.put_nowait, "\x03")
+                except RuntimeError:
+                    pass
                 return
 
             if stop_reader.is_set():
@@ -191,60 +196,66 @@ async def keyboard_loop(
 
     threading.Thread(target=read_keys, name="sendspin-keyboard", daemon=True).start()
 
-    while True:
-        try:
-            key = await key_queue.get()
-        except (asyncio.CancelledError, KeyboardInterrupt):
-            stop_reader.set()
-            request_shutdown()
-            break
+    try:
+        while True:
+            try:
+                key = await key_queue.get()
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                request_shutdown()
+                break
 
-        # Handle server selector mode
-        if ui.is_server_selector_visible():
-            if key in "rR":
+            if key == "\x03":
+                request_shutdown()
+                break
+
+            # Handle server selector mode
+            if ui.is_server_selector_visible():
+                if key in "rR":
+                    show_server_selector()
+                    continue
+                if key == readchar.key.UP:
+                    ui.highlight_shortcut("selector-up")
+                    ui.move_server_selection(-1)
+                    continue
+                if key == readchar.key.DOWN:
+                    ui.highlight_shortcut("selector-down")
+                    ui.move_server_selection(1)
+                    continue
+                if key in ("\r", "\n", readchar.key.ENTER):
+                    ui.highlight_shortcut("selector-enter")
+                    await on_server_selected()
+                    continue
+                if key in "qQ":
+                    ui.hide_server_selector()
+                    continue
+                # Ignore other keys when selector is open
+                continue
+
+            # Handle quit
+            if key in "qQ":
+                ui.highlight_shortcut("quit")
+                request_shutdown()
+                break
+
+            # Handle 's' to open server selector
+            if key in "sS":
+                ui.highlight_shortcut("server")
                 show_server_selector()
                 continue
-            if key == readchar.key.UP:
-                ui.highlight_shortcut("selector-up")
-                ui.move_server_selection(-1)
-                continue
-            if key == readchar.key.DOWN:
-                ui.highlight_shortcut("selector-down")
-                ui.move_server_selection(1)
-                continue
-            if key in ("\r", "\n", readchar.key.ENTER):
-                ui.highlight_shortcut("selector-enter")
-                await on_server_selected()
-                continue
-            if key in "qQ":
-                ui.hide_server_selector()
-                continue
-            # Ignore other keys when selector is open
-            continue
 
-        # Handle quit
-        if key in "qQ":
-            ui.highlight_shortcut("quit")
-            request_shutdown()
-            break
+            # Handle shortcuts via dispatch table (case-insensitive for letter keys)
+            action = shortcuts.get(key) or shortcuts.get(key.lower())
+            if action:
+                highlight_name, action_handler = action
+                if highlight_name and ui:
+                    ui.highlight_shortcut(highlight_name)
+                result = action_handler()
+                if result is not None:
+                    await result
+                continue
 
-        # Handle 's' to open server selector
-        if key in "sS":
-            ui.highlight_shortcut("server")
-            show_server_selector()
-            continue
-
-        # Handle shortcuts via dispatch table (case-insensitive for letter keys)
-        action = shortcuts.get(key) or shortcuts.get(key.lower())
-        if action:
-            highlight_name, action_handler = action
-            if highlight_name and ui:
-                ui.highlight_shortcut(highlight_name)
-            result = action_handler()
-            if result is not None:
-                await result
-            continue
-
-        # Ignore unhandled escape sequences
-        if key.startswith("\x1b"):
-            continue
+            # Ignore unhandled escape sequences
+            if key.startswith("\x1b"):
+                continue
+    finally:
+        stop_reader.set()
