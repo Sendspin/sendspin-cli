@@ -203,6 +203,7 @@ class SendspinUI:
                 break
             else:
                 event.clear()
+                self._flush_refresh()
 
     def _shortcut_style(self, shortcut: str) -> str:
         """Get the style for a shortcut key."""
