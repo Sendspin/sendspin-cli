@@ -87,8 +87,10 @@ class VisualizerHandler:
             return
         self._schedule_next()
 
-    def _on_stream_start(self, _message: StreamStartMessage) -> None:
+    def _on_stream_start(self, message: StreamStartMessage) -> None:
         """Flush stale frames when a new stream begins."""
+        if message.payload.visualizer is None:
+            return
         if self._timer is not None:
             self._timer.cancel()
             self._timer = None
