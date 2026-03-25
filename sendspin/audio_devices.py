@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import sys
 from dataclasses import dataclass
 
 import sounddevice
@@ -295,13 +296,12 @@ def resolve_audio_device(device_arg: str | None) -> AudioDevice:
         if device_arg is None:
             raise ValueError("Default audio device not found.")
 
-        # Not found in enumeration — try as a raw ALSA device name
-        device = _try_alsa_device(device_arg)
+        # On Linux, try opening as a raw ALSA device name (e.g. dmix plugin)
+        if sys.platform.startswith("linux"):
+            device = _try_alsa_device(device_arg)
+
         if device is None:
-            raise ValueError(
-                f"Audio device '{device_arg}' not found in enumerated devices "
-                "and could not be opened as an ALSA device."
-            )
+            raise ValueError(f"Audio device '{device_arg}' not found.")
 
     logger.info("Using audio device %s: %s", device.device_id, device.name)
     return device
