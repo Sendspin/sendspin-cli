@@ -168,9 +168,7 @@ class SendspinUI:
 
     def _needs_visualizer_refresh(self) -> bool:
         """Check if the visualizer needs periodic refreshes for interpolation."""
-        return self._state.visualizer_enabled and bool(
-            self._state.visualizer_state._spectrum_target
-        )
+        return self._state.visualizer_enabled and self._state.visualizer_state.is_active
 
     def _next_refresh_interval(self) -> float | None:
         """Return the next periodic refresh interval, if any."""
@@ -597,6 +595,7 @@ class SendspinUI:
     def _build_visualizer_rows(self, height: int) -> list[Text]:
         """Build the spectrum visualizer as raw Text rows."""
         state = self._state.visualizer_state
+        state.step()
         magnitudes = state.get_spectrum()
         loudness = state.loudness
         peaks = state.get_peaks()

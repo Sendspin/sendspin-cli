@@ -138,20 +138,29 @@ class VisualizerState:
                 else:
                     self._peaks[i] = max(0.0, self._peaks[i] - _PEAK_FALL_RATE * dt)
 
+    @property
+    def is_active(self) -> bool:
+        """Whether there is pending visualizer data to animate."""
+        return bool(self._spectrum_target)
+
+    def step(self) -> None:
+        """Advance displayed values toward targets.
+
+        Call once per render frame before reading spectrum/loudness/peaks.
+        """
+        self._step()
+
     def get_spectrum(self) -> list[float]:
         """Return the most recent normalized 0.0-1.0 spectrum values."""
-        self._step()
         return list(self._spectrum)
 
     @property
     def loudness(self) -> float:
         """Return current loudness without per-frame decay."""
-        self._step()
         return self._loudness
 
     def get_peaks(self) -> list[float]:
         """Return the current peak hold heights (0.0-1.0 per bin)."""
-        self._step()
         return list(self._peaks)
 
 

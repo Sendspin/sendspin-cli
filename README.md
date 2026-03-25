@@ -313,12 +313,9 @@ Hooks receive these environment variables:
 
 ### Visualizer
 
-The TUI includes a real-time audio spectrum visualizer that displays frequency data received from the server. This uses the experimental `visualizer@_draft_r1` role, the spectrum data is computed on the server and sent via sendspin to the TUI.
-You can enable it with by running with the visualizer flag:
+The TUI includes a real-time audio spectrum visualizer that displays frequency data received from the server. This uses the experimental `visualizer@_draft_r1` role. The spectrum data is computed on the server and sent via sendspin to the TUI.
 
-```bash
-sendspin --visualizer
-```
+Toggle it by pressing `v` in the TUI. Your preference is saved in settings and remembered on next launch.
 
 ### Debugging & Troubleshooting
 
