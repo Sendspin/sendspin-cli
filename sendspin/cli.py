@@ -694,7 +694,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
                 f"Hardware volume control is not available on this system. "
                 f"{HW_VOLUME_UNAVAILABLE_REASON or 'Use --hardware-volume false to disable.'}"
             )
-    args.visualizer_enabled = settings.visualizer
     if args.hook_start is None:
         args.hook_start = settings.hook_start
     if args.hook_stop is None:
@@ -762,7 +761,6 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         volume_controller=volume_controller,
         hook_start=args.hook_start,
         hook_stop=args.hook_stop,
-        visualizer_enabled=args.visualizer_enabled,
     )
 
     app = SendspinApp(app_args)
