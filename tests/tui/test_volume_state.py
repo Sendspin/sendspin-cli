@@ -80,7 +80,7 @@ def test_keyboard_volume_change_uses_audio_handler_state(tmp_path: Path) -> None
     audio_handler = _FakeAudioHandler(volume=41, muted=False)
     ui = _FakeUI()
     handler = CommandHandler(
-        client=SimpleNamespace(),
+        get_client=lambda: SimpleNamespace(),
         state=state,
         audio_handler=audio_handler,
         ui=ui,
@@ -97,7 +97,7 @@ def test_keyboard_toggle_mute_uses_audio_handler_state(tmp_path: Path) -> None:
     audio_handler = _FakeAudioHandler(volume=41, muted=False)
     ui = _FakeUI()
     handler = CommandHandler(
-        client=SimpleNamespace(),
+        get_client=lambda: SimpleNamespace(),
         state=state,
         audio_handler=audio_handler,
         ui=ui,
