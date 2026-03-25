@@ -751,8 +751,10 @@ class SendspinUI:
             bottom_row.add_row(playback, stream, server)
             layout.add_row(bottom_row)
 
-        # Quit shortcut below boxes
+        # Bottom shortcuts below boxes
         quit_line = Text(justify="right")
+        quit_line.append("v", style=self._shortcut_style("visualizer"))
+        quit_line.append(" visualizer  ", style="dim")
         quit_line.append("q", style=self._shortcut_style("quit"))
         quit_line.append(" quit  ", style="dim")
         layout.add_row(quit_line)
@@ -895,6 +897,13 @@ class SendspinUI:
         if self._state.visualizer_enabled:
             self._state.visualizer_state.update(spectrum, loudness)
             self.refresh()
+
+    def set_visualizer_enabled(self, enabled: bool) -> None:
+        """Update whether the visualizer is enabled."""
+        self._state.visualizer_enabled = enabled
+        if not enabled:
+            self._state.visualizer_state.clear()
+        self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:
         """Show the server selector with available servers."""
