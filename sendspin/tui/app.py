@@ -787,6 +787,11 @@ class SendspinApp:
         self._attach_client()  # attach to new self._client
 
         if old_client is not None:
+            # Reuse server-switch mechanism so the connection loop treats the
+            # client swap as a reconnect (prevents CancelledError propagation
+            # when a connect is in-flight).
+            if self._state.selected_server:
+                self._connection_manager.set_pending_server(self._state.selected_server)
             if not self._cancel_connect():
                 await old_client.disconnect()
 
