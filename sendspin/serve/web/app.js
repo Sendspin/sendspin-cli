@@ -690,9 +690,9 @@ async function updateListenerCount() {
     const resp = await fetch(`${coordinatorUrl}/api/status`);
     if (resp.ok) {
       const data = await resp.json();
-      const count = data.total_clients ?? 0;
+      const count = Math.max(data.total_clients ?? 0, 1);
       elements.listenerCountValue.textContent = String(count);
-      elements.listenerCount.setAttribute("aria-hidden", String(count === 0));
+      elements.listenerCount.setAttribute("aria-hidden", "false");
     }
   } catch {
     // Silently ignore - coordinator may not support this endpoint
@@ -712,6 +712,7 @@ function stopListenerPolling() {
     window.clearInterval(state.listenerPollInterval);
     state.listenerPollInterval = null;
   }
+  elements.listenerCount.setAttribute("aria-hidden", "true");
 }
 
 renderUiState();

@@ -15,7 +15,6 @@ import queue as _queue
 import signal
 import time
 from contextlib import suppress
-from typing import TYPE_CHECKING
 
 from aiohttp import web
 from aiosendspin.server.push_stream import DEFAULT_INITIAL_DELAY_US
@@ -31,9 +30,6 @@ from sendspin.serve.ipc import (
 )
 from sendspin.serve.source import decode_audio
 from sendspin.serve.worker import worker_main
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -196,8 +192,24 @@ class ServeCoordinator:
             try:
                 msg = self._status_queue.get_nowait()
                 self._handle_status_message(msg)
-            except Exception:  # noqa: BLE001
+            except _queue.Empty:
                 break
+
+    def _check_worker_health(self) -> None:
+        """Check for crashed workers and remove them from the redirect pool."""
+        for i, proc in enumerate(self._processes):
+            if proc.is_alive():
+                continue
+            port = self.worker_ports[i]
+            if port in self._active_worker_ports:
+                self._active_worker_ports.remove(port)
+                print(f"[health] Worker {i} (port {port}) crashed, removed from pool")  # noqa: T201
+
+        if not self._active_worker_ports and self._processes:
+            print("[health] All workers have crashed, shutting down")  # noqa: T201
+            self._shutdown_requested = True
+            if self._run_task is not None:
+                self._run_task.cancel()
 
     def _log_client_stats(self) -> None:
         """Print per-worker client counts to console."""
@@ -226,6 +238,7 @@ class ServeCoordinator:
 
                     now = time.monotonic()
                     if now - last_stats_time >= 30.0:
+                        self._check_worker_health()
                         self._log_client_stats()
                         last_stats_time = now
 
@@ -268,11 +281,7 @@ class ServeCoordinator:
     async def _start_http_server(self) -> None:
         """Start the coordinator HTTP server for redirects and status."""
         local_ip = get_local_ip()
-        worker_urls = [f"http://{local_ip}:{p}/" for p in self._active_worker_ports]
-
-        # If no workers reported listening yet, use calculated ports
-        if not worker_urls:
-            worker_urls = [f"http://{local_ip}:{p}/" for p in self.worker_ports]
+        active_ports = self._active_worker_ports
 
         app = web.Application()
 
@@ -280,14 +289,14 @@ class ServeCoordinator:
 
         async def redirect_handler(request: web.Request) -> web.Response:
             nonlocal redirect_index
-            if not worker_urls:
+            if not active_ports:
                 return web.Response(text="No workers available", status=503)
-            url = worker_urls[redirect_index % len(worker_urls)]
+            port = active_ports[redirect_index % len(active_ports)]
             redirect_index += 1
             return web.Response(
                 status=307,
                 headers={
-                    "Location": url,
+                    "Location": f"http://{local_ip}:{port}/",
                     "Cache-Control": "no-store",
                 },
             )

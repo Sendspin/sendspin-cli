@@ -51,6 +51,9 @@ async def test_coordinator_round_robin_redirect() -> None:
         log_level="WARNING",
     )
 
+    # Simulate workers having reported listening
+    coord._active_worker_ports = [18951, 18952]
+
     await coord._start_http_server()
 
     try:

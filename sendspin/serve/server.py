@@ -37,7 +37,10 @@ class SendspinPlayerServer(SendspinServer):
 
         async def status_handler(request: web.Request) -> web.Response:
             count = len(server_ref.connected_clients)
-            return web.json_response({"total_clients": count})
+            return web.json_response(
+                {"total_clients": count},
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
 
         app.router.add_get("/", index_handler)
         app.router.add_get("/api/status", status_handler)
