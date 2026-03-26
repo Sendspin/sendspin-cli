@@ -286,3 +286,18 @@ async def run_server(config: ServeConfig) -> int:
             await server.close()
 
     return 0
+
+
+async def run_server_multi(config: ServeConfig, *, workers: int, log_level: str) -> int:
+    """Run the multi-worker Sendspin server."""
+    from sendspin.serve.coordinator import ServeCoordinator
+
+    coordinator = ServeCoordinator(
+        source=config.source,
+        source_format=config.source_format,
+        port=config.port,
+        name=config.name,
+        workers=workers,
+        log_level=log_level,
+    )
+    return await coordinator.run()
