@@ -70,6 +70,7 @@ class ServeCoordinator:
         self._shutdown_requested = False
         self._client_connected_event = asyncio.Event()
         self._active_worker_ports: list[int] = []
+        self._run_task: asyncio.Task[int] | None = None
 
         # HTTP server
         self._http_runner: web.AppRunner | None = None
@@ -80,6 +81,8 @@ class ServeCoordinator:
 
         with suppress(NotImplementedError):
             loop.add_signal_handler(signal.SIGINT, self._handle_sigint)
+
+        self._run_task = asyncio.current_task()
 
         try:
             self._spawn_workers()
@@ -96,14 +99,21 @@ class ServeCoordinator:
         except asyncio.CancelledError:
             pass
         finally:
+            self._run_task = None
             await self._shutdown()
 
         return 0
 
     def _handle_sigint(self) -> None:
+        if self._shutdown_requested:
+            # Second Ctrl+C — force exit
+            return
         self._shutdown_requested = True
         print("\nShutting down...")  # noqa: T201
         self._client_connected_event.set()
+        # Cancel the run task to break out of blocking audio decode
+        if self._run_task is not None:
+            self._run_task.cancel()
 
     def _spawn_workers(self) -> None:
         """Spawn worker subprocesses."""
