@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing as mp
+from multiprocessing.sharedctypes import Synchronized
 import uuid
 from contextlib import suppress
 
@@ -46,13 +47,13 @@ class ServeWorker:
         port: int,
         audio_queue: mp.Queue,  # type: ignore[type-arg]
         status_queue: mp.Queue,  # type: ignore[type-arg]
-        coordinator_url: str,
+        total_listeners: Synchronized[int],
     ) -> None:
         self.worker_id = worker_id
         self.port = port
         self._audio_queue = audio_queue
         self._status_queue = status_queue
-        self._coordinator_url = coordinator_url
+        self._total_listeners = total_listeners
         self._server: SendspinPlayerServer | None = None
         self._active_group: SendspinGroup | None = None
         self._stream: PushStream | None = None
@@ -105,7 +106,7 @@ class ServeWorker:
             loop=loop,
             server_id=server_id,
             server_name=f"Sendspin Worker {self.worker_id}",
-            coordinator_url=self._coordinator_url,
+            total_listeners=self._total_listeners,
         )
         self._server.add_event_listener(self._on_server_event)
         await self._server.start_server(
@@ -165,7 +166,7 @@ def worker_main(
     port: int,
     audio_queue: mp.Queue,  # type: ignore[type-arg]
     status_queue: mp.Queue,  # type: ignore[type-arg]
-    coordinator_url: str,
+    total_listeners: Synchronized[int],
     log_level: str,
 ) -> None:
     """Entry point for the worker subprocess."""
@@ -178,6 +179,6 @@ def worker_main(
         port=port,
         audio_queue=audio_queue,
         status_queue=status_queue,
-        coordinator_url=coordinator_url,
+        total_listeners=total_listeners,
     )
     asyncio.run(worker.run())

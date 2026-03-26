@@ -26,16 +26,22 @@ def status_queue(mp_context: mp.context.SpawnContext) -> mp.Queue:
     return mp_context.Queue()
 
 
+@pytest.fixture
+def total_listeners(mp_context: mp.context.SpawnContext) -> mp.Value:
+    return mp_context.Value("i", 0)
+
+
 def test_worker_init(
     audio_queue: mp.Queue,
     status_queue: mp.Queue,
+    total_listeners: mp.Value,
 ) -> None:
     worker = ServeWorker(
         worker_id=0,
         port=8928,
         audio_queue=audio_queue,
         status_queue=status_queue,
-        coordinator_url="http://192.168.1.5:8927",
+        total_listeners=total_listeners,
     )
     assert worker.worker_id == 0
     assert worker.port == 8928
@@ -45,6 +51,7 @@ def test_worker_init(
 async def test_worker_signals_listening_on_start(
     audio_queue: mp.Queue,
     status_queue: mp.Queue,
+    total_listeners: mp.Value,
 ) -> None:
     """Worker should put WorkerListening on the status queue after starting."""
     worker = ServeWorker(
@@ -52,7 +59,7 @@ async def test_worker_signals_listening_on_start(
         port=8928,
         audio_queue=audio_queue,
         status_queue=status_queue,
-        coordinator_url="http://192.168.1.5:8927",
+        total_listeners=total_listeners,
     )
 
     # Put a Shutdown immediately so the worker exits after starting
@@ -71,6 +78,7 @@ async def test_worker_signals_listening_on_start(
 async def test_worker_processes_audio_chunk(
     audio_queue: mp.Queue,
     status_queue: mp.Queue,
+    total_listeners: mp.Value,
 ) -> None:
     """Worker should call prepare_audio/commit_audio for each AudioChunk."""
     worker = ServeWorker(
@@ -78,7 +86,7 @@ async def test_worker_processes_audio_chunk(
         port=8928,
         audio_queue=audio_queue,
         status_queue=status_queue,
-        coordinator_url="http://192.168.1.5:8927",
+        total_listeners=total_listeners,
     )
 
     chunk = AudioChunk(
