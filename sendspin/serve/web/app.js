@@ -7,6 +7,7 @@ const MAX_VOLUME = 100;
 const UI_ACTIVATION_MS = 550;
 const SYNC_UPDATE_INTERVAL_MS = 250;
 const COPY_FEEDBACK_MS = 2000;
+const LISTENER_POLL_INTERVAL_MS = 10_000;
 const START_HAPTIC_PATTERN = [18, 28, 24];
 const STOP_HAPTIC_PATTERN = [14];
 const SYNC_PLACEHOLDER = "--.- ms";
@@ -53,6 +54,8 @@ const elements = {
   shareBtn: document.getElementById("share-btn"),
   shareServerUrl: document.getElementById("share-server-url"),
   castLink: document.getElementById("cast-link"),
+  listenerCount: document.getElementById("listener-count"),
+  listenerCountValue: document.getElementById("listener-count-value"),
 };
 
 const state = {
@@ -61,6 +64,7 @@ const state = {
   isListening: false,
   isStarting: false,
   showPostAnimationLabel: false,
+  listenerPollInterval: null,
   sync: {
     currentMs: null,
     tone: "sync-idle",
@@ -581,6 +585,7 @@ async function startListening() {
   resetSyncDisplay();
   syncGraph.reset();
   syncGraph.start();
+  startListenerPolling();
   renderUiState();
 
   try {
@@ -618,6 +623,7 @@ function disconnect(reason = "shutdown") {
   elements.listenToggleBtn.disabled = false;
 
   syncGraph.stop();
+  stopListenerPolling();
   resetSyncDisplay();
   syncGraph.reset();
   renderUiState();
@@ -675,6 +681,38 @@ elements.shareBtn.addEventListener("click", async () => {
     elements.shareBtn.textContent = originalText;
   }, COPY_FEEDBACK_MS);
 });
+
+// Listener count polling
+const coordinatorUrl = window.__SENDSPIN_COORDINATOR_URL__ || serverUrl;
+
+async function updateListenerCount() {
+  try {
+    const resp = await fetch(`${coordinatorUrl}/api/status`);
+    if (resp.ok) {
+      const data = await resp.json();
+      const count = data.total_clients ?? 0;
+      elements.listenerCountValue.textContent = String(count);
+      elements.listenerCount.setAttribute("aria-hidden", String(count === 0));
+    }
+  } catch {
+    // Silently ignore - coordinator may not support this endpoint
+  }
+}
+
+function startListenerPolling() {
+  updateListenerCount();
+  state.listenerPollInterval = window.setInterval(
+    updateListenerCount,
+    LISTENER_POLL_INTERVAL_MS,
+  );
+}
+
+function stopListenerPolling() {
+  if (state.listenerPollInterval !== null) {
+    window.clearInterval(state.listenerPollInterval);
+    state.listenerPollInterval = null;
+  }
+}
 
 renderUiState();
 resetSyncDisplay();

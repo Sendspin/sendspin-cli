@@ -565,3 +565,21 @@ footer .separator {
     scroll-behavior: auto !important;
   }
 }
+
+.listener-count {
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-top: 10px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.listener-count[aria-hidden="false"] {
+  opacity: 1;
+}
+
+.listener-count span {
+  font-weight: 600;
+  color: var(--text-primary);
+}
