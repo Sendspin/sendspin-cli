@@ -199,9 +199,17 @@ class ServeCoordinator:
             except Exception:  # noqa: BLE001
                 break
 
+    def _log_client_stats(self) -> None:
+        """Print per-worker client counts to console."""
+        total = sum(self._client_counts.values())
+        parts = [f"W{wid}={count}" for wid, count in sorted(self._client_counts.items())]
+        summary = ", ".join(parts) if parts else "no workers reporting"
+        print(f"[stats] {total} clients connected ({summary})")  # noqa: T201
+
     async def _stream_audio_loop(self) -> None:
         """Decode audio and fan out PCM chunks to all workers."""
         consecutive_errors = 0
+        last_stats_time = time.monotonic()
 
         while not self._shutdown_requested:
             try:
@@ -215,6 +223,11 @@ class ServeCoordinator:
                         break  # type: ignore[unreachable]
 
                     await self._drain_status_queue()
+
+                    now = time.monotonic()
+                    if now - last_stats_time >= 30.0:
+                        self._log_client_stats()
+                        last_stats_time = now
 
                     frame_stride = (fmt.bit_depth // 8) * fmt.channels
                     sample_count = len(pcm_chunk) // frame_stride
