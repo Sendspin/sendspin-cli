@@ -273,7 +273,10 @@ class ServeCoordinator:
 
         async def status_handler(request: web.Request) -> web.Response:
             total = sum(client_counts.values())
-            return web.json_response({"total_clients": total})
+            return web.json_response(
+                {"total_clients": total},
+                headers={"Access-Control-Allow-Origin": "*"},
+            )
 
         app.router.add_get("/", redirect_handler)
         app.router.add_get("/api/status", status_handler)
