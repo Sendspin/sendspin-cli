@@ -693,7 +693,7 @@ async function updateListenerCount() {
       elements.listenerCount.setAttribute("aria-hidden", "false");
     }
   } catch {
-    // Silently ignore - coordinator may not support this endpoint
+    // Silently ignore - server may be unavailable
   }
 }
 
