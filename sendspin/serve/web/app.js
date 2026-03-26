@@ -683,11 +683,9 @@ elements.shareBtn.addEventListener("click", async () => {
 });
 
 // Listener count polling
-const coordinatorUrl = window.__SENDSPIN_COORDINATOR_URL__ || serverUrl;
-
 async function updateListenerCount() {
   try {
-    const resp = await fetch(`${coordinatorUrl}/api/status`);
+    const resp = await fetch(`${serverUrl}/api/status`);
     if (resp.ok) {
       const data = await resp.json();
       const count = Math.max(data.total_clients ?? 0, 1);
