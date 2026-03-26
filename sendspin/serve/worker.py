@@ -20,7 +20,7 @@ from aiosendspin.server import (
     SendspinServer,
 )
 from aiosendspin.server.audio import AudioFormat
-from aiosendspin.server.push_stream import PushStream
+from aiosendspin.server.push_stream import PushStream, StreamStoppedError
 
 from sendspin.serve.ipc import (
     AudioChunk,
@@ -82,8 +82,14 @@ class ServeWorker:
                         bit_depth=msg.bit_depth,
                         channels=msg.channels,
                     )
-                    stream.prepare_audio(msg.pcm_bytes, fmt)
-                    await stream.commit_audio(play_start_us=msg.play_start_us)
+                    try:
+                        stream.prepare_audio(msg.pcm_bytes, fmt)
+                        await stream.commit_audio(play_start_us=msg.play_start_us)
+                    except StreamStoppedError:
+                        # All clients disconnected — stream was stopped.
+                        # Clear it so we skip chunks until a new client connects
+                        # and _on_server_event creates a fresh stream.
+                        self._stream = None
 
         except Exception as e:
             logger.exception("[W%d] Worker error", self.worker_id)
@@ -95,7 +101,7 @@ class ServeWorker:
         """Start the SendspinPlayerServer on this worker's port."""
         loop = asyncio.get_running_loop()
         server_id = f"sendspin-worker-{self.worker_id}-{uuid.uuid4().hex[:8]}"
-        self._server = SendspinPlayerServer(  # type: ignore[call-arg]
+        self._server = SendspinPlayerServer(
             loop=loop,
             server_id=server_id,
             server_name=f"Sendspin Worker {self.worker_id}",
