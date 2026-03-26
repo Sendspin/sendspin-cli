@@ -2,8 +2,7 @@
 
 The coordinator is the main process. It spawns worker subprocesses, decodes
 the audio source, and fans out PCM chunks with shared timestamps to all workers.
-It also runs an HTTP server that round-robin redirects browsers to worker ports
-and serves an aggregated client count endpoint.
+Workers are standalone HTTP+WS servers; put a reverse proxy in front for load balancing.
 """
 
 from __future__ import annotations
@@ -16,10 +15,9 @@ import signal
 import time
 from contextlib import suppress
 
-from aiohttp import web
 from aiosendspin.server.push_stream import DEFAULT_INITIAL_DELAY_US
 
-from sendspin.serve import get_local_ip, print_qr_code
+from sendspin.serve import get_local_ip
 from sendspin.serve.ipc import (
     AudioChunk,
     Shutdown,
@@ -60,16 +58,13 @@ class ServeCoordinator:
         self._audio_queues: list[mp.Queue] = []  # type: ignore[type-arg]
         self._status_queue: mp.Queue = self._ctx.Queue()  # type: ignore[type-arg]
         self._processes: list[mp.process.BaseProcess] = []
+        self._total_listeners: mp.sharedctypes.Synchronized[int] = self._ctx.Value("i", 0)
 
         # State
         self._client_counts: dict[int, int] = {}
         self._shutdown_requested = False
         self._client_connected_event = asyncio.Event()
-        self._active_worker_ports: list[int] = []
         self._run_task: asyncio.Task[int] | None = None
-
-        # HTTP server
-        self._http_runner: web.AppRunner | None = None
 
     async def run(self) -> int:
         """Main coordinator loop."""
@@ -83,7 +78,6 @@ class ServeCoordinator:
         try:
             self._spawn_workers()
             await self._wait_for_workers_listening()
-            await self._start_http_server()
             self._print_banner()
 
             # Wait for first client on any worker
@@ -113,9 +107,6 @@ class ServeCoordinator:
 
     def _spawn_workers(self) -> None:
         """Spawn worker subprocesses."""
-        local_ip = get_local_ip()
-        coordinator_url = f"http://{local_ip}:{self.port}"
-
         for i in range(self.workers):
             audio_queue: mp.Queue = self._ctx.Queue()  # type: ignore[type-arg]
             self._audio_queues.append(audio_queue)
@@ -127,7 +118,7 @@ class ServeCoordinator:
                     self.worker_ports[i],
                     audio_queue,
                     self._status_queue,
-                    coordinator_url,
+                    self._total_listeners,
                     self.log_level,
                 ),
             )
@@ -146,7 +137,6 @@ class ServeCoordinator:
 
             if isinstance(msg, WorkerListening):
                 listening_count += 1
-                self._active_worker_ports.append(msg.port)
                 logger.info(
                     "Worker %d listening on port %d (%d/%d)",
                     msg.worker_id,
@@ -183,6 +173,7 @@ class ServeCoordinator:
             logger.info("Client %s connected to worker %d", msg.client_id, msg.worker_id)
         elif isinstance(msg, WorkerClientCount):
             self._client_counts[msg.worker_id] = msg.count
+            self._total_listeners.value = sum(self._client_counts.values())
         elif isinstance(msg, WorkerError):
             logger.error("Worker %d error: %s", msg.worker_id, msg.error)
 
@@ -196,16 +187,15 @@ class ServeCoordinator:
                 break
 
     def _check_worker_health(self) -> None:
-        """Check for crashed workers and remove them from the redirect pool."""
-        for i, proc in enumerate(self._processes):
-            if proc.is_alive():
-                continue
-            port = self.worker_ports[i]
-            if port in self._active_worker_ports:
-                self._active_worker_ports.remove(port)
-                print(f"[health] Worker {i} (port {port}) crashed, removed from pool")  # noqa: T201
+        """Check for crashed workers."""
+        alive_count = sum(1 for p in self._processes if p.is_alive())
 
-        if not self._active_worker_ports and self._processes:
+        for i, proc in enumerate(self._processes):
+            if not proc.is_alive():
+                port = self.worker_ports[i]
+                print(f"[health] Worker {i} (port {port}) crashed")  # noqa: T201
+
+        if alive_count == 0 and self._processes:
             print("[health] All workers have crashed, shutting down")  # noqa: T201
             self._shutdown_requested = True
             if self._run_task is not None:
@@ -278,70 +268,14 @@ class ServeCoordinator:
                 print(f"Retrying in {delay}s...")  # noqa: T201
                 await asyncio.sleep(delay)
 
-    async def _start_http_server(self) -> None:
-        """Start the coordinator HTTP server for redirects and status."""
-        local_ip = get_local_ip()
-        active_ports = self._active_worker_ports
-
-        app = web.Application()
-
-        redirect_index = 0
-
-        async def redirect_handler(request: web.Request) -> web.Response:
-            nonlocal redirect_index
-            if not active_ports:
-                return web.Response(text="No workers available", status=503)
-            port = active_ports[redirect_index % len(active_ports)]
-            redirect_index += 1
-            return web.Response(
-                status=307,
-                headers={
-                    "Location": f"http://{local_ip}:{port}/",
-                    "Cache-Control": "no-store",
-                },
-            )
-
-        client_counts = self._client_counts
-
-        async def status_handler(request: web.Request) -> web.Response:
-            total = sum(client_counts.values())
-            return web.json_response(
-                {"total_clients": total},
-                headers={"Access-Control-Allow-Origin": "*"},
-            )
-
-        app.router.add_get("/", redirect_handler)
-        app.router.add_get("/api/status", status_handler)
-
-        self._http_runner = web.AppRunner(app)
-        await self._http_runner.setup()
-        site = web.TCPSite(self._http_runner, port=self.port)
-        await site.start()
-
-    async def _stop_http_server(self) -> None:
-        """Stop the coordinator HTTP server."""
-        if self._http_runner is not None:
-            await self._http_runner.cleanup()
-            self._http_runner = None
-
     def _print_banner(self) -> None:
-        """Print the server URLs and QR code."""
+        """Print worker URLs."""
         local_ip = get_local_ip()
-        url = f"http://{local_ip}:{self.port}/"
 
         print(f"\nMulti-worker server running ({self.workers} workers)")  # noqa: T201
-        for i, port in enumerate(self._active_worker_ports):
+        for i, port in enumerate(self.worker_ports):
             print(f"  Worker {i}: http://{local_ip}:{port}/")  # noqa: T201
-        print(f"\nEntry point: {url}")  # noqa: T201
-
-        if local_ip != "localhost":
-            print()  # noqa: T201
-            print_qr_code(url)
-            print()  # noqa: T201
-            print("Scan QR to open in browser to use the web player")  # noqa: T201
-        else:
-            print("Unable to print QR code because no LAN IP available")  # noqa: T201
-            print("Open in browser to use the web player")  # noqa: T201
+        print("\nPlace a reverse proxy in front of the worker ports for load balancing.")  # noqa: T201
         print("Press Ctrl+C to quit\n")  # noqa: T201
 
     async def _shutdown(self) -> None:
@@ -358,5 +292,3 @@ class ServeCoordinator:
                 p.terminate()
         for p in self._processes:
             p.join(timeout=2.0)
-
-        await self._stop_http_server()

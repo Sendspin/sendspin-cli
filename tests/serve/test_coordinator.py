@@ -4,9 +4,9 @@ from __future__ import annotations
 
 
 import pytest
-from aiohttp import ClientSession
 
 from sendspin.serve.coordinator import ServeCoordinator
+from sendspin.serve.ipc import WorkerClientCount
 
 
 @pytest.fixture
@@ -39,68 +39,12 @@ def test_coordinator_worker_ports_calculation() -> None:
     assert coord.worker_ports == [9001, 9002, 9003, 9004]
 
 
-@pytest.mark.asyncio
-async def test_coordinator_round_robin_redirect() -> None:
-    """The HTTP server should 307-redirect round-robin to worker ports."""
-    coord = ServeCoordinator(
-        source="test.mp3",
-        source_format=None,
-        port=18950,
-        name="Test",
-        workers=2,
-        log_level="WARNING",
-    )
+def test_coordinator_updates_total_listeners(coordinator: ServeCoordinator) -> None:
+    """_handle_status_message should update shared _total_listeners value."""
+    coordinator._handle_status_message(WorkerClientCount(worker_id=0, count=5))
+    coordinator._handle_status_message(WorkerClientCount(worker_id=1, count=3))
+    assert coordinator._total_listeners.value == 8
 
-    # Simulate workers having reported listening
-    coord._active_worker_ports = [18951, 18952]
-
-    await coord._start_http_server()
-
-    try:
-        async with ClientSession() as session:
-            # First request -> worker 0 (port 18951)
-            async with session.get("http://127.0.0.1:18950/", allow_redirects=False) as resp:
-                assert resp.status == 307
-                location = resp.headers["Location"]
-                assert ":18951/" in location
-
-            # Second request -> worker 1 (port 18952)
-            async with session.get("http://127.0.0.1:18950/", allow_redirects=False) as resp:
-                assert resp.status == 307
-                location = resp.headers["Location"]
-                assert ":18952/" in location
-
-            # Third request -> back to worker 0
-            async with session.get("http://127.0.0.1:18950/", allow_redirects=False) as resp:
-                assert resp.status == 307
-                location = resp.headers["Location"]
-                assert ":18951/" in location
-    finally:
-        await coord._stop_http_server()
-
-
-@pytest.mark.asyncio
-async def test_coordinator_status_endpoint() -> None:
-    """GET /api/status should return aggregated client count."""
-    coord = ServeCoordinator(
-        source="test.mp3",
-        source_format=None,
-        port=18951,
-        name="Test",
-        workers=2,
-        log_level="WARNING",
-    )
-
-    # Simulate client counts from 2 workers
-    coord._client_counts = {0: 5, 1: 3}
-
-    await coord._start_http_server()
-
-    try:
-        async with ClientSession() as session:
-            async with session.get("http://127.0.0.1:18951/api/status") as resp:
-                assert resp.status == 200
-                data = await resp.json()
-                assert data == {"total_clients": 8}
-    finally:
-        await coord._stop_http_server()
+    # Worker 0 loses a client
+    coordinator._handle_status_message(WorkerClientCount(worker_id=0, count=4))
+    assert coordinator._total_listeners.value == 7
