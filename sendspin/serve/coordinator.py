@@ -65,6 +65,7 @@ class ServeCoordinator:
         self._shutdown_requested = False
         self._client_connected_event = asyncio.Event()
         self._run_task: asyncio.Task[int] | None = None
+        self._reported_crashed: set[int] = set()
 
     async def run(self) -> int:
         """Main coordinator loop."""
@@ -191,7 +192,8 @@ class ServeCoordinator:
         alive_count = sum(1 for p in self._processes if p.is_alive())
 
         for i, proc in enumerate(self._processes):
-            if not proc.is_alive():
+            if not proc.is_alive() and i not in self._reported_crashed:
+                self._reported_crashed.add(i)
                 port = self.worker_ports[i]
                 print(f"[health] Worker {i} (port {port}) crashed")  # noqa: T201
 
