@@ -448,7 +448,8 @@ class AudioStreamHandler:
         """Handle incoming audio chunks by enqueueing them to the sync worker."""
         worker = self._audio_worker
         if worker is None or not worker.is_running():
-            raise RuntimeError("Audio worker is not running")
+            logger.debug("Audio chunk dropped: worker not running")
+            return
 
         pcm_format = fmt.pcm_format
         if self._current_format != fmt:

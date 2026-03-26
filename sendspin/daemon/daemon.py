@@ -11,15 +11,10 @@ from typing import TYPE_CHECKING
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
-from aiosendspin.models.core import (
-    ClientGoodbyeMessage,
-    ClientGoodbyePayload,
-    ServerCommandPayload,
-)
+from aiosendspin.models.core import ServerCommandPayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
-    GoodbyeReason,
     PlayerCommand,
     Roles,
 )
@@ -226,23 +221,28 @@ class SendspinDaemon:
         # Lock ensures we wait for any in-progress handshake to complete
         # before disconnecting the previous server
         async with self._connection_lock:
-            # Clean up any previous client
-            if self._client is not None:
+            old_client = self._client
+
+            # Handshake the new connection BEFORE tearing down the old one.
+            # This ensures the server always sees at least one active client
+            # in the group, preventing it from stopping playback during
+            # a same-server reconnection.
+            client = self._create_client(self._static_delay_ms)
+
+            try:
+                await client.attach_websocket(ws)
+            except TimeoutError:
+                logger.warning("Handshake with server timed out")
+                return
+            except Exception:
+                logger.exception("Error during server handshake")
+                return
+
+            # Handshake succeeded — switch over from old to new connection.
+            if old_client is not None:
                 logger.info("Disconnecting from previous server")
                 await self._handle_disconnect()
-                if self._client.connected:
-                    try:
-                        await self._client._send_message(  # noqa: SLF001
-                            ClientGoodbyeMessage(
-                                payload=ClientGoodbyePayload(reason=GoodbyeReason.ANOTHER_SERVER)
-                            ).to_json()
-                        )
-                    except Exception:
-                        logger.debug("Failed to send goodbye message", exc_info=True)
-                await self._client.disconnect()
 
-            # Create a new client for this connection
-            client = self._create_client(self._static_delay_ms)
             self._client = client
             self._audio_handler.attach_client(client)
             client.add_server_command_listener(self._handle_server_command)
@@ -250,20 +250,9 @@ class SendspinDaemon:
                 self._mpris = SendspinMpris(client)
                 self._mpris.start()
 
-            try:
-                await client.attach_websocket(ws)
-            except TimeoutError:
-                logger.warning("Handshake with server timed out")
-                await self._handle_disconnect()
-                if self._client is client:
-                    self._client = None
-                return
-            except Exception:
-                logger.exception("Error during server handshake")
-                await self._handle_disconnect()
-                if self._client is client:
-                    self._client = None
-                return
+            # Close old connection after new one is fully established.
+            if old_client is not None:
+                await old_client.disconnect()
 
         # Handshake complete, release lock so new connections can proceed
         # Now wait for disconnect (outside the lock)
