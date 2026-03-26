@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import multiprocessing as mp
+import queue as _queue
 import signal
 import time
 from contextlib import suppress
@@ -155,17 +156,20 @@ class ServeCoordinator:
         """Process status messages until at least one client connects or shutdown."""
         loop = asyncio.get_running_loop()
 
-        while not self._shutdown_requested:
+        def _get_with_timeout() -> object | None:
             try:
-                msg = await asyncio.wait_for(
-                    loop.run_in_executor(None, self._status_queue.get),
-                    timeout=0.5,
-                )
-                self._handle_status_message(msg)
-                if isinstance(msg, WorkerClientConnected):
-                    return
-            except TimeoutError:
+                result: object = self._status_queue.get(timeout=0.5)
+            except _queue.Empty:
+                return None
+            return result
+
+        while not self._shutdown_requested:
+            msg = await loop.run_in_executor(None, _get_with_timeout)
+            if msg is None:
                 continue
+            self._handle_status_message(msg)
+            if isinstance(msg, WorkerClientConnected):
+                return
 
     def _handle_status_message(self, msg: object) -> None:
         """Handle a single status message from a worker."""
