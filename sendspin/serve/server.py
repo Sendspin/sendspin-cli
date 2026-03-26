@@ -1,6 +1,7 @@
 """Custom SendspinServer with embedded web player."""
 
 from importlib.resources import files
+from multiprocessing.sharedctypes import Synchronized
 from pathlib import Path
 from typing import Any
 
@@ -11,9 +12,9 @@ from aiosendspin.server import SendspinServer
 class SendspinPlayerServer(SendspinServer):
     """SendspinServer that serves an embedded web player at /."""
 
-    def __init__(self, *, coordinator_url: str | None = None, **kwargs: Any) -> None:
+    def __init__(self, *, total_listeners: Synchronized[int] | None = None, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._coordinator_url = coordinator_url
+        self._total_listeners = total_listeners
 
     def _create_web_application(self) -> web.Application:
         """Create web app with embedded player and static file serving."""
@@ -22,21 +23,18 @@ class SendspinPlayerServer(SendspinServer):
         # Get path to web assets directory
         web_path = Path(str(files("sendspin.serve.web")))
 
-        coordinator_url = self._coordinator_url
+        total_listeners = self._total_listeners
         server_ref = self
 
-        # Serve index.html at root, injecting coordinator URL if set
-        async def index_handler(request: web.Request) -> web.Response:
-            html = (web_path / "index.html").read_text()
-            if coordinator_url:
-                inject = (
-                    f'<script>window.__SENDSPIN_COORDINATOR_URL__ = "{coordinator_url}";</script>\n'
-                )
-                html = html.replace("</head>", f"{inject}</head>", 1)
-            return web.Response(text=html, content_type="text/html")
+        # Serve index.html at root
+        async def index_handler(request: web.Request) -> web.FileResponse:
+            return web.FileResponse(web_path / "index.html")
 
         async def status_handler(request: web.Request) -> web.Response:
-            count = len(server_ref.connected_clients)
+            if total_listeners is not None:
+                count = total_listeners.value
+            else:
+                count = len(server_ref.connected_clients)
             return web.json_response(
                 {"total_clients": count},
                 headers={"Access-Control-Allow-Origin": "*"},
