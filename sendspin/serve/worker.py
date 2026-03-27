@@ -88,9 +88,9 @@ class ServeWorker:
                         await stream.commit_audio(play_start_us=msg.play_start_us)
                     except StreamStoppedError:
                         # All clients disconnected — stream was stopped.
-                        # Clear it so we skip chunks until a new client connects
-                        # and _on_server_event creates a fresh stream.
+                        # Clear both so the next client starts a fresh group/stream.
                         self._stream = None
+                        self._active_group = None
 
         except Exception as e:
             logger.exception("[W%d] Worker error", self.worker_id)
