@@ -390,3 +390,15 @@ uvx sendspin serve /path/to/media.mp3
 # Connect to specific clients
 sendspin serve --demo --client ws://192.168.1.50:8927/sendspin --client ws://192.168.1.51:8927/sendspin
 ```
+
+### Multi-Worker Mode
+
+For serving many concurrent listeners, use `--workers` to run multiple server processes behind a reverse proxy:
+
+```bash
+sendspin serve --demo --workers 4
+```
+
+This spawns 4 worker processes on consecutive ports starting from `--port` (default 8927), so ports 8927-8930. Place a reverse proxy (e.g., nginx, Caddy) in front with load balancing across these ports.
+
+Note: `--client` is not supported with `--workers`.
