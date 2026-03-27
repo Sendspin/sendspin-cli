@@ -31,7 +31,8 @@ from sendspin.serve.worker import worker_main
 
 logger = logging.getLogger(__name__)
 
-MAX_BUFFER_AHEAD_US = 5_000_000  # Keep at least 5s of buffer on workers
+# Keep at least 5s of buffer on workers/connected clients
+MAX_BUFFER_AHEAD_US = 5_000_000
 
 
 class ServeCoordinator:
@@ -65,7 +66,6 @@ class ServeCoordinator:
         # State
         self._client_counts: dict[int, int] = {}
         self._shutdown_requested = False
-        self._client_connected_event = asyncio.Event()
         self._run_task: asyncio.Task[int] | None = None
         self._reported_crashed: set[int] = set()
 
@@ -109,7 +109,6 @@ class ServeCoordinator:
             return
         self._shutdown_requested = True
         print("\nShutting down...")  # noqa: T201
-        self._client_connected_event.set()
         # Cancel the run task to break out of blocking audio decode
         if self._run_task is not None:
             self._run_task.cancel()
