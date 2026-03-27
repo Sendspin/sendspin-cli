@@ -549,6 +549,10 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
         print("Error: --workers must be at least 1")
         return 1
 
+    if args.workers > 1 and serve_config.clients:
+        print("Error: --client is not supported with --workers")
+        return 1
+
     if args.workers > 1:
         return await run_server_multi(serve_config, workers=args.workers, log_level=args.log_level)
 
