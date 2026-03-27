@@ -86,11 +86,14 @@ class ServeCoordinator:
                 return 1
             self._print_banner()
 
-            # Wait for first client on any worker
-            await self._consume_status_until_client()
+            while not self._shutdown_requested:
+                # Wait for at least one client on any worker
+                await self._consume_status_until_client()
+                if self._shutdown_requested:
+                    break  # type: ignore[unreachable]
 
-            # Decode and fan out audio
-            await self._stream_audio_loop()
+                # Decode and fan out audio until all clients disconnect
+                await self._stream_audio_loop()
 
         except asyncio.CancelledError:
             pass
@@ -223,7 +226,10 @@ class ServeCoordinator:
         print(f"[stats] {total} clients connected ({summary})")  # noqa: T201
 
     async def _stream_audio_loop(self) -> None:
-        """Decode audio and fan out PCM chunks to all workers."""
+        """Decode audio and fan out PCM chunks to all workers.
+
+        Returns when all clients disconnect or shutdown is requested.
+        """
         consecutive_errors = 0
         last_stats_time = time.monotonic()
 
@@ -239,6 +245,11 @@ class ServeCoordinator:
                         break  # type: ignore[unreachable]
 
                     await self._drain_status_queue()
+
+                    # Pause if all clients disconnected
+                    if self._total_listeners.value == 0:
+                        logger.info("All clients disconnected, pausing playback")
+                        return
 
                     now = time.monotonic()
                     if now - last_stats_time >= 30.0:
@@ -270,9 +281,10 @@ class ServeCoordinator:
                 consecutive_errors = 0
 
             except asyncio.CancelledError:
-                break
+                return
             except FileNotFoundError as e:
                 print(f"Error: {e}")  # noqa: T201
+                self._shutdown_requested = True
                 return
             except Exception as e:  # noqa: BLE001
                 consecutive_errors += 1
