@@ -126,7 +126,7 @@ Settings are stored in `~/.config/sendspin/`:
 {
   "player_volume": 50,
   "player_muted": false,
-  "static_delay_ms": -100.0,
+  "static_delay_ms": 100.0,
   "last_server_url": "ws://192.168.1.100:8927/sendspin",
   "name": "Living Room",
   "client_id": "sendspin-living-room",
@@ -287,10 +287,10 @@ Because Sendspin cannot read back external device state from the hook, startup v
 The player supports adjusting playback delay to compensate for audio hardware latency or achieve better synchronization across devices.
 
 ```bash
-sendspin --static-delay-ms -100
+sendspin --static-delay-ms 100
 ```
 
-> **Note:** Based on limited testing, the delay value is typically a negative number (e.g., `-100` or `-150`) to compensate for audio hardware buffering.
+> **Note:** Based on limited testing, a delay value of 100-150ms is typical to compensate for audio hardware buffering.
 
 ### Daemon Mode
 
