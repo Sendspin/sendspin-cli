@@ -204,20 +204,16 @@ class ServeCoordinator:
                 break
 
     def _check_worker_health(self) -> None:
-        """Check for crashed workers."""
-        alive_count = sum(1 for p in self._processes if p.is_alive())
-
+        """Check for crashed workers - shut down if any died."""
         for i, proc in enumerate(self._processes):
             if not proc.is_alive() and i not in self._reported_crashed:
                 self._reported_crashed.add(i)
                 port = self.worker_ports[i]
-                print(f"[health] Worker {i} (port {port}) crashed")  # noqa: T201
-
-        if alive_count == 0 and self._processes:
-            print("[health] All workers have crashed, shutting down")  # noqa: T201
-            self._shutdown_requested = True
-            if self._run_task is not None:
-                self._run_task.cancel()
+                print(f"[health] Worker {i} (port {port}) crashed, shutting down")  # noqa: T201
+                self._shutdown_requested = True
+                if self._run_task is not None:
+                    self._run_task.cancel()
+                return
 
     def _log_client_stats(self) -> None:
         """Print per-worker client counts to console."""
