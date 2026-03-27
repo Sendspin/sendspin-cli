@@ -53,7 +53,7 @@ class ServeCoordinator:
         self.name = name
         self.workers = workers
         self.log_level = log_level
-        self.worker_ports = [port + 1 + i for i in range(workers)]
+        self.worker_ports = [port + i for i in range(workers)]
 
         # IPC
         self._ctx = mp.get_context("spawn")

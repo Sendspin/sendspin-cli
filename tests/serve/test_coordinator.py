@@ -24,7 +24,7 @@ def coordinator() -> ServeCoordinator:
 def test_coordinator_init(coordinator: ServeCoordinator) -> None:
     assert coordinator.port == 18927
     assert coordinator.workers == 2
-    assert coordinator.worker_ports == [18928, 18929]
+    assert coordinator.worker_ports == [18927, 18928]
 
 
 def test_coordinator_worker_ports_calculation() -> None:
@@ -36,7 +36,7 @@ def test_coordinator_worker_ports_calculation() -> None:
         workers=4,
         log_level="WARNING",
     )
-    assert coord.worker_ports == [9001, 9002, 9003, 9004]
+    assert coord.worker_ports == [9000, 9001, 9002, 9003]
 
 
 def test_coordinator_updates_total_listeners(coordinator: ServeCoordinator) -> None:
