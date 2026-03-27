@@ -31,6 +31,8 @@ from sendspin.serve.worker import worker_main
 
 logger = logging.getLogger(__name__)
 
+MAX_BUFFER_AHEAD_US = 5_000_000  # Keep at least 5s of buffer on workers
+
 
 class ServeCoordinator:
     """Orchestrates multi-worker serve mode."""
@@ -252,8 +254,8 @@ class ServeCoordinator:
 
                     now_us = int(time.monotonic() * 1_000_000)
                     ahead_us = play_start_us - DEFAULT_INITIAL_DELAY_US - now_us
-                    if ahead_us > 0:
-                        await asyncio.sleep(ahead_us / 1_000_000)
+                    if ahead_us > MAX_BUFFER_AHEAD_US:
+                        await asyncio.sleep((ahead_us - MAX_BUFFER_AHEAD_US) / 1_000_000)
 
                 consecutive_errors = 0
 
