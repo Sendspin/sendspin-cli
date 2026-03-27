@@ -138,6 +138,15 @@ class ServeWorker:
 
         elif isinstance(event, ClientRemovedEvent):
             logger.info("[W%d] Client disconnected: %s", self.worker_id, event.client_id)
+            # If no clients remain, tear down so the next client starts fresh
+            if self._active_group is not None and not [
+                c for c in self._active_group.clients if c.client_id != event.client_id
+            ]:
+                if self._stream is not None:
+                    with suppress(Exception):
+                        self._stream.stop()
+                    self._stream = None
+                self._active_group = None
             self._report_client_count()
 
     def _report_client_count(self) -> None:

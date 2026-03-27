@@ -111,3 +111,43 @@ async def test_worker_processes_audio_chunk(
 
     mock_stream.prepare_audio.assert_called_once()
     mock_stream.commit_audio.assert_called_once_with(play_start_us=1_000_000)
+
+
+def test_worker_clears_group_when_last_client_disconnects(
+    audio_queue: mp.Queue,
+    status_queue: mp.Queue,
+    total_listeners: mp.Value,
+) -> None:
+    """When the last client disconnects, active_group and stream should be cleared."""
+    worker = ServeWorker(
+        worker_id=0,
+        port=8928,
+        audio_queue=audio_queue,
+        status_queue=status_queue,
+        total_listeners=total_listeners,
+    )
+
+    # Set up a mock group with one client that will be "removed"
+    mock_stream = MagicMock()
+    mock_stream.stop = MagicMock()
+    mock_group = MagicMock()
+    mock_group.clients = []  # Empty after removal
+
+    worker._active_group = mock_group
+    worker._stream = mock_stream
+
+    # Create a mock server with no connected clients
+    mock_server = MagicMock()
+    mock_server.connected_clients = {}
+    worker._server = mock_server
+
+    # Simulate ClientRemovedEvent
+    from aiosendspin.server import ClientRemovedEvent
+
+    event = ClientRemovedEvent(client_id="test-client")
+    worker._on_server_event(mock_server, event)
+
+    # Group and stream should be cleared
+    assert worker._active_group is None
+    assert worker._stream is None
+    mock_stream.stop.assert_called_once()
