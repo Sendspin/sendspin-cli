@@ -67,6 +67,7 @@ class ServeCoordinator:
         self._client_counts: dict[int, int] = {}
         self._shutdown_requested = False
         self._run_task: asyncio.Task[int] | None = None
+        self._failed_workers: set[int] = set()
         self._reported_crashed: set[int] = set()
 
     async def run(self) -> int:
@@ -159,6 +160,9 @@ class ServeCoordinator:
                 failed_workers.add(msg.worker_id)
                 logger.error("Worker %d error during startup: %s", msg.worker_id, msg.error)
 
+        self._failed_workers = failed_workers
+        self._reported_crashed.update(failed_workers)
+
         if failed_workers and self._audio_queues:
             # Remove audio queues for failed workers so we don't push into dead queues
             for wid in sorted(failed_workers, reverse=True):
@@ -208,6 +212,8 @@ class ServeCoordinator:
     def _check_worker_health(self) -> None:
         """Check for crashed workers - shut down if any died."""
         for i, proc in enumerate(self._processes):
+            if i in self._failed_workers:
+                continue
             if not proc.is_alive() and i not in self._reported_crashed:
                 self._reported_crashed.add(i)
                 port = self.worker_ports[i]
@@ -297,8 +303,11 @@ class ServeCoordinator:
         """Print worker URLs."""
         local_ip = get_local_ip()
 
-        print(f"\nMulti-worker server running ({self.workers} workers)")  # noqa: T201
-        for i, port in enumerate(self.worker_ports):
+        healthy_workers = [i for i in range(self.workers) if i not in self._failed_workers]
+
+        print(f"\nMulti-worker server running ({len(healthy_workers)} workers)")  # noqa: T201
+        for i in healthy_workers:
+            port = self.worker_ports[i]
             print(f"  Worker {i}: http://{local_ip}:{port}/")  # noqa: T201
         print("\nPlace a reverse proxy in front of the worker ports for load balancing.")  # noqa: T201
         print("Press Ctrl+C to quit\n")  # noqa: T201

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from sendspin.serve.coordinator import ServeCoordinator
@@ -68,3 +70,37 @@ async def test_wait_for_workers_partial_success(coordinator: ServeCoordinator) -
 
     ready = await coordinator._wait_for_workers_listening()
     assert ready == 1
+    assert coordinator._failed_workers == {1}
+
+
+def test_check_worker_health_ignores_startup_failed_workers(coordinator: ServeCoordinator) -> None:
+    """Startup-failed workers should not trigger later crash shutdown."""
+    healthy_proc = MagicMock()
+    healthy_proc.is_alive.return_value = True
+    failed_proc = MagicMock()
+    failed_proc.is_alive.return_value = False
+
+    coordinator._processes = [healthy_proc, failed_proc]
+    coordinator._failed_workers = {1}
+    coordinator._reported_crashed = {1}
+
+    coordinator._check_worker_health()
+
+    assert coordinator._shutdown_requested is False
+
+
+def test_check_worker_health_shuts_down_on_unexpected_worker_crash(
+    coordinator: ServeCoordinator,
+) -> None:
+    """A healthy worker dying after startup should still shut the coordinator down."""
+    healthy_proc = MagicMock()
+    healthy_proc.is_alive.return_value = False
+    other_proc = MagicMock()
+    other_proc.is_alive.return_value = True
+
+    coordinator._processes = [healthy_proc, other_proc]
+
+    coordinator._check_worker_health()
+
+    assert coordinator._shutdown_requested is True
+    assert coordinator._reported_crashed == {0}
