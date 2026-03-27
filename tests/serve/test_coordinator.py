@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from sendspin.serve.coordinator import ServeCoordinator
-from sendspin.serve.ipc import WorkerClientCount
+from sendspin.serve.ipc import WorkerClientCount, WorkerError, WorkerListening
 
 
 @pytest.fixture
@@ -48,3 +48,23 @@ def test_coordinator_updates_total_listeners(coordinator: ServeCoordinator) -> N
     # Worker 0 loses a client
     coordinator._handle_status_message(WorkerClientCount(worker_id=0, count=4))
     assert coordinator._total_listeners.value == 7
+
+
+@pytest.mark.asyncio
+async def test_wait_for_workers_fails_when_all_error(coordinator: ServeCoordinator) -> None:
+    """If all workers report errors, _wait_for_workers_listening should return 0."""
+    coordinator._status_queue.put(WorkerError(worker_id=0, error="bind failed"))
+    coordinator._status_queue.put(WorkerError(worker_id=1, error="bind failed"))
+
+    ready = await coordinator._wait_for_workers_listening()
+    assert ready == 0
+
+
+@pytest.mark.asyncio
+async def test_wait_for_workers_partial_success(coordinator: ServeCoordinator) -> None:
+    """If some workers succeed and some fail, return the success count."""
+    coordinator._status_queue.put(WorkerListening(worker_id=0, port=18927))
+    coordinator._status_queue.put(WorkerError(worker_id=1, error="bind failed"))
+
+    ready = await coordinator._wait_for_workers_listening()
+    assert ready == 1

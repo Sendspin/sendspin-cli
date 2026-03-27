@@ -80,7 +80,10 @@ class ServeCoordinator:
 
         try:
             self._spawn_workers()
-            await self._wait_for_workers_listening()
+            ready = await self._wait_for_workers_listening()
+            if ready == 0:
+                print("Error: all workers failed to start")  # noqa: T201
+                return 1
             self._print_banner()
 
             # Wait for first client on any worker
@@ -130,12 +133,14 @@ class ServeCoordinator:
 
         logger.info("Spawned %d worker processes", self.workers)
 
-    async def _wait_for_workers_listening(self) -> None:
-        """Wait for all workers to report they are listening."""
+    async def _wait_for_workers_listening(self) -> int:
+        """Wait for all workers to report status. Returns count of healthy workers."""
         loop = asyncio.get_running_loop()
         listening_count = 0
+        error_count = 0
+        failed_workers: set[int] = set()
 
-        while listening_count < self.workers:
+        while (listening_count + error_count) < self.workers:
             msg = await loop.run_in_executor(None, self._status_queue.get)
 
             if isinstance(msg, WorkerListening):
@@ -148,8 +153,17 @@ class ServeCoordinator:
                     self.workers,
                 )
             elif isinstance(msg, WorkerError):
+                error_count += 1
+                failed_workers.add(msg.worker_id)
                 logger.error("Worker %d error during startup: %s", msg.worker_id, msg.error)
-                listening_count += 1
+
+        if failed_workers and self._audio_queues:
+            # Remove audio queues for failed workers so we don't push into dead queues
+            for wid in sorted(failed_workers, reverse=True):
+                if wid < len(self._audio_queues):
+                    self._audio_queues.pop(wid)
+
+        return listening_count
 
     async def _consume_status_until_client(self) -> None:
         """Process status messages until at least one client connects or shutdown."""
