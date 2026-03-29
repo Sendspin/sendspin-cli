@@ -241,6 +241,7 @@ class SendspinDaemon:
             # Handshake succeeded — switch over from old to new connection.
             if old_client is not None:
                 logger.info("Disconnecting from previous server")
+                self._audio_handler.detach_client()
                 await self._handle_disconnect()
 
             self._client = client
