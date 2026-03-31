@@ -322,6 +322,7 @@ class AudioStreamHandler:
         self._client_unsubscribers: list[Callable[[], None]] = []
 
         self._volume_controller: VolumeController | None = volume_controller
+        self._chunks_dropping = False
 
     @property
     def volume(self) -> int:
@@ -448,8 +449,11 @@ class AudioStreamHandler:
         """Handle incoming audio chunks by enqueueing them to the sync worker."""
         worker = self._audio_worker
         if worker is None or not worker.is_running():
-            logger.debug("Audio chunk dropped: worker not running")
+            if not self._chunks_dropping:
+                logger.debug("Audio chunks dropping: worker not running")
+                self._chunks_dropping = True
             return
+        self._chunks_dropping = False
 
         pcm_format = fmt.pcm_format
         if self._current_format != fmt:
