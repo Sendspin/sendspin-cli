@@ -7,14 +7,18 @@ import contextlib
 import logging
 import signal
 from dataclasses import dataclass
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
-from aiosendspin.models.core import ServerCommandPayload
+from aiosendspin.models.core import GroupUpdateServerPayload, ServerCommandPayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
+    ConnectionReason,
+    GoodbyeReason,
+    PlaybackStateType,
     PlayerCommand,
     Roles,
 )
@@ -70,6 +74,7 @@ class SendspinDaemon:
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
+        self._group_update_unsubscribe: Callable[[], None] | None = None
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -211,11 +216,51 @@ class SendspinDaemon:
 
     async def _handle_disconnect(self, *, stop_mpris: bool = True) -> None:
         """Reset connection-scoped state and optionally stop MPRIS."""
+        if self._group_update_unsubscribe is not None:
+            self._group_update_unsubscribe()
+            self._group_update_unsubscribe = None
         if stop_mpris and self._mpris is not None:
             self._mpris.stop()
             self._mpris = None
         if self._audio_handler is not None:
             await self._audio_handler.handle_disconnect()
+
+    def _should_switch_to_new_server(
+        self, old_client: SendspinClient, new_client: SendspinClient
+    ) -> bool:
+        """Decide whether to switch to a new server per the multi-server spec.
+
+        Assumes both clients have completed their handshake.
+        """
+        assert old_client.server_info is not None
+        assert new_client.server_info is not None
+
+        if new_client.server_info.server_id == old_client.server_info.server_id:
+            return True
+
+        new_reason = new_client.server_info.connection_reason
+        old_reason = old_client.server_info.connection_reason
+
+        if new_reason == ConnectionReason.PLAYBACK:
+            return True
+        if old_reason == ConnectionReason.PLAYBACK:
+            return False
+
+        # Both 'discovery' — prefer last played server.
+        if self._settings.last_played_server_id == new_client.server_info.server_id:
+            return True
+
+        return False
+
+    def _on_group_update(self, payload: GroupUpdateServerPayload) -> None:
+        """Track last played server for multi-server arbitration."""
+        if payload.playback_state != PlaybackStateType.PLAYING:
+            return
+        if self._client is None or self._client.server_info is None:
+            return
+        server_id = self._client.server_info.server_id
+        if self._settings.last_played_server_id != server_id:
+            self._settings.update(last_played_server_id=server_id)
 
     async def _handle_server_connection(self, ws: web.WebSocketResponse) -> None:
         """Handle an incoming server connection."""
@@ -229,10 +274,8 @@ class SendspinDaemon:
         async with self._connection_lock:
             old_client = self._client
 
-            # Handshake the new connection BEFORE tearing down the old one.
-            # This ensures the server always sees at least one active client
-            # in the group, preventing it from stopping playback during
-            # a same-server reconnection.
+            # Per spec: always complete the handshake before deciding which
+            # server to keep.
             client = self._create_client(self._static_delay_ms)
 
             try:
@@ -244,22 +287,39 @@ class SendspinDaemon:
                 logger.exception("Error during server handshake")
                 return
 
-            # Handshake succeeded — switch over from old to new connection.
+            # Decide which server to keep.
             if old_client is not None:
-                logger.info("Disconnecting from previous server")
-                self._audio_handler.detach_client()
-                await self._handle_disconnect()
+                if self._should_switch_to_new_server(old_client, client):
+                    assert client.server_info is not None
+                    logger.info(
+                        "Switching to server '%s' (%s)",
+                        client.server_info.name,
+                        client.server_info.connection_reason.value,
+                    )
+                    self._audio_handler.detach_client()
+                    await self._handle_disconnect()
+                    await old_client.send_goodbye(GoodbyeReason.ANOTHER_SERVER)
+                    await old_client.disconnect()
+                else:
+                    assert old_client.server_info is not None
+                    assert client.server_info is not None
+                    logger.info(
+                        "Keeping server '%s', rejecting '%s' (%s)",
+                        old_client.server_info.name,
+                        client.server_info.name,
+                        client.server_info.connection_reason.value,
+                    )
+                    await client.send_goodbye(GoodbyeReason.ANOTHER_SERVER)
+                    await client.disconnect()
+                    return
 
             self._client = client
             self._audio_handler.attach_client(client)
             client.add_server_command_listener(self._handle_server_command)
+            self._group_update_unsubscribe = client.add_group_update_listener(self._on_group_update)
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)
                 self._mpris.start()
-
-            # Close old connection after new one is fully established.
-            if old_client is not None:
-                await old_client.disconnect()
 
         # Handshake complete, release lock so new connections can proceed
         # Now wait for disconnect (outside the lock)
