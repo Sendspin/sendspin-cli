@@ -78,11 +78,12 @@ def get_local_ip() -> str:
 class ServeConfig:
     """Configuration for the serve command."""
 
-    source: str
+    source: str | None = None
     source_format: str | None = None
     port: int = 8927
     name: str = "Sendspin Server"
     clients: list[str] | None = None
+    sendspin_url: str | None = None
 
 
 def _windows_exception_handler(loop: asyncio.AbstractEventLoop, context: dict[str, object]) -> None:
@@ -109,6 +110,84 @@ async def _stream_audio(stream: PushStream, source: AudioSource) -> None:
             await stream.sleep_to_limit_buffer(max_buffer_us=5_000_000)
     finally:
         stream.stop()
+
+
+async def _stream_from_sendspin(stream: PushStream, url: str) -> None:
+    """Bridge audio from an upstream Sendspin server into a PushStream.
+
+    Preserves upstream timing so clients across different bridges stay in
+    perfect sync.  The bridge requests a large buffer from the upstream
+    server (``buffer_capacity``) so it receives chunks well ahead of their
+    play-out time.  For each chunk it converts the upstream server timestamp
+    to the bridge's own server clock via ``compute_play_time`` and passes
+    that directly to ``commit_audio(play_start_us=...)``.  Downstream
+    clients therefore schedule playback against the same absolute moment on
+    their clocks, regardless of which bridge they are connected to.
+    """
+    from aiosendspin.client import AudioFormat as ClientAudioFormat, SendspinClient
+    from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
+    from aiosendspin.models.types import AudioCodec, PlayerCommand, Roles
+    from aiosendspin.server import AudioFormat as ServerAudioFormat
+
+    client = SendspinClient(
+        client_id=f"bridge-{uuid.uuid4().hex[:8]}",
+        client_name="Sendspin Bridge",
+        roles=[Roles.PLAYER],
+        player_support=ClientHelloPlayerSupport(
+            supported_formats=[
+                SupportedAudioFormat(
+                    codec=AudioCodec.PCM,
+                    channels=2,
+                    sample_rate=48000,
+                    bit_depth=16,
+                ),
+            ],
+            buffer_capacity=32_000_000,
+            supported_commands=[PlayerCommand.VOLUME],
+        ),
+    )
+
+    chunk_queue: asyncio.Queue[tuple[int, bytes, ServerAudioFormat] | None] = asyncio.Queue()
+
+    def on_audio_chunk(
+        server_timestamp_us: int,
+        audio_data: bytes | bytearray,
+        fmt: ClientAudioFormat,
+    ) -> None:
+        pcm_format = fmt.pcm_format
+        server_fmt = ServerAudioFormat(
+            sample_rate=pcm_format.sample_rate,
+            bit_depth=pcm_format.bit_depth,
+            channels=pcm_format.channels,
+        )
+        chunk_queue.put_nowait((server_timestamp_us, bytes(audio_data), server_fmt))
+
+    client.add_audio_chunk_listener(on_audio_chunk)
+    client.add_disconnect_listener(lambda: chunk_queue.put_nowait(None))
+
+    try:
+        await client.connect(url)
+        logger.info("Connected to upstream server: %s", url)
+
+        while True:
+            item = await chunk_queue.get()
+            if item is None:
+                logger.warning("Upstream server disconnected")
+                break
+            upstream_ts, pcm_data, server_fmt = item
+
+            # Convert the upstream server timestamp to local/bridge server
+            # time.  compute_play_time returns loop-time minus static_delay.
+            # With static_delay_ms=0 (the default) this is just the local
+            # equivalent of the upstream timestamp -- which is exactly the
+            # bridge server's own clock base (both use loop.time()).
+            bridge_play_us = client.compute_play_time(upstream_ts)
+
+            stream.prepare_audio(pcm_data, server_fmt)
+            await stream.commit_audio(play_start_us=bridge_play_us)
+    finally:
+        stream.stop()
+        await client.disconnect()
 
 
 async def run_server(config: ServeConfig) -> int:
@@ -251,11 +330,19 @@ async def run_server(config: ServeConfig) -> int:
 
             assert active_group is not None
 
-            # Decode and stream audio
+            # Stream audio from source or upstream Sendspin server
             try:
-                audio_source = await decode_audio(config.source, source_format=config.source_format)
                 stream = active_group.start_stream()
-                play_media_task = create_task(_stream_audio(stream, audio_source))
+                if config.sendspin_url:
+                    play_media_task = create_task(
+                        _stream_from_sendspin(stream, config.sendspin_url)
+                    )
+                else:
+                    assert config.source is not None
+                    audio_source = await decode_audio(
+                        config.source, source_format=config.source_format
+                    )
+                    play_media_task = create_task(_stream_audio(stream, audio_source))
                 await play_media_task
                 consecutive_errors = 0
             except asyncio.CancelledError:

@@ -303,6 +303,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Client URL to connect to (can be specified multiple times)",
     )
+    serve_parser.add_argument(
+        "--sendspin",
+        default=None,
+        help="Upstream Sendspin server WebSocket URL to bridge (e.g., ws://host:8927/sendspin)",
+    )
 
     # Daemon subcommand
     daemon_parser = subparsers.add_parser(
@@ -543,8 +548,16 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
     # Set up logging
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    # Determine audio source: CLI > --demo > settings
-    if args.demo:
+    # Determine audio source: --sendspin > CLI > --demo > settings
+    sendspin_url = args.sendspin or settings.sendspin
+
+    if sendspin_url:
+        if args.source or args.demo:
+            print("Error: --sendspin cannot be combined with a source or --demo")
+            return 1
+        source = None
+        print(f"Bridge mode: connecting to upstream server {sendspin_url}")
+    elif args.demo:
         source = "http://retro.dancewave.online/retrodance.mp3"
         print(f"Demo mode enabled, serving URL {source}")
     elif args.source:
@@ -553,7 +566,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
         source = settings.source
         print(f"Using source from settings: {source}")
     else:
-        print("Error: either provide a source or use --demo")
+        print("Error: either provide a source, use --demo, or use --sendspin")
         return 1
 
     serve_config = ServeConfig(
@@ -562,6 +575,7 @@ async def _run_serve_mode(args: argparse.Namespace) -> int:
         port=args.port,
         name=args.name,
         clients=args.clients or settings.clients,
+        sendspin_url=sendspin_url,
     )
     return await run_server(serve_config)
 

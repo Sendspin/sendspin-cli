@@ -223,6 +223,7 @@ class ServeSettings(BaseSettings):
     source: str | None = None
     source_format: str | None = None
     clients: list[str] | None = None
+    sendspin: str | None = None
 
     def update(
         self,
@@ -233,6 +234,7 @@ class ServeSettings(BaseSettings):
         source: str | None = None,
         source_format: str | None = None,
         clients: list[str] | None = None,
+        sendspin: str | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = self._update_fields(
@@ -243,6 +245,7 @@ class ServeSettings(BaseSettings):
                 "source": source,
                 "source_format": source_format,
                 "clients": clients,
+                "sendspin": sendspin,
             }
         )
 
@@ -263,6 +266,7 @@ class ServeSettings(BaseSettings):
             self.source = data.get("source")
             self.source_format = data.get("source_format")
             self.clients = data.get("clients")
+            self.sendspin = data.get("sendspin")
             logger.info("Loaded settings from %s", self._settings_file)
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)

@@ -35,6 +35,7 @@ Host a Sendspin party
 uvx sendspin serve --demo
 uvx sendspin serve /path/to/media.mp3
 uvx sendspin serve https://retro.dancewave.online/retrodance.mp3
+uvx sendspin serve --sendspin ws://upstream:8927/sendspin
 ```
 
 ## Installation
@@ -177,6 +178,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
 | `source_format` | string | serve | ffmpeg container format for audio source |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
+| `sendspin` | string | serve | Upstream Sendspin server URL for bridge mode (`--sendspin`) |
 
 Settings are automatically saved when changed through the TUI. You can also edit the JSON file directly while the client is not running.
 
@@ -399,4 +401,15 @@ sendspin serve https://retro.dancewave.online/retrodance.mp3
 uvx sendspin serve /path/to/media.mp3
 # Connect to specific clients
 sendspin serve --demo --client ws://192.168.1.50:8927/sendspin --client ws://192.168.1.51:8927/sendspin
+```
+
+### Bridge Mode
+
+Use `--sendspin` to relay audio from an upstream Sendspin server. This creates a bridge that connects as a client to the upstream server and re-serves the audio to its own downstream clients. Useful for scaling to many clients by creating a fan-out topology.
+
+```bash
+# Bridge from an upstream server
+sendspin serve --sendspin ws://upstream-host:8927/sendspin
+# Bridge on a custom port
+sendspin serve --sendspin ws://upstream-host:8927/sendspin --port 8928
 ```
