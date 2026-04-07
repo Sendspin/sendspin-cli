@@ -41,7 +41,9 @@ Please install PortAudio for your system:
   • Other systems: https://www.portaudio.com/"""
 
 PLAYER_APP_SENTINEL = "player"
-EXPLICIT_APPS = frozenset({PLAYER_APP_SENTINEL, "daemon", "serve"})
+EXPLICIT_APPS = frozenset(
+    {PLAYER_APP_SENTINEL, "daemon", "serve", "audio-devices", "servers", "clients"}
+)
 TOP_LEVEL_ACTIONS = frozenset({"-h", "--help", "--version"})
 
 
@@ -92,6 +94,7 @@ def list_audio_devices() -> None:
         )
     if devices:
         print(f"\nTo select an audio device:\n  sendspin --audio-device {devices[0].index}")
+        print(f"  sendspin daemon --audio-device {devices[0].index}")
 
     if sys.platform.startswith("linux"):
         alsa_devices = list_alsa_devices()
@@ -143,7 +146,7 @@ def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bo
         help=(
             "Audio output device by index (e.g., 0, 1, 2), name prefix (e.g., 'MacBook'), "
             "or raw ALSA device name (e.g., 'dmixer', 'olohuone') for plugin devices like dmix. "
-            "Use --list-audio-devices to see enumerated devices."
+            "Use 'sendspin audio-devices list' to see enumerated devices."
         ),
     )
     target.add_argument(
@@ -206,19 +209,19 @@ def _add_player_actions(target: ArgumentTarget, *, suppress_defaults: bool = Fal
         "--list-audio-devices",
         action="store_true",
         default=argparse.SUPPRESS if suppress_defaults else False,
-        help="List available audio output devices and exit",
+        help="(deprecated: use 'sendspin audio-devices list') List audio devices and exit",
     )
     target.add_argument(
         "--list-servers",
         action="store_true",
         default=argparse.SUPPRESS if suppress_defaults else False,
-        help="Discover and list available Sendspin servers on the network",
+        help="(deprecated: use 'sendspin servers list') List Sendspin servers and exit",
     )
     target.add_argument(
         "--list-clients",
         action="store_true",
         default=argparse.SUPPRESS if suppress_defaults else False,
-        help="Discover and list available Sendspin clients on the network",
+        help="(deprecated: use 'sendspin clients list') List Sendspin clients and exit",
     )
     target.add_argument(
         "--headless",
@@ -357,7 +360,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
-            "Use --list-audio-devices to see available devices."
+            "Use 'sendspin audio-devices list' to see available devices."
         ),
     )
     daemon_parser.add_argument(
@@ -416,6 +419,54 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Product name reported in the client hello (defaults to auto-detected OS/platform name)",
+    )
+
+    # audio-devices subcommand
+    audio_devices_parser = subparsers.add_parser(
+        "audio-devices",
+        help="Audio device utilities",
+        description="Audio device utilities.",
+    )
+    audio_devices_sub = audio_devices_parser.add_subparsers(
+        dest="audio_devices_command",
+        title="Commands",
+    )
+    audio_devices_sub.add_parser(
+        "list",
+        help="List available audio output devices",
+        description="List all available audio output devices and exit.",
+    )
+
+    # servers subcommand
+    servers_parser = subparsers.add_parser(
+        "servers",
+        help="Server discovery utilities",
+        description="Server discovery utilities.",
+    )
+    servers_sub = servers_parser.add_subparsers(
+        dest="servers_command",
+        title="Commands",
+    )
+    servers_sub.add_parser(
+        "list",
+        help="Discover and list available Sendspin servers on the network",
+        description="Discover and list available Sendspin servers on the network.",
+    )
+
+    # clients subcommand
+    clients_parser = subparsers.add_parser(
+        "clients",
+        help="Client discovery utilities",
+        description="Client discovery utilities.",
+    )
+    clients_sub = clients_parser.add_subparsers(
+        dest="clients_command",
+        title="Commands",
+    )
+    clients_sub.add_parser(
+        "list",
+        help="Discover and list available Sendspin clients on the network",
+        description="Discover and list available Sendspin clients on the network.",
     )
 
     return parser
@@ -613,17 +664,44 @@ def main() -> int:
             traceback.print_exc()
             return 1
 
+    # Handle utility subcommands
+    if args.command == "audio-devices":
+        if getattr(args, "audio_devices_command", None) == "list":
+            list_audio_devices()
+            return 0
+        _build_parser().parse_args(["audio-devices", "--help"])
+        return 1
+
+    if args.command == "servers":
+        if getattr(args, "servers_command", None) == "list":
+            asyncio.run(list_servers())
+            return 0
+        _build_parser().parse_args(["servers", "--help"])
+        return 1
+
+    if args.command == "clients":
+        if getattr(args, "clients_command", None) == "list":
+            asyncio.run(list_clients())
+            return 0
+        _build_parser().parse_args(["clients", "--help"])
+        return 1
+
     if args.command == PLAYER_APP_SENTINEL:
-        # Handle player-only actions before starting async runtime.
+        # Deprecated flags - route to new subcommands with a warning.
         if args.list_audio_devices:
+            print(
+                "Warning: --list-audio-devices is deprecated. Use 'sendspin audio-devices list'.\n"
+            )
             list_audio_devices()
             return 0
 
         if args.list_servers:
+            print("Warning: --list-servers is deprecated. Use 'sendspin servers list'.\n")
             asyncio.run(list_servers())
             return 0
 
         if args.list_clients:
+            print("Warning: --list-clients is deprecated. Use 'sendspin clients list'.\n")
             asyncio.run(list_clients())
             return 0
 

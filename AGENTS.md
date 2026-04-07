@@ -48,7 +48,7 @@ Project documentation, installation instructions, usage guide (including command
 Main entry point and orchestrator. Responsibilities:
 - **Argument parsing**: Commands (`serve`, `daemon`), flags (`--url`, `--name`, `--id`, `--audio-device`, `--static-delay-ms`)
 - **Command routing**: Routes to appropriate mode (TUI app, daemon, or server)
-- **Device enumeration**: Lists audio devices and servers via `--list-audio-devices` and `--list-servers`
+- **Device enumeration**: Lists audio devices and servers via `audio-devices list` and `servers list` subcommands
 - **Backward compatibility**: Handles deprecated `--headless` flag with warning
 
 ### `sendspin/tui/` (TUI Mode Package)
@@ -96,7 +96,7 @@ Daemon mode for headless operation (via `sendspin daemon` or deprecated `--headl
 ### `sendspin/audio_devices.py`
 Audio device resolution and ALSA device listing. Responsibilities:
 - **Device resolution**: Resolves `--audio-device` argument by index, name prefix, or raw ALSA device name (via `resolve_audio_device()`)
-- **ALSA device listing**: Enumerates ALSA PCM devices via `aplay -L` for display in `--list-audio-devices`
+- **ALSA device listing**: Enumerates ALSA PCM devices via `aplay -L` for display in `sendspin audio-devices list`
 - **ALSA device fallback**: Opens ALSA plugin devices (dmix, plug) not enumerated by PortAudio, using safe defaults if PortAudio can't query device info
 
 ### `sendspin/audio.py`

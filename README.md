@@ -190,7 +190,7 @@ sendspin --url ws://192.168.1.100:8080/sendspin
 
 **List available servers on the network:**
 ```bash
-sendspin --list-servers
+sendspin servers list
 ```
 
 ### Client Identification
@@ -211,7 +211,7 @@ By default, the player uses your system's default audio output device. You can l
 
 **List available audio devices:**
 ```bash
-sendspin --list-audio-devices
+sendspin audio-devices list
 ```
 
 This displays all audio output devices with their IDs, channel configurations, and sample rates. The default device is marked.
@@ -231,7 +231,7 @@ sendspin --audio-device "MacBook"
 sendspin --audio-device dmixer
 ```
 
-This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `--list-audio-devices`. For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
+This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `sendspin audio-devices list`. For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
 
 ```bash
 # Room 1: left channel via dmix
