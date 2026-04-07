@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -298,13 +300,93 @@ def resolve_audio_device(device_arg: str | None) -> AudioDevice:
 
         # On Linux, try opening as a raw ALSA device name (e.g. dmix plugin)
         if sys.platform.startswith("linux"):
-            device = _try_alsa_device(device_arg)
+            # First, try to resolve ALSA CARD=name style names (e.g. hw:CARD=X,DEV=Y)
+            # to an enumerated PortAudio device via /proc/asound card lookup.
+            device = _try_alsa_card_device(device_arg, devices)
+
+            if device is None:
+                device = _try_alsa_device(device_arg)
 
         if device is None:
             raise ValueError(f"Audio device '{device_arg}' not found.")
 
     logger.info("Using audio device %s: %s", device.device_id, device.name)
     return device
+
+
+# Matches ALSA device names that use CARD=name notation, e.g.:
+#   hw:CARD=sndrpihifiberry,DEV=0
+#   plughw:CARD=Loopback,DEV=1
+#   sysdefault:CARD=sndrpihifiberry
+_ALSA_CARD_DEV_RE = re.compile(r"[^:]+:CARD=([^,\s]+)(?:,DEV=(\d+))?$")
+
+
+def _get_alsa_card_number(card_name: str) -> int | None:
+    """Look up the ALSA card number for a given card string ID.
+
+    Reads ``/proc/asound/card*/id`` to find the card whose ID matches
+    *card_name* and returns its numeric index.
+
+    Args:
+        card_name: The ALSA card string ID (e.g. ``sndrpihifiberry``).
+
+    Returns:
+        The card number (0-based), or None if not found.
+    """
+    proc_asound = "/proc/asound"
+    try:
+        entries = os.listdir(proc_asound)
+    except OSError:
+        return None
+
+    for entry in entries:
+        if not entry.startswith("card"):
+            continue
+        try:
+            card_num = int(entry[4:])
+        except ValueError:
+            continue
+        try:
+            id_path = os.path.join(proc_asound, entry, "id")
+            with open(id_path) as f:
+                if f.read().strip() == card_name:
+                    return card_num
+        except OSError:
+            continue
+
+    return None
+
+
+def _try_alsa_card_device(name: str, devices: list[AudioDevice]) -> AudioDevice | None:
+    """Resolve an ALSA ``CARD=name`` style device name to a PortAudio device.
+
+    ``aplay -L`` lists hardware devices in the form ``hw:CARD=name,DEV=N``
+    which are not recognized by PortAudio's substring-based name matching.
+    This function converts such names to the short ``(hw:card_num,dev_num)``
+    form that appears in PortAudio device names and locates the matching
+    enumerated device.
+
+    Args:
+        name: ALSA device name (e.g. ``hw:CARD=sndrpihifiberry,DEV=0``).
+        devices: List of enumerated PortAudio output devices.
+
+    Returns:
+        The matching AudioDevice, or None if no match was found.
+    """
+    m = _ALSA_CARD_DEV_RE.fullmatch(name)
+    if not m:
+        return None
+
+    card_name = m.group(1)
+    dev_num = int(m.group(2) or "0")
+
+    card_num = _get_alsa_card_number(card_name)
+    if card_num is None:
+        return None
+
+    # PortAudio hardware device names end with "(hw:N,M)"
+    hw_str = f"(hw:{card_num},{dev_num})"
+    return next((d for d in devices if hw_str in d.name), None)
 
 
 def _try_alsa_device(name: str) -> AudioDevice | None:
