@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 import readchar
 from aiosendspin.models.types import MediaCommand, PlaybackStateType, RepeatMode
+
+from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
@@ -40,21 +42,21 @@ class CommandHandler:
         self._ui = ui
         self._settings = settings
 
-    async def send_media_command(self, command: MediaCommand) -> None:
+    def send_media_command(self, command: MediaCommand) -> None:
         """Send a media command with validation."""
         if command not in self._state.supported_commands:
             self._ui.add_event(f"Server does not support {command.value}")
             return
         client = self._get_client()
         if client is not None:
-            await client.send_group_command(command)
+            create_task(client.send_group_command(command))
 
-    async def toggle_play_pause(self) -> None:
+    def toggle_play_pause(self) -> None:
         """Toggle between play and pause."""
         if self._state.playback_state == PlaybackStateType.PLAYING:
-            await self.send_media_command(MediaCommand.PAUSE)
+            self.send_media_command(MediaCommand.PAUSE)
         else:
-            await self.send_media_command(MediaCommand.PLAY)
+            self.send_media_command(MediaCommand.PLAY)
 
     def change_player_volume(self, delta: int) -> None:
         """Adjust player (local) volume by delta."""
@@ -68,7 +70,7 @@ class CommandHandler:
         self._audio_handler.set_volume(self._audio_handler.volume, muted=muted)
         self._ui.add_event("Player muted" if muted else "Player unmuted")
 
-    async def change_group_volume(self, delta: int) -> None:
+    def change_group_volume(self, delta: int) -> None:
         """Adjust group volume by delta."""
         if MediaCommand.VOLUME not in self._state.supported_commands:
             self._ui.add_event("Server does not support volume control")
@@ -77,9 +79,9 @@ class CommandHandler:
         target = max(0, min(100, current + delta))
         client = self._get_client()
         if client is not None:
-            await client.send_group_command(MediaCommand.VOLUME, volume=target)
+            create_task(client.send_group_command(MediaCommand.VOLUME, volume=target))
 
-    async def toggle_group_mute(self) -> None:
+    def toggle_group_mute(self) -> None:
         """Toggle group mute state."""
         if MediaCommand.MUTE not in self._state.supported_commands:
             self._ui.add_event("Server does not support mute control")
@@ -87,9 +89,9 @@ class CommandHandler:
         muted = not self._state.muted
         client = self._get_client()
         if client is not None:
-            await client.send_group_command(MediaCommand.MUTE, mute=muted)
+            create_task(client.send_group_command(MediaCommand.MUTE, mute=muted))
 
-    async def cycle_repeat(self) -> None:
+    def cycle_repeat(self) -> None:
         """Cycle repeat mode: OFF -> ALL -> ONE -> OFF."""
         _REPEAT_CYCLE: dict[RepeatMode | None, MediaCommand] = {
             None: MediaCommand.REPEAT_ALL,
@@ -98,16 +100,16 @@ class CommandHandler:
             RepeatMode.ONE: MediaCommand.REPEAT_OFF,
         }
         command = _REPEAT_CYCLE.get(self._state.repeat_mode, MediaCommand.REPEAT_ALL)
-        await self.send_media_command(command)
+        self.send_media_command(command)
 
-    async def toggle_shuffle(self) -> None:
+    def toggle_shuffle(self) -> None:
         """Toggle shuffle on/off."""
         if self._state.shuffle:
-            await self.send_media_command(MediaCommand.UNSHUFFLE)
+            self.send_media_command(MediaCommand.UNSHUFFLE)
         else:
-            await self.send_media_command(MediaCommand.SHUFFLE)
+            self.send_media_command(MediaCommand.SHUFFLE)
 
-    async def adjust_delay(self, delta: float) -> None:
+    def adjust_delay(self, delta: float) -> None:
         """Adjust static delay by delta milliseconds."""
         client = self._get_client()
         if client is None:
@@ -128,9 +130,9 @@ async def keyboard_loop(
     ui: SendspinUI,
     settings: ClientSettings,
     show_server_selector: Callable[[], None],
-    on_server_selected: Callable[[], Awaitable[None]],
+    on_server_selected: Callable[[], None],
     request_shutdown: Callable[[], None],
-    on_toggle_visualizer: Callable[[], Awaitable[None]],
+    on_toggle_visualizer: Callable[[], None],
 ) -> None:
     """Run the keyboard input loop.
 
@@ -141,15 +143,15 @@ async def keyboard_loop(
         ui: UI instance.
         settings: Settings manager for persisting player settings.
         show_server_selector: Function to show the server selector UI.
-        on_server_selected: Async callback when a server is selected.
+        on_server_selected: Callback when a server is selected.
         request_shutdown: Callback to request application shutdown.
-        on_toggle_visualizer: Async callback to toggle the visualizer.
+        on_toggle_visualizer: Callback to toggle the visualizer.
     """
     handler = CommandHandler(get_client, state, audio_handler, ui, settings)
 
     # Key dispatch table: key -> (highlight_name | None, action)
-    # Actions can be sync or async. For keys that need case-insensitive matching, use lowercase.
-    shortcuts: dict[str, tuple[str | None, Callable[[], Awaitable[None] | None]]] = {
+    # For keys that need case-insensitive matching, use lowercase.
+    shortcuts: dict[str, tuple[str | None, Callable[[], None]]] = {
         # Letter keys
         " ": ("space", handler.toggle_play_pause),
         "m": ("mute", handler.toggle_player_mute),
@@ -235,7 +237,7 @@ async def keyboard_loop(
                     continue
                 if key in ("\r", "\n", readchar.key.ENTER):
                     ui.highlight_shortcut("selector-enter")
-                    await on_server_selected()
+                    on_server_selected()
                     continue
                 if key in "qQ":
                     ui.hide_server_selector()
@@ -261,9 +263,7 @@ async def keyboard_loop(
                 highlight_name, action_handler = action
                 if highlight_name and ui:
                     ui.highlight_shortcut(highlight_name)
-                result = action_handler()
-                if result is not None:
-                    await result
+                action_handler()
                 continue
 
             # Ignore unhandled escape sequences

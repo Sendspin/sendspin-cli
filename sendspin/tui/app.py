@@ -527,7 +527,7 @@ class SendspinApp:
         """
         # Create a task for the connection so it can be cancelled
         assert self._client is not None
-        self._connect_task = asyncio.create_task(self._client.connect(url))
+        self._connect_task = create_task(self._client.connect(url))
         try:
             await self._connect_task
         except asyncio.CancelledError:
@@ -667,7 +667,7 @@ class SendspinApp:
                 servers.insert(0, self._state.selected_server)
         self._ui.show_server_selector(servers)
 
-    async def _on_server_selected(self) -> None:
+    def _on_server_selected(self) -> None:
         """Handle server selection by triggering reconnect."""
         assert self._ui is not None
         server = self._ui.get_selected_server()
@@ -687,7 +687,7 @@ class SendspinApp:
             return
         # Force disconnect to trigger reconnect with new URL
         assert self._client is not None
-        await self._client.disconnect()
+        create_task(self._client.disconnect())
 
     def _handle_metadata_update(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with metadata."""
@@ -777,7 +777,7 @@ class SendspinApp:
         assert self._ui is not None
         self._ui.set_audio_format(codec, sample_rate, bit_depth, channels)
 
-    async def _toggle_visualizer(self) -> None:
+    def _toggle_visualizer(self) -> None:
         """Toggle the visualizer on/off, reconnecting with updated roles."""
         assert self._ui is not None
 
@@ -798,7 +798,7 @@ class SendspinApp:
             if self._state.selected_server:
                 self._connection_manager.set_pending_server(self._state.selected_server)
             if not self._cancel_connect():
-                await old_client.disconnect()
+                create_task(old_client.disconnect())
 
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""

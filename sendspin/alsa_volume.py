@@ -10,6 +10,7 @@ import shutil
 import sys
 from typing import TYPE_CHECKING
 
+from sendspin.utils import create_task
 from sendspin.volume_controller import VolumeChangeCallback
 
 if TYPE_CHECKING:
@@ -222,7 +223,7 @@ class AlsaVolumeController:
         """Start polling for external ALSA volume changes."""
         if self._watch_task is not None:
             return
-        self._watch_task = asyncio.get_running_loop().create_task(self._poll_loop(callback))
+        self._watch_task = create_task(self._poll_loop(callback))
 
     async def stop_monitoring(self) -> None:
         """Stop the monitoring poll loop."""

@@ -8,6 +8,7 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
+from sendspin.utils import create_task
 from sendspin.volume_controller import VolumeChangeCallback
 
 if TYPE_CHECKING:
@@ -184,7 +185,7 @@ class HardwareVolumeController:
         """
         if self._watch_task is not None:
             return
-        self._watch_task = asyncio.get_running_loop().create_task(self._watch_events(callback))
+        self._watch_task = create_task(self._watch_events(callback))
 
     async def stop_monitoring(self) -> None:
         """Stop the monitoring loop if running."""

@@ -113,7 +113,7 @@ async def _stream_audio(stream: PushStream, source: AudioSource) -> None:
 
 async def run_server(config: ServeConfig) -> int:
     """Run the Sendspin server with the given audio source."""
-    event_loop = asyncio.get_event_loop()
+    event_loop = asyncio.get_running_loop()
 
     # On Windows, suppress ConnectionResetError during client disconnect
     # Background: https://github.com/Sendspin/sendspin-cli/pull/26
