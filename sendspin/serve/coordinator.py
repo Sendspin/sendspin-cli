@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 # Keep at least 5s of buffer on workers/connected clients
 MAX_BUFFER_AHEAD_US = 5_000_000
 
+# Max queued chunks per worker before the coordinator blocks.
+# Provides backpressure so no worker falls too far behind.
+_WORKER_QUEUE_MAXSIZE = 8
+
+# Extra initial delay (on top of DEFAULT_INITIAL_DELAY_US) to absorb
+# IPC + encoding pipeline latency across multiple workers.
+_MULTI_WORKER_EXTRA_DELAY_US = 250_000  # 250 ms
+
 
 class ServeCoordinator:
     """Orchestrates multi-worker serve mode."""
@@ -117,7 +125,9 @@ class ServeCoordinator:
     def _spawn_workers(self) -> None:
         """Spawn worker subprocesses."""
         for i in range(self.workers):
-            audio_queue: mp.Queue = self._ctx.Queue()  # type: ignore[type-arg]
+            audio_queue: mp.Queue = self._ctx.Queue(  # type: ignore[type-arg]
+                maxsize=_WORKER_QUEUE_MAXSIZE,
+            )
             self._audio_queues.append(audio_queue)
 
             p = self._ctx.Process(
@@ -230,6 +240,19 @@ class ServeCoordinator:
         summary = ", ".join(parts) if parts else "no workers reporting"
         print(f"[stats] {total} clients connected ({summary})")  # noqa: T201
 
+    async def _fan_out_chunk(self, chunk_msg: AudioChunk) -> None:
+        """Put a chunk into all worker queues in parallel, with backpressure.
+
+        Uses run_in_executor so the event loop stays responsive while waiting
+        for bounded queues to accept the item.
+        """
+        loop = asyncio.get_running_loop()
+
+        async def _put(q: mp.Queue) -> None:  # type: ignore[type-arg]
+            await loop.run_in_executor(None, q.put, chunk_msg)
+
+        await asyncio.gather(*[_put(q) for q in self._audio_queues])
+
     async def _stream_audio_loop(self) -> None:
         """Decode audio and fan out PCM chunks to all workers.
 
@@ -237,13 +260,14 @@ class ServeCoordinator:
         """
         consecutive_errors = 0
         last_stats_time = time.monotonic()
+        initial_delay_us = DEFAULT_INITIAL_DELAY_US + _MULTI_WORKER_EXTRA_DELAY_US
 
         while not self._shutdown_requested:
             try:
                 audio_source = await decode_audio(self.source, source_format=self.source_format)
                 fmt = audio_source.format
 
-                play_start_us = int(time.monotonic() * 1_000_000) + DEFAULT_INITIAL_DELAY_US
+                play_start_us = int(time.monotonic() * 1_000_000) + initial_delay_us
 
                 async for pcm_chunk in audio_source.generator:
                     if self._shutdown_requested:
@@ -273,13 +297,12 @@ class ServeCoordinator:
                         channels=fmt.channels,
                         play_start_us=play_start_us,
                     )
-                    for queue in self._audio_queues:
-                        queue.put(chunk_msg)
+                    await self._fan_out_chunk(chunk_msg)
 
                     play_start_us += chunk_duration_us
 
                     now_us = int(time.monotonic() * 1_000_000)
-                    ahead_us = play_start_us - DEFAULT_INITIAL_DELAY_US - now_us
+                    ahead_us = play_start_us - initial_delay_us - now_us
                     if ahead_us > MAX_BUFFER_AHEAD_US:
                         await asyncio.sleep((ahead_us - MAX_BUFFER_AHEAD_US) / 1_000_000)
 

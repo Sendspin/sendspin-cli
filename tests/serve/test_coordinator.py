@@ -7,8 +7,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sendspin.serve.coordinator import ServeCoordinator
-from sendspin.serve.ipc import WorkerClientCount, WorkerError, WorkerListening
+from sendspin.serve.coordinator import (
+    ServeCoordinator,
+    _MULTI_WORKER_EXTRA_DELAY_US,
+    _WORKER_QUEUE_MAXSIZE,
+)
+from sendspin.serve.ipc import AudioChunk, WorkerClientCount, WorkerError, WorkerListening
 
 
 @pytest.fixture
@@ -87,6 +91,40 @@ def test_check_worker_health_ignores_startup_failed_workers(coordinator: ServeCo
     coordinator._check_worker_health()
 
     assert coordinator._shutdown_requested is False
+
+
+def test_worker_queue_maxsize_is_bounded() -> None:
+    """Worker queues should be created with a bounded maxsize for backpressure."""
+    assert _WORKER_QUEUE_MAXSIZE > 0
+
+
+def test_multi_worker_extra_delay_is_positive() -> None:
+    """Multi-worker mode should add extra initial delay for IPC latency."""
+    assert _MULTI_WORKER_EXTRA_DELAY_US > 0
+
+
+@pytest.mark.asyncio
+async def test_fan_out_chunk_sends_to_all_workers(coordinator: ServeCoordinator) -> None:
+    """_fan_out_chunk should put the chunk into every worker queue."""
+    # Manually create bounded queues (simulating _spawn_workers)
+    import multiprocessing as mp
+
+    ctx = mp.get_context("spawn")
+    coordinator._audio_queues = [ctx.Queue(maxsize=_WORKER_QUEUE_MAXSIZE) for _ in range(2)]
+
+    chunk = AudioChunk(
+        pcm_bytes=b"\x00" * 100,
+        sample_rate=48000,
+        bit_depth=16,
+        channels=2,
+        play_start_us=1_000_000,
+    )
+    await coordinator._fan_out_chunk(chunk)
+
+    for q in coordinator._audio_queues:
+        msg = q.get(timeout=1)
+        assert isinstance(msg, AudioChunk)
+        assert msg.pcm_bytes == chunk.pcm_bytes
 
 
 def test_check_worker_health_shuts_down_on_unexpected_worker_crash(
