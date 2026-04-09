@@ -537,8 +537,36 @@ _TAS58XX_DEVICE_NAME = (
 )
 
 
+_TAS58XX_SGET_DIGITAL_STEREO = (
+    "Simple mixer control 'Digital',0\n"
+    "  Capabilities: volume\n"
+    "  Playback channels: Front Left - Front Right\n"
+    "  Capture channels: Front Left - Front Right\n"
+    "  Limits: 0 - 127\n"
+    "  Front Left: 73 [57%]\n"
+    "  Front Right: 73 [57%]\n"
+)
+
+
+def test_find_mixer_element_tas58xx_stereo(monkeypatch) -> None:
+    """TAS58xx in stereo mode reports 'volume' (without 'volume-joined')."""
+
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
+        if "scontrols" in argv:
+            return _FakeProcess(stdout=_TAS58XX_SCONTROLS.encode())
+        if "Digital" in argv:
+            return _FakeProcess(stdout=_TAS58XX_SGET_DIGITAL_STEREO.encode())
+        return _FakeProcess(stdout=_TAS58XX_SGET_NO_VOLUME.encode())
+
+    async def exercise() -> str | None:
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        return await find_mixer_element(2)
+
+    assert asyncio.run(exercise()) == "Digital"
+
+
 def test_find_mixer_element_tas58xx(monkeypatch) -> None:
-    """TAS58xx amplifiers report 'volume volume-joined', not 'pvolume'."""
+    """TAS58xx in mono mode reports 'volume volume-joined', not 'pvolume'."""
 
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:

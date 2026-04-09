@@ -51,8 +51,9 @@ async def _has_playback_volume(card: int, element: str) -> bool:
     """Check if an ALSA mixer element has playback volume capability.
 
     Accepts both ``pvolume`` (standard playback volume, e.g. HiFiBerry DAC+,
-    USB interfaces) and ``volume volume-joined`` (used by TAS58xx-based
-    amplifier HATs such as the Sonocotta Louder Raspberry).
+    USB interfaces) and ``volume`` (used by TAS58xx-based amplifier HATs such
+    as the Sonocotta Louder Raspberry — reported as ``volume`` in stereo mode
+    or ``volume volume-joined`` in mono mode).
     """
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -70,17 +71,17 @@ async def _has_playback_volume(card: int, element: str) -> bool:
         return False
     if proc.returncode != 0:
         return False
-    decoded = stdout.decode()
-    # TAS58xx amplifiers (e.g. Sonocotta Louder Raspberry) report
-    # 'volume volume-joined' instead of the standard 'pvolume'.
-    return "pvolume" in decoded or "volume volume-joined" in decoded
+    caps = set(stdout.decode().split())
+    # TAS58xx amplifiers report 'volume' (stereo) or 'volume volume-joined'
+    # (mono) instead of the standard 'pvolume'.
+    return "pvolume" in caps or "volume" in caps
 
 
 async def find_mixer_element(card: int) -> str | None:
     """Discover the playback volume mixer element on an ALSA card.
 
     Runs ``amixer -c <card> scontrols``, then checks each element for
-    playback volume capability (``pvolume`` or ``volume volume-joined``).
+    playback volume capability (``pvolume`` or ``volume``).
     Prefers well-known element
     names (Digital, Master, PCM) when multiple elements have playback
     volume.  Returns the best match, or None if no element has playback
