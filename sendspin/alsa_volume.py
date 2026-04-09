@@ -72,8 +72,6 @@ async def _has_playback_volume(card: int, element: str) -> bool:
     if proc.returncode != 0:
         return False
     caps = set(stdout.decode().split())
-    # TAS58xx amplifiers report 'volume' (stereo) or 'volume volume-joined'
-    # (mono) instead of the standard 'pvolume'.
     return "pvolume" in caps or "volume" in caps
 
 
