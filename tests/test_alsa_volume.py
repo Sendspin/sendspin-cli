@@ -85,11 +85,8 @@ def test_find_mixer_element_digital(monkeypatch) -> None:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(1)
-
-    assert asyncio.run(exercise()) == "Digital"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(1)) == "Digital"
 
 
 def test_find_mixer_element_prefers_digital_over_analogue(monkeypatch) -> None:
@@ -102,11 +99,8 @@ def test_find_mixer_element_prefers_digital_over_analogue(monkeypatch) -> None:
             return _FakeProcess(stdout=scontrols.encode())
         return _FakeProcess(stdout=sget_with_pvolume.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(1)
-
-    assert asyncio.run(exercise()) == "Digital"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(1)) == "Digital"
 
 
 def test_find_mixer_element_master(monkeypatch) -> None:
@@ -122,31 +116,20 @@ def test_find_mixer_element_master(monkeypatch) -> None:
             return _FakeProcess(stdout=sget_pvolume.encode())
         return _FakeProcess(stdout=sget_no_pvolume.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(1)
-
-    assert asyncio.run(exercise()) == "Master"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(1)) == "Master"
 
 
 def test_find_mixer_element_none_when_no_controls(monkeypatch) -> None:
     """PCM5102A boards have no mixer controls."""
-
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(""))
-        return await find_mixer_element(1)
-
-    assert asyncio.run(exercise()) is None
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(""))
+    assert asyncio.run(find_mixer_element(1)) is None
 
 
 def test_find_mixer_element_none_on_amixer_failure(monkeypatch) -> None:
     """Gracefully handle amixer failure (e.g., card not found)."""
-
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec("", returncode=1))
-        return await find_mixer_element(99)
-
-    assert asyncio.run(exercise()) is None
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec("", returncode=1))
+    assert asyncio.run(find_mixer_element(99)) is None
 
 
 def test_find_mixer_element_none_when_amixer_not_found(monkeypatch) -> None:
@@ -155,11 +138,8 @@ def test_find_mixer_element_none_when_amixer_not_found(monkeypatch) -> None:
     async def not_found(*args: object, **kwargs: object) -> NoReturn:
         raise FileNotFoundError("amixer")
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", not_found)
-        return await find_mixer_element(1)
-
-    assert asyncio.run(exercise()) is None
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", not_found)
+    assert asyncio.run(find_mixer_element(1)) is None
 
 
 def test_find_mixer_element_capability_scan_fallback(monkeypatch) -> None:
@@ -185,11 +165,8 @@ def test_find_mixer_element_capability_scan_fallback(monkeypatch) -> None:
             return _FakeProcess(stdout=sget_mic.encode())
         return _FakeProcess(stdout=sget_output.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(3)
-
-    assert asyncio.run(exercise()) == "UMC202HD 192k Output"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(3)) == "UMC202HD 192k Output"
 
 
 def test_find_mixer_element_capability_scan_skips_capture_only(monkeypatch) -> None:
@@ -202,11 +179,8 @@ def test_find_mixer_element_capability_scan_skips_capture_only(monkeypatch) -> N
             return _FakeProcess(stdout=scontrols_output.encode())
         return _FakeProcess(stdout=sget_mic.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(3)
-
-    assert asyncio.run(exercise()) is None
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(3)) is None
 
 
 # -- AlsaVolumeController.set_state ------------------------------------------
@@ -220,12 +194,9 @@ def test_set_state_calls_amixer_sset(monkeypatch) -> None:
         calls.append(argv)
         return _FakeProcess()
 
-    async def exercise() -> None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        ctrl = AlsaVolumeController(card=1, element="Digital")
-        await ctrl.set_state(75, muted=False)
-
-    asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=1, element="Digital")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(ctrl.set_state(75, muted=False))
     assert calls == [("amixer", "-M", "-c", "1", "sset", "Digital", "playback", "75%", "unmute")]
 
 
@@ -237,12 +208,9 @@ def test_set_state_muted(monkeypatch) -> None:
         calls.append(argv)
         return _FakeProcess()
 
-    async def exercise() -> None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        ctrl = AlsaVolumeController(card=1, element="Digital")
-        await ctrl.set_state(50, muted=True)
-
-    asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=1, element="Digital")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    asyncio.run(ctrl.set_state(50, muted=True))
     assert calls == [("amixer", "-M", "-c", "1", "sset", "Digital", "playback", "50%", "mute")]
 
 
@@ -260,12 +228,9 @@ def test_get_state_parses_amixer_output(monkeypatch) -> None:
         "  Front Right: Playback 155 [74%] [-15.60dB] [on]\n"
     )
 
-    async def exercise() -> tuple[int, bool]:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
-        ctrl = AlsaVolumeController(card=1, element="Digital")
-        return await ctrl.get_state()
-
-    volume, muted = asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=1, element="Digital")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
+    volume, muted = asyncio.run(ctrl.get_state())
     assert volume == 74
     assert muted is False
 
@@ -280,12 +245,9 @@ def test_get_state_detects_muted(monkeypatch) -> None:
         "  Mono: Playback -4919 [50%] [-49.19dB] [off]\n"
     )
 
-    async def exercise() -> tuple[int, bool]:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
-        ctrl = AlsaVolumeController(card=0, element="PCM")
-        return await ctrl.get_state()
-
-    volume, muted = asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=0, element="PCM")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
+    volume, muted = asyncio.run(ctrl.get_state())
     assert volume == 50
     assert muted is True
 
@@ -300,12 +262,9 @@ def test_get_state_mono_channel(monkeypatch) -> None:
         "  Mono: Playback 0 [96%] [0.00dB] [on]\n"
     )
 
-    async def exercise() -> tuple[int, bool]:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
-        ctrl = AlsaVolumeController(card=0, element="PCM")
-        return await ctrl.get_state()
-
-    volume, muted = asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=0, element="PCM")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(amixer_output))
+    volume, muted = asyncio.run(ctrl.get_state())
     assert volume == 96
     assert muted is False
 
@@ -329,8 +288,9 @@ def test_monitoring_detects_external_change(monkeypatch) -> None:
         callback_received.append((volume, muted))
         got_callback.set()
 
+    monkeypatch.setattr(_alsa_mod, "_POLL_INTERVAL_S", 0.0)
+
     async def exercise() -> None:
-        monkeypatch.setattr(_alsa_mod, "_POLL_INTERVAL_S", 0.0)
         ctrl = AlsaVolumeController(card=0, element="PCM")
 
         async def fake_get() -> tuple[int, bool]:
@@ -366,34 +326,22 @@ def test_alsa_available_for_hw_device_with_mixer(monkeypatch) -> None:
             return _FakeProcess(stdout=scontrols.encode())
         return _FakeProcess(stdout=sget_pvolume.encode())
 
-    async def exercise() -> tuple[int, str] | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        device = SimpleNamespace(name="HiFiBerry DAC+: pcm512x (hw:1,0)", is_default=False)
-        return await async_check_alsa_available(device)
-
-    result = asyncio.run(exercise())
-    assert result == (1, "Digital")
+    device = SimpleNamespace(name="HiFiBerry DAC+: pcm512x (hw:1,0)", is_default=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(async_check_alsa_available(device)) == (1, "Digital")
 
 
 def test_alsa_not_available_for_virtual_device() -> None:
     """Returns None for virtual devices (no hw: in name)."""
-
-    async def exercise() -> tuple[int, str] | None:
-        device = SimpleNamespace(name="pipewire", is_default=False)
-        return await async_check_alsa_available(device)
-
-    assert asyncio.run(exercise()) is None
+    device = SimpleNamespace(name="pipewire", is_default=False)
+    assert asyncio.run(async_check_alsa_available(device)) is None
 
 
 def test_alsa_not_available_when_no_mixer_controls(monkeypatch) -> None:
     """Returns None when card has no mixer elements (PCM5102A)."""
-
-    async def exercise() -> tuple[int, str] | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(""))
-        device = SimpleNamespace(name="DAC Zero (hw:2,0)", is_default=False)
-        return await async_check_alsa_available(device)
-
-    assert asyncio.run(exercise()) is None
+    device = SimpleNamespace(name="DAC Zero (hw:2,0)", is_default=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(""))
+    assert asyncio.run(async_check_alsa_available(device)) is None
 
 
 # -- Simulated HiFiBerry DAC+ HAT scenario -----------------------------------
@@ -438,13 +386,9 @@ def test_hifiberry_dac_discovery(monkeypatch) -> None:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
 
-    async def exercise() -> tuple[int, str] | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        device = SimpleNamespace(name=_HIFIBERRY_DEVICE_NAME, is_default=False)
-        return await async_check_alsa_available(device)
-
-    result = asyncio.run(exercise())
-    assert result == (1, "Digital")
+    device = SimpleNamespace(name=_HIFIBERRY_DEVICE_NAME, is_default=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(async_check_alsa_available(device)) == (1, "Digital")
 
 
 def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
@@ -456,10 +400,10 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
         # Return sget-style output for get_state calls
         return _FakeProcess(stdout=_HIFIBERRY_SGET_74.encode())
 
-    async def exercise() -> None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        ctrl = AlsaVolumeController(card=1, element="Digital")
+    ctrl = AlsaVolumeController(card=1, element="Digital")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
 
+    async def exercise() -> None:
         # Server sends volume command -> controller sets ALSA mixer
         await ctrl.set_state(74, muted=False)
         assert calls[-1] == (
@@ -493,49 +437,28 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 
 # Real amixer output from a Sonocotta Louder Raspberry HAT (TAS5825M chip)
 _TAS58XX_SCONTROLS = (
-    "Simple mixer control 'Analog Gain',0
-"
-    "Simple mixer control 'Channel Left Gain',0
-"
-    "Simple mixer control 'Channel Right Gain',0
-"
-    "Simple mixer control 'Digital',0
-"
+    "Simple mixer control 'Analog Gain',0\n"
+    "Simple mixer control 'Channel Left Gain',0\n"
+    "Simple mixer control 'Channel Right Gain',0\n"
+    "Simple mixer control 'Digital',0\n"
 )
 
 _TAS58XX_SGET_DIGITAL = (
-    "Simple mixer control 'Digital',0
-"
-    "  Capabilities: volume volume-joined
-"
-    "  Playback channels: Mono
-"
-    "  Capture channels: Mono
-"
-    "  Limits: 0 - 127
-"
-    "  Mono: 73 [57%]
-"
+    "Simple mixer control 'Digital',0\n"
+    "  Capabilities: volume volume-joined\n"
+    "  Playback channels: Mono\n"
+    "  Capture channels: Mono\n"
+    "  Limits: 0 - 127\n"
+    "  Mono: 73 [57%]\n"
 )
 
 _TAS58XX_SGET_NO_VOLUME = (
-    "Simple mixer control 'Analog Gain',0
-"
-    "  Capabilities: volume volume-joined
-"
-    "  Playback channels: Mono
-"
-    "  Limits: 0 - 31
-"
-    "  Mono: 31 [100%]
-"
+    "Simple mixer control 'Analog Gain',0\n"
+    "  Capabilities: volume volume-joined\n"
+    "  Playback channels: Mono\n"
+    "  Limits: 0 - 31\n"
+    "  Mono: 31 [100%]\n"
 )
-
-# The exact PortAudio device name for this HAT
-_TAS58XX_DEVICE_NAME = (
-    "Louder-Raspberry: bcm2835-i2s-tas58xx-amplifier tas58xx-amplifier-0 (hw:2,0)"
-)
-
 
 _TAS58XX_SGET_DIGITAL_STEREO = (
     "Simple mixer control 'Digital',0\n"
@@ -545,6 +468,11 @@ _TAS58XX_SGET_DIGITAL_STEREO = (
     "  Limits: 0 - 127\n"
     "  Front Left: 73 [57%]\n"
     "  Front Right: 73 [57%]\n"
+)
+
+# The exact PortAudio device name for this HAT
+_TAS58XX_DEVICE_NAME = (
+    "Louder-Raspberry: bcm2835-i2s-tas58xx-amplifier tas58xx-amplifier-0 (hw:2,0)"
 )
 
 
@@ -558,11 +486,8 @@ def test_find_mixer_element_tas58xx_stereo(monkeypatch) -> None:
             return _FakeProcess(stdout=_TAS58XX_SGET_DIGITAL_STEREO.encode())
         return _FakeProcess(stdout=_TAS58XX_SGET_NO_VOLUME.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(2)
-
-    assert asyncio.run(exercise()) == "Digital"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(2)) == "Digital"
 
 
 def test_find_mixer_element_tas58xx(monkeypatch) -> None:
@@ -575,11 +500,8 @@ def test_find_mixer_element_tas58xx(monkeypatch) -> None:
             return _FakeProcess(stdout=_TAS58XX_SGET_DIGITAL.encode())
         return _FakeProcess(stdout=_TAS58XX_SGET_NO_VOLUME.encode())
 
-    async def exercise() -> str | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        return await find_mixer_element(2)
-
-    assert asyncio.run(exercise()) == "Digital"
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(find_mixer_element(2)) == "Digital"
 
 
 def test_louder_raspberry_discovery(monkeypatch) -> None:
@@ -592,23 +514,15 @@ def test_louder_raspberry_discovery(monkeypatch) -> None:
             return _FakeProcess(stdout=_TAS58XX_SGET_DIGITAL.encode())
         return _FakeProcess(stdout=_TAS58XX_SGET_NO_VOLUME.encode())
 
-    async def exercise() -> tuple[int, str] | None:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
-        device = SimpleNamespace(name=_TAS58XX_DEVICE_NAME, is_default=False)
-        return await async_check_alsa_available(device)
-
-    result = asyncio.run(exercise())
-    assert result == (2, "Digital")
+    device = SimpleNamespace(name=_TAS58XX_DEVICE_NAME, is_default=False)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    assert asyncio.run(async_check_alsa_available(device)) == (2, "Digital")
 
 
 def test_louder_raspberry_get_volume(monkeypatch) -> None:
     """get_state reads back the correct volume from a TAS58xx Digital control."""
-
-    async def exercise() -> tuple[int, bool]:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(_TAS58XX_SGET_DIGITAL))
-        ctrl = AlsaVolumeController(card=2, element="Digital")
-        return await ctrl.get_state()
-
-    volume, muted = asyncio.run(exercise())
+    ctrl = AlsaVolumeController(card=2, element="Digital")
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(_TAS58XX_SGET_DIGITAL))
+    volume, muted = asyncio.run(ctrl.get_state())
     assert volume == 57
     assert muted is False
