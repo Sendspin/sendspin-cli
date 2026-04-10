@@ -186,7 +186,6 @@ class ClientSettings(BaseSettings):
 
     def _load(self) -> bool:
         """Load settings from the settings file (blocking I/O)."""
-        needs_save = False
         if self._settings_file is None or not self._settings_file.exists():
             logger.debug("Settings file does not exist: %s", self._settings_file)
             return False
@@ -200,14 +199,11 @@ class ClientSettings(BaseSettings):
             self.player_volume = data.get("player_volume", 25)
             self.player_muted = data.get("player_muted", False)
             self.static_delay_ms = data.get("static_delay_ms", 0.0)
-            # Migrate old sign convention: negative values meant "play earlier",
-            # new convention uses positive values (0-5000) for the same effect.
+            # Clamp to valid range; also handles old negative sign convention.
             if self.static_delay_ms < 0:
                 self.static_delay_ms = min(5000.0, -self.static_delay_ms)
-                needs_save = True
             elif self.static_delay_ms > 5000:
                 self.static_delay_ms = 5000.0
-                needs_save = True
             self.last_server_url = data.get("last_server_url")
             self.client_id = data.get("client_id")
             self.audio_device = data.get("audio_device")
@@ -228,7 +224,7 @@ class ClientSettings(BaseSettings):
             )
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
-        return needs_save
+        return False
 
 
 @dataclass
