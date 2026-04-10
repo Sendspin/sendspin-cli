@@ -344,8 +344,13 @@ class SendspinDaemon:
             player_cmd.command == PlayerCommand.SET_STATIC_DELAY
             and player_cmd.static_delay_ms is not None
         ):
-            # Client library already applied the delay change; persist to settings
+            # Client library already applied the delay change;
+            # notify audio worker so sync correction adjusts timing gradually
             assert self._client is not None
+            old_delay_ms = self._settings.static_delay_ms
+            delta_us = int((self._client.static_delay_ms - old_delay_ms) * 1000)
+            if delta_us != 0:
+                self._audio_handler.notify_delay_change(delta_us)
             self._settings.update(static_delay_ms=self._client.static_delay_ms)
             logger.info("Server set delay: %dms", player_cmd.static_delay_ms)
 

@@ -50,11 +50,20 @@ class _SetVolumeWorkItem:
 
 
 @dataclass(slots=True)
+class _DelayChangeWorkItem:
+    """Delay change notification for the synchronous audio worker."""
+
+    delta_us: int
+
+
+@dataclass(slots=True)
 class _StopWorkItem:
     """Stop signal for the synchronous audio worker."""
 
 
-type _AudioWorkItem = _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _StopWorkItem
+type _AudioWorkItem = (
+    _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _DelayChangeWorkItem | _StopWorkItem
+)
 
 
 class _AudioSyncWorker:
@@ -107,6 +116,10 @@ class _AudioSyncWorker:
     def clear(self) -> None:
         """Clear queued audio on worker."""
         self._enqueue(_ClearWorkItem())
+
+    def notify_delay_change(self, delta_us: int) -> None:
+        """Notify the worker that static delay changed."""
+        self._enqueue(_DelayChangeWorkItem(delta_us=delta_us))
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Update software volume and forward to worker if enabled."""
@@ -181,6 +194,10 @@ class _AudioSyncWorker:
 
             if item_type is _ClearWorkItem:
                 player.clear()
+                continue
+
+            if item_type is _DelayChangeWorkItem:
+                player.apply_delay_change(cast(_DelayChangeWorkItem, item).delta_us)
                 continue
 
             if item_type is _SetVolumeWorkItem:
@@ -435,6 +452,12 @@ class AudioStreamHandler:
         self._audio_worker.start(client.compute_play_time, client.compute_server_time)
         if not self._audio_worker.is_running():
             raise RuntimeError("Audio worker failed to start")
+
+    def notify_delay_change(self, delta_us: int) -> None:
+        """Notify the audio worker that static delay changed."""
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.notify_delay_change(delta_us)
 
     def _clear_audio_worker(self) -> None:
         """Clear worker queue when worker is available."""
