@@ -430,6 +430,7 @@ def _build_parser() -> argparse.ArgumentParser:
     audio_devices_sub = audio_devices_parser.add_subparsers(
         dest="audio_devices_command",
         title="Commands",
+        required=True,
     )
     audio_devices_sub.add_parser(
         "list",
@@ -446,6 +447,7 @@ def _build_parser() -> argparse.ArgumentParser:
     servers_sub = servers_parser.add_subparsers(
         dest="servers_command",
         title="Commands",
+        required=True,
     )
     servers_sub.add_parser(
         "list",
@@ -462,6 +464,7 @@ def _build_parser() -> argparse.ArgumentParser:
     clients_sub = clients_parser.add_subparsers(
         dest="clients_command",
         title="Commands",
+        required=True,
     )
     clients_sub.add_parser(
         "list",
@@ -666,25 +669,19 @@ def main() -> int:
 
     # Handle utility subcommands
     if args.command == "audio-devices":
-        if getattr(args, "audio_devices_command", None) == "list":
+        if args.audio_devices_command == "list":
             list_audio_devices()
             return 0
-        _build_parser().parse_args(["audio-devices", "--help"])
-        return 1
 
     if args.command == "servers":
-        if getattr(args, "servers_command", None) == "list":
+        if args.servers_command == "list":
             asyncio.run(list_servers())
             return 0
-        _build_parser().parse_args(["servers", "--help"])
-        return 1
 
     if args.command == "clients":
-        if getattr(args, "clients_command", None) == "list":
+        if args.clients_command == "list":
             asyncio.run(list_clients())
             return 0
-        _build_parser().parse_args(["clients", "--help"])
-        return 1
 
     if args.command == PLAYER_APP_SENTINEL:
         # Deprecated flags - route to new subcommands with a warning.

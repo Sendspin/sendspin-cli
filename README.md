@@ -231,7 +231,7 @@ sendspin --audio-device "MacBook"
 sendspin --audio-device dmixer
 ```
 
-This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `sendspin audio-devices list`. For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
+This is useful for ALSA plugin devices (dmix, plug, etc.) that may not appear in the numbered PortAudio device list (though they may be shown in the ALSA devices section on Linux). For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
 
 ```bash
 # Room 1: left channel via dmix
