@@ -14,10 +14,10 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aiosendspin~=4.4",
+  "aiosendspin[server]~=5.0",
   "aiosendspin-mpris~=2.1.1",
-  "av>=14.0.0",
-  "numpy>=1.24.0",
+  "av>=15.0.0",
+  "numpy>=1.26.0",
   "pulsectl-asyncio>=1.2.2; platform_system == 'Linux'",
   "qrcode>=8.0",
   "readchar>=4.0.0",
