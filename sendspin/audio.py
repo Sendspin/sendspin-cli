@@ -166,6 +166,9 @@ class AudioPlayer:
         self._volume: int = 100  # 0-100 range
         self._muted: bool = False
 
+        # Output latency reported by PortAudio (time from buffer write to DAC)
+        self._output_latency_us: int = 0
+
         # Partial chunk tracking (to avoid discarding partial chunks)
         self._current_chunk: _QueuedChunk | None = None
         self._current_chunk_offset = 0
@@ -252,13 +255,18 @@ class AudioPlayer:
             latency="high",
             device=device.device_id,
         )
+        # Read actual output latency reported by PortAudio (time from buffer
+        # write to DAC output). Used to compensate loop-based start gating
+        # before DAC calibration is available.
+        self._output_latency_us = int(self._stream.latency * self._MICROSECONDS_PER_SECOND)
         logger.info(
-            "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
+            "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, output_latency=%.1f ms, device=%s",
             audio_format.codec.value,
             pcm_format.sample_rate,
             pcm_format.channels,
             pcm_format.bit_depth,
             self._BLOCKSIZE,
+            self._output_latency_us / 1000.0,
             device.device_id,
         )
 
@@ -772,6 +780,7 @@ class AudioPlayer:
             "playback_position_us": float(self._get_current_playback_position_us()),
             "buffered_audio_us": float(self._queued_duration_us),
             "dac_samples_recorded": len(self._dac_loop_calibrations),
+            "output_latency_us": float(self._output_latency_us),
         }
 
     def _log_chunk_timing(self, _server_timestamp_us: int) -> None:
@@ -945,10 +954,13 @@ class AudioPlayer:
             current_time_us = dac_now_us
             can_drop_frames = True  # DAC gating allows frame dropping when late
         elif self._scheduled_start_loop_time_us is not None:
-            # Loop-based gating: fallback when DAC timing unavailable
+            # Loop-based gating: fallback when DAC timing unavailable.
+            # Compensate for output latency: audio written at loop_now won't
+            # play until loop_now + output_latency, so start writing earlier.
             loop_now_us = self._now_us()
-            delta_us = self._scheduled_start_loop_time_us - loop_now_us
-            target_time_us = self._scheduled_start_loop_time_us
+            adjusted_start_us = self._scheduled_start_loop_time_us - self._output_latency_us
+            delta_us = adjusted_start_us - loop_now_us
+            target_time_us = adjusted_start_us
             current_time_us = loop_now_us
             can_drop_frames = False  # Loop gating waits for DAC calibration
         else:
