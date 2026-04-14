@@ -321,6 +321,12 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
         sounddevice.check_output_settings(device=name)
     except sounddevice.PortAudioError:
         return None
+    except ValueError:
+        # PortAudio doesn't recognize this device name (e.g. hw:CARD=...,DEV=...).
+        # Validate it exists in ALSA before accepting it with safe defaults.
+        alsa_names = {dev_name for dev_name, _ in list_alsa_devices()}
+        if name not in alsa_names:
+            return None
 
     # Try to query device info from PortAudio
     try:
