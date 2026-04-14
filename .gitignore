@@ -102,7 +102,6 @@ ipython_config.py
 #poetry.lock
 
 # uv
-uv.lock
 
 # pdm
 #   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
