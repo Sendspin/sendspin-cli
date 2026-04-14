@@ -166,6 +166,8 @@ class AudioPlayer:
         self._volume: int = 100  # 0-100 range
         self._muted: bool = False
 
+        self._output_latency_us: int = 0
+
         # Partial chunk tracking (to avoid discarding partial chunks)
         self._current_chunk: _QueuedChunk | None = None
         self._current_chunk_offset = 0
@@ -206,6 +208,7 @@ class AudioPlayer:
         self._first_server_timestamp_us: int | None = None
         self._early_start_suspect: bool = False
         self._has_reanchored: bool = False
+        self._force_reanchor: bool = True
 
         # Low-overhead drift/sync correction scheduling (sample drop/insert)
         self._insert_every_n_frames: int = 0
@@ -252,13 +255,15 @@ class AudioPlayer:
             latency="high",
             device=device.device_id,
         )
+        self._output_latency_us = int(self._stream.latency * self._MICROSECONDS_PER_SECOND)
         logger.info(
-            "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, device=%s",
+            "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, output_latency=%.1f ms, device=%s",
             audio_format.codec.value,
             pcm_format.sample_rate,
             pcm_format.channels,
             pcm_format.bit_depth,
             self._BLOCKSIZE,
+            self._output_latency_us / 1000.0,
             device.device_id,
         )
 
@@ -340,6 +345,7 @@ class AudioPlayer:
         self._first_server_timestamp_us = None
         self._early_start_suspect = False
         self._has_reanchored = False
+        self._force_reanchor = True
         self._insert_every_n_frames = 0
         self._drop_every_n_frames = 0
         self._frames_until_next_insert = 0
@@ -389,6 +395,25 @@ class AudioPlayer:
 
         # Capture exact DAC output time and update playback position
         self._update_playback_position_from_dac(time)
+
+        # Reanchor: snap read cursor to DAC-derived server time so the
+        # cursor tracks actual playback position, not bytes-read position.
+        if (
+            self._playback_state == PlaybackState.PLAYING
+            and self._last_known_playback_position_us > 0
+            and self._server_ts_cursor_us > 0
+            and self._force_reanchor
+        ):
+            self._server_ts_cursor_us = self._last_known_playback_position_us
+            self._server_ts_cursor_remainder = 0
+            self._force_reanchor = False
+            self._insert_every_n_frames = 0
+            self._drop_every_n_frames = 0
+            self._frames_until_next_insert = 0
+            self._frames_until_next_drop = 0
+            self._sync_error_filter.reset()
+            self._sync_error_filtered_us = 0.0
+
         bytes_written = 0
 
         try:
@@ -772,6 +797,7 @@ class AudioPlayer:
             "playback_position_us": float(self._get_current_playback_position_us()),
             "buffered_audio_us": float(self._queued_duration_us),
             "dac_samples_recorded": len(self._dac_loop_calibrations),
+            "output_latency_us": float(self._output_latency_us),
         }
 
     def _log_chunk_timing(self, _server_timestamp_us: int) -> None:
@@ -1004,22 +1030,16 @@ class AudioPlayer:
             self._drop_every_n_frames = 0
             return
 
-        # Re-anchor only if error is very large and cooldown has elapsed
+        # Re-anchor if error is very large and cooldown has elapsed.
         now_loop_us = self._now_us()
         if (
             abs_err > self._REANCHOR_THRESHOLD_US
             and self._playback_state == PlaybackState.PLAYING
             and now_loop_us - self._last_reanchor_loop_time_us > self._REANCHOR_COOLDOWN_US
         ):
-            logger.info("Sync error %.1f ms too large; re-anchoring", abs_err / 1000.0)
-            # Reset cadence
-            self._insert_every_n_frames = 0
-            self._drop_every_n_frames = 0
-            self._frames_until_next_insert = 0
-            self._frames_until_next_drop = 0
+            logger.info("Sync error %.1f ms too large; scheduling reanchor", abs_err / 1000.0)
             self._last_reanchor_loop_time_us = now_loop_us
-            # Re-anchor on next chunk boundary by clearing queue
-            self.clear()
+            self._force_reanchor = True
             return
 
         # Simple proportional control: correction rate proportional to error
