@@ -53,6 +53,11 @@ def test_try_alsa_device_accepts_hw_card_format_known_to_alsa():
             "check_output_settings",
             side_effect=ValueError("not found"),
         ),
+        patch.object(
+            sounddevice,
+            "query_devices",
+            side_effect=ValueError("not found"),
+        ),
         patch.object(_mod, "list_alsa_devices", return_value=alsa_list),
     ):
         result = _try_alsa_device("hw:CARD=sndrpihifiberry,DEV=0")
@@ -100,6 +105,11 @@ def test_try_alsa_device_accepts_alsa_only_device():
         patch.object(
             sounddevice,
             "check_output_settings",
+            side_effect=ValueError("not found"),
+        ),
+        patch.object(
+            sounddevice,
+            "query_devices",
             side_effect=ValueError("not found"),
         ),
         patch.object(_mod, "list_alsa_devices", return_value=alsa_list),
