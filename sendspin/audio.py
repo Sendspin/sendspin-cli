@@ -258,16 +258,8 @@ class AudioPlayer:
         # Read actual output latency reported by PortAudio (time from buffer
         # write to DAC output). Used to compensate loop-based start gating
         # before DAC calibration is available.
-        # RawOutputStream.latency is a float, but handle tuple/namedtuple
-        # variants defensively in case sounddevice version differs.
-        latency = self._stream.latency
-        if hasattr(latency, "output"):
-            output_latency = latency.output
-        elif isinstance(latency, tuple):
-            output_latency = latency[1]
-        else:
-            output_latency = latency
-        self._output_latency_us = int(output_latency * self._MICROSECONDS_PER_SECOND)
+        # RawOutputStream.latency is a plain float (output latency in seconds).
+        self._output_latency_us = int(self._stream.latency * self._MICROSECONDS_PER_SECOND)
         logger.info(
             "Audio stream configured: codec=%s, sample_rate=%d, channels=%d, bit_depth=%d, blocksize=%d, latency=high, output_latency=%.1f ms, device=%s",
             audio_format.codec.value,
