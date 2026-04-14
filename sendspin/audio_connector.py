@@ -241,6 +241,9 @@ class _AudioSyncWorker:
                         software_muted = vol.muted
                         player.set_volume(software_volume, muted=software_muted)
                         continue
+                    if drain_type is _DelayChangeWorkItem:
+                        player.apply_delay_change(cast(_DelayChangeWorkItem, drain_item).delta_us)
+                        continue
                     # Buffer incoming new-format chunks during drain
                     buffered_chunks.append(cast(_ChunkWorkItem, drain_item))
                     drained = player.is_drained()
