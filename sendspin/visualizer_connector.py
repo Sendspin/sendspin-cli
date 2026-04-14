@@ -126,10 +126,10 @@ class VisualizerHandler:
             self._timer.cancel()
             self._timer = None
 
-        loop = asyncio.get_running_loop()
-        now_us = int(loop.time() * 1_000_000)
+        now_us = self._client.now_us()
         next_play_us = self._pending[0][0]
         delay_s = max(0.0, (next_play_us - now_us) / 1_000_000.0)
+        loop = asyncio.get_running_loop()
         self._timer = loop.call_later(delay_s, self._emit_due_frames)
 
     def _emit_due_frames(self) -> None:
@@ -138,7 +138,7 @@ class VisualizerHandler:
         if self._client is None or not self._pending:
             return
 
-        now_us = int(asyncio.get_running_loop().time() * 1_000_000)
+        now_us = self._client.now_us()
         latest_due: VisualizerFrame | None = None
         while self._pending and self._pending[0][0] <= now_us:
             _play_us, frame = self._pending.popleft()

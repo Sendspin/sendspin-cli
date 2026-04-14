@@ -140,20 +140,25 @@ class AudioPlayer:
         self,
         compute_client_time: Callable[[int], int],
         compute_server_time: Callable[[int], int],
+        now_us: Callable[[], int] | None = None,
     ) -> None:
         """
         Initialize the audio player.
 
         Args:
             compute_client_time: Function that converts server timestamps to client
-                timestamps (monotonic loop time), accounting for clock drift, offset,
+                timestamps (monotonic clock time), accounting for clock drift, offset,
                 and static delay.
             compute_server_time: Function that converts client timestamps (monotonic
-                loop time) to server timestamps. Pure clock-domain conversion
+                clock time) to server timestamps. Pure clock-domain conversion
                 without static delay adjustment.
+            now_us: Function returning current monotonic time in microseconds.
+                Must be in the same clock domain as compute_client_time.
+                Defaults to time.monotonic().
         """
         self._compute_client_time = compute_client_time
         self._compute_server_time = compute_server_time
+        self._now_us = now_us or (lambda: int(time.monotonic() * 1_000_000))
         self._format: PCMFormat | None = None
         self._queue: queue.Queue[_QueuedChunk] = queue.Queue()
         self._stream: sounddevice.RawOutputStream | None = None
@@ -774,11 +779,6 @@ class AudioPlayer:
     def _get_current_playback_position_us(self) -> int:
         """Get the current playback position in server timestamp space."""
         return self._last_known_playback_position_us
-
-    @staticmethod
-    def _now_us() -> int:
-        """Return current monotonic time in microseconds."""
-        return int(time.monotonic() * 1_000_000)
 
     def get_timing_metrics(self) -> dict[str, float]:
         """Return current timing metrics for monitoring."""
