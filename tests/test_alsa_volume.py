@@ -489,10 +489,7 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 # The TAS58xx driver reports "volume" (or "volume volume-joined") instead of
 # the standard "pvolume" capability.
 
-_TAS58XX_SCONTROLS = (
-    "Simple mixer control 'Analog Gain',0\n"
-    "Simple mixer control 'Digital',0\n"
-)
+_TAS58XX_SCONTROLS = "Simple mixer control 'Analog Gain',0\n" "Simple mixer control 'Digital',0\n"
 
 _TAS58XX_SGET_DIGITAL_MONO = (
     "Simple mixer control 'Digital',0\n"
@@ -548,7 +545,9 @@ def test_louder_raspberry_discovery(monkeypatch) -> None:
 
     async def exercise() -> tuple[int, str] | None:
         monkeypatch.setattr(_alsa_mod, "AVAILABLE", True)
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _tas58xx_exec(_TAS58XX_SGET_DIGITAL_MONO))
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", _tas58xx_exec(_TAS58XX_SGET_DIGITAL_MONO)
+        )
         device = SimpleNamespace(
             name="Louder-Raspberry: bcm2835-i2s-tas58xx-amplifier tas58xx-amplifier-0 (hw:2,0)",
             is_default=False,
@@ -562,7 +561,9 @@ def test_louder_raspberry_get_volume(monkeypatch) -> None:
     """get_state reads back the correct volume from a TAS58xx Digital control."""
 
     async def exercise() -> tuple[int, bool]:
-        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(_TAS58XX_SGET_DIGITAL_MONO))
+        monkeypatch.setattr(
+            asyncio, "create_subprocess_exec", _amixer_exec(_TAS58XX_SGET_DIGITAL_MONO)
+        )
         ctrl = AlsaVolumeController(card=2, element="Digital")
         return await ctrl.get_state()
 
