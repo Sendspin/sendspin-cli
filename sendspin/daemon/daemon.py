@@ -75,6 +75,7 @@ class SendspinDaemon:
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
         self._group_update_unsubscribe: Callable[[], None] | None = None
+        self._server_command_unsubscribe: Callable[[], None] | None = None
 
     def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -189,7 +190,9 @@ class SendspinDaemon:
             self._mpris.start()
         self._audio_handler.attach_client(self._client)
         self._server_url = self._args.url
-        self._client.add_server_command_listener(self._handle_server_command)
+        self._server_command_unsubscribe = self._client.add_server_command_listener(
+            self._handle_server_command
+        )
         await self._connection_loop(self._args.url)
 
     async def _run_server_initiated(self, static_delay_ms: float) -> None:
@@ -216,6 +219,9 @@ class SendspinDaemon:
 
     async def _handle_disconnect(self, *, stop_mpris: bool = True) -> None:
         """Reset connection-scoped state and optionally stop MPRIS."""
+        if self._server_command_unsubscribe is not None:
+            self._server_command_unsubscribe()
+            self._server_command_unsubscribe = None
         if self._group_update_unsubscribe is not None:
             self._group_update_unsubscribe()
             self._group_update_unsubscribe = None
@@ -318,7 +324,9 @@ class SendspinDaemon:
 
             self._client = client
             self._audio_handler.attach_client(client)
-            client.add_server_command_listener(self._handle_server_command)
+            self._server_command_unsubscribe = client.add_server_command_listener(
+                self._handle_server_command
+            )
             self._group_update_unsubscribe = client.add_group_update_listener(self._on_group_update)
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)
