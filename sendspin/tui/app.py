@@ -228,6 +228,8 @@ class AppArgs:
     volume_controller: VolumeController | None = None
     hook_start: str | None = None
     hook_stop: str | None = None
+    manufacturer: str | None = None
+    product_name: str | None = None
 
 
 class SendspinApp:
@@ -292,7 +294,10 @@ class SendspinApp:
             client_id=args.client_id,
             client_name=args.client_name,
             roles=roles,
-            device_info=get_device_info(),
+            device_info=get_device_info(
+                manufacturer=args.manufacturer,
+                product_name=args.product_name,
+            ),
             player_support=ClientHelloPlayerSupport(
                 supported_formats=self._supported_formats,
                 buffer_capacity=32_000_000,
@@ -300,6 +305,7 @@ class SendspinApp:
             ),
             visualizer_support=visualizer_support,
             static_delay_ms=delay,
+            state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
         )
@@ -764,6 +770,21 @@ class SendspinApp:
             self._ui.add_event(
                 "Server muted player" if player_cmd.mute else "Server unmuted player"
             )
+        elif (
+            player_cmd.command == PlayerCommand.SET_STATIC_DELAY
+            and player_cmd.static_delay_ms is not None
+        ):
+            # Client library already applied the delay change;
+            # notify audio worker so sync correction adjusts timing gradually
+            assert self._client is not None
+            assert self._audio_handler is not None
+            old_delay_ms = self._settings.static_delay_ms
+            delta_us = int((self._client.static_delay_ms - old_delay_ms) * 1000)
+            if delta_us != 0:
+                self._audio_handler.notify_delay_change(delta_us)
+            self._ui.set_delay(self._client.static_delay_ms)
+            self._settings.update(static_delay_ms=self._client.static_delay_ms)
+            self._ui.add_event(f"Server set delay: {player_cmd.static_delay_ms}ms")
 
     def _handle_format_change(
         self, codec: str | None, sample_rate: int, bit_depth: int, channels: int

@@ -126,7 +126,7 @@ Settings are stored in `~/.config/sendspin/`:
 {
   "player_volume": 50,
   "player_muted": false,
-  "static_delay_ms": -100.0,
+  "static_delay_ms": 0,
   "last_server_url": "ws://192.168.1.100:8927/sendspin",
   "name": "Living Room",
   "client_id": "sendspin-living-room",
@@ -136,7 +136,9 @@ Settings are stored in `~/.config/sendspin/`:
   "listen_port": 8927,
   "use_mpris": true,
   "use_hardware_volume": true,
-  "hook_set_volume": "/usr/local/bin/set-avr-volume"
+  "hook_set_volume": "/usr/local/bin/set-avr-volume",
+  "manufacturer": "Acme Corp",
+  "product_name": "Living Room Speaker"
 }
 ```
 
@@ -170,6 +172,8 @@ Settings are stored in `~/.config/sendspin/`:
 | `hook_set_volume` | string | TUI/daemon | Script to run for external volume control (`--hook-set-volume`). Receives the effective volume 0-100 as the last argument |
 | `hook_start` | string | TUI/daemon | Command to run when audio stream starts |
 | `hook_stop` | string | TUI/daemon | Command to run when audio stream stops |
+| `manufacturer` | string | TUI/daemon | Manufacturer name reported in the client hello (`--manufacturer`) |
+| `product_name` | string | TUI/daemon | Product name reported in the client hello (`--product-name`); defaults to auto-detected OS/platform name |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
 | `source_format` | string | serve | ffmpeg container format for audio source |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
@@ -186,7 +190,7 @@ sendspin --url ws://192.168.1.100:8080/sendspin
 
 **List available servers on the network:**
 ```bash
-sendspin --list-servers
+sendspin servers list
 ```
 
 ### Client Identification
@@ -207,7 +211,7 @@ By default, the player uses your system's default audio output device. You can l
 
 **List available audio devices:**
 ```bash
-sendspin --list-audio-devices
+sendspin audio-devices list
 ```
 
 This displays all audio output devices with their IDs, channel configurations, and sample rates. The default device is marked.
@@ -227,7 +231,7 @@ sendspin --audio-device "MacBook"
 sendspin --audio-device dmixer
 ```
 
-This is useful for ALSA plugin devices (dmix, plug, etc.) that don't appear in `--list-audio-devices`. For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
+This is useful for ALSA plugin devices (dmix, plug, etc.) that may not appear in the numbered PortAudio device list (though they may be shown in the ALSA devices section on Linux). For example, in a dual mono setup where two daemons share a single sound card via dmix, each daemon can target a different ALSA device that routes to a specific channel:
 
 ```bash
 # Room 1: left channel via dmix
@@ -283,10 +287,10 @@ Because Sendspin cannot read back external device state from the hook, startup v
 The player supports adjusting playback delay to compensate for audio hardware latency or achieve better synchronization across devices.
 
 ```bash
-sendspin --static-delay-ms -100
+sendspin --static-delay-ms 50
 ```
 
-> **Note:** Based on limited testing, the delay value is typically a negative number (e.g., `-100` or `-150`) to compensate for audio hardware buffering.
+> **Note:** A delay of 0ms works well in most cases. If audio is playing slightly too late, a small positive delay (e.g., 50ms) can help compensate for audio hardware latency. On compatible servers, delay can be configured remotely per player, so you shouldn't need to set this locally.
 
 ### Daemon Mode
 
@@ -303,6 +307,12 @@ sendspin daemon --name "Kitchen" --audio-device 2
 ```
 
 In daemon mode without `--url`, the client listens for incoming server connections and advertises itself via mDNS. The `--name` option (or `name` setting) is used as the friendly name in the mDNS advertisement, making it easy for servers to identify this client on the network.
+
+Use `--manufacturer` and `--product-name` to override the device identity reported to the server in the client hello. This is useful when running the daemon in a container or on a custom device where the auto-detected OS name is not meaningful:
+
+```bash
+sendspin daemon --name "Living Room" --manufacturer "Acme" --product-name "Living Room Speaker"
+```
 
 ### Hooks
 

@@ -239,9 +239,9 @@ else
     fi
 
     if [ -n "$DAEMON_DBUS" ]; then
-        sudo -u "$DAEMON_USER" env XDG_RUNTIME_DIR="$DAEMON_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DAEMON_DBUS" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2
+        sudo -u "$DAEMON_USER" env XDG_RUNTIME_DIR="$DAEMON_RUNTIME_DIR" DBUS_SESSION_BUS_ADDRESS="$DAEMON_DBUS" "$SENDSPIN_BIN" audio-devices list 2>&1 | grep -v -e "^To select an audio device" -e "^  sendspin"
     else
-        sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" --list-audio-devices 2>&1 | head -n -2 || echo -e "${D}(Audio devices will be detected when daemon starts)${N}"
+        sudo -u "$DAEMON_USER" "$SENDSPIN_BIN" audio-devices list 2>&1 | grep -v -e "^To select an audio device" -e "^  sendspin" || echo -e "${D}(Audio devices will be detected when daemon starts)${N}"
     fi
 
     DEVICE=$(prompt_input "Audio device" "default")

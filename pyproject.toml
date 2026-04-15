@@ -14,10 +14,10 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aiosendspin~=4.4",
+  "aiosendspin[server]~=5.1",
   "aiosendspin-mpris~=2.1.1",
-  "av>=14.0.0",
-  "numpy>=1.24.0",
+  "av>=15.0.0",
+  "numpy>=1.26.0",
   "pulsectl-asyncio>=1.2.2; platform_system == 'Linux'",
   "qrcode>=8.0",
   "readchar>=4.0.0",
@@ -46,6 +46,7 @@ test = [
   "pre-commit==4.4.0",
   "pre-commit-hooks==6.0.0",
   "pytest>=8.4.2",
+  "pytest-asyncio>=1.0.0",
   "ruff==0.14.5",
 ]
 
@@ -146,6 +147,9 @@ ignore = [
 "setup.py" = ["T201"]
 
 select = ["ALL"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false

@@ -112,9 +112,15 @@ class CommandHandler:
         client = self._get_client()
         if client is None:
             return
-        client.set_static_delay_ms(client.static_delay_ms + delta)
+        old_delay = client.static_delay_ms
+        new_delay = max(0, min(5000, old_delay + delta))
+        client.set_static_delay_ms(new_delay)
+        actual_delta_us = int((client.static_delay_ms - old_delay) * 1000)
+        if actual_delta_us != 0:
+            self._audio_handler.notify_delay_change(actual_delta_us)
         self._ui.set_delay(client.static_delay_ms)
         self._settings.update(static_delay_ms=client.static_delay_ms)
+        self._audio_handler.send_player_volume()
 
     def close_server_selector(self) -> None:
         """Close the server selector panel."""

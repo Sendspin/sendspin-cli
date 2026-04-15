@@ -29,7 +29,7 @@ _POLL_INTERVAL_S = 1.0
 
 # Well-known ALSA mixer element names, in priority order.
 # When multiple elements have playback volume, prefer these over others.
-# - Digital: HiFiBerry DAC+/DAC2/Amp2, most I2S DAC HATs (PCM5122)
+# - Digital: HiFiBerry DAC+/DAC2/Amp2, most I2S DAC HATs (PCM5122), TAS58xx amplifiers (Louder Raspberry)
 # - Master: HiFiBerry Amp+, generic ALSA cards, many USB interfaces
 # - PCM: bcm2835 headphones, some USB DACs
 _PREFERRED_ELEMENTS: tuple[str, ...] = ("Digital", "Master", "PCM")
@@ -48,7 +48,13 @@ def parse_alsa_card(device_name: str) -> int | None:
 
 
 async def _has_playback_volume(card: int, element: str) -> bool:
-    """Check if an ALSA mixer element has playback volume capability."""
+    """Check if an ALSA mixer element has playback volume capability.
+
+    Accepts both ``pvolume`` (standard playback volume, e.g. HiFiBerry DAC+,
+    USB interfaces) and ``volume`` (used by TAS58xx-based amplifier HATs such
+    as the Sonocotta Louder Raspberry — reported as ``volume`` in stereo mode
+    or ``volume volume-joined`` in mono mode).
+    """
     try:
         proc = await asyncio.create_subprocess_exec(
             "amixer",
@@ -65,14 +71,16 @@ async def _has_playback_volume(card: int, element: str) -> bool:
         return False
     if proc.returncode != 0:
         return False
-    return "pvolume" in stdout.decode()
+    caps = set(stdout.decode().split())
+    return "pvolume" in caps or "volume" in caps
 
 
 async def find_mixer_element(card: int) -> str | None:
     """Discover the playback volume mixer element on an ALSA card.
 
     Runs ``amixer -c <card> scontrols``, then checks each element for
-    playback volume (``pvolume``) capability.  Prefers well-known element
+    playback volume capability (``pvolume`` or ``volume``).
+    Prefers well-known element
     names (Digital, Master, PCM) when multiple elements have playback
     volume.  Returns the best match, or None if no element has playback
     volume control.
@@ -101,15 +109,15 @@ async def find_mixer_element(card: int) -> str | None:
         return None
 
     seen: set[str] = set()
-    pvolume_elements: list[str] = []
+    volume_elements: list[str] = []
     for element in available:
         if element in seen:
             continue
         seen.add(element)
         if await _has_playback_volume(card, element):
-            pvolume_elements.append(element)
+            volume_elements.append(element)
 
-    if not pvolume_elements:
+    if not volume_elements:
         logger.debug(
             "ALSA card %d: no playback volume element among %s",
             card,
@@ -119,12 +127,12 @@ async def find_mixer_element(card: int) -> str | None:
 
     # Prefer well-known element names used by common DAC HATs.
     for preferred in _PREFERRED_ELEMENTS:
-        if preferred in pvolume_elements:
+        if preferred in volume_elements:
             logger.debug("ALSA card %d: selected preferred mixer element %r", card, preferred)
             return preferred
 
-    # Fallback: first element with pvolume (e.g. USB DACs with non-standard names).
-    selected = pvolume_elements[0]
+    # Fallback: first element with playback volume (e.g. USB DACs with non-standard names).
+    selected = volume_elements[0]
     logger.debug("ALSA card %d: selected mixer element %r", card, selected)
     return selected
 

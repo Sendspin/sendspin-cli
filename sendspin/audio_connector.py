@@ -50,11 +50,20 @@ class _SetVolumeWorkItem:
 
 
 @dataclass(slots=True)
+class _DelayChangeWorkItem:
+    """Delay change notification for the synchronous audio worker."""
+
+    delta_us: int
+
+
+@dataclass(slots=True)
 class _StopWorkItem:
     """Stop signal for the synchronous audio worker."""
 
 
-type _AudioWorkItem = _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _StopWorkItem
+type _AudioWorkItem = (
+    _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _DelayChangeWorkItem | _StopWorkItem
+)
 
 
 class _AudioSyncWorker:
@@ -80,11 +89,13 @@ class _AudioSyncWorker:
         self,
         compute_play_time: Callable[[int], int],
         compute_server_time: Callable[[int], int],
+        now_us: Callable[[], int] | None = None,
     ) -> None:
         """Start worker thread if needed."""
         if self._thread is not None and self._thread.is_alive():
             return
 
+        self._now_us = now_us
         self._queue = queue.Queue(maxsize=512)
         self._thread = threading.Thread(
             target=self._run,
@@ -107,6 +118,10 @@ class _AudioSyncWorker:
     def clear(self) -> None:
         """Clear queued audio on worker."""
         self._enqueue(_ClearWorkItem())
+
+    def notify_delay_change(self, delta_us: int) -> None:
+        """Notify the worker that static delay changed."""
+        self._enqueue(_DelayChangeWorkItem(delta_us=delta_us))
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Update software volume and forward to worker if enabled."""
@@ -159,7 +174,7 @@ class _AudioSyncWorker:
         if queue_obj is None:
             return
 
-        player = AudioPlayer(compute_play_time, compute_server_time)
+        player = AudioPlayer(compute_play_time, compute_server_time, now_us=self._now_us)
         current_format: AudioFormat | None = None
         flac_decoder: FlacDecoder | None = None
         software_volume = self._initial_volume
@@ -181,6 +196,10 @@ class _AudioSyncWorker:
 
             if item_type is _ClearWorkItem:
                 player.clear()
+                continue
+
+            if item_type is _DelayChangeWorkItem:
+                player.apply_delay_change(cast(_DelayChangeWorkItem, item).delta_us)
                 continue
 
             if item_type is _SetVolumeWorkItem:
@@ -221,6 +240,9 @@ class _AudioSyncWorker:
                         software_volume = vol.volume
                         software_muted = vol.muted
                         player.set_volume(software_volume, muted=software_muted)
+                        continue
+                    if drain_type is _DelayChangeWorkItem:
+                        player.apply_delay_change(cast(_DelayChangeWorkItem, drain_item).delta_us)
                         continue
                     # Buffer incoming new-format chunks during drain
                     buffered_chunks.append(cast(_ChunkWorkItem, drain_item))
@@ -322,6 +344,7 @@ class AudioStreamHandler:
         self._client_unsubscribers: list[Callable[[], None]] = []
 
         self._volume_controller: VolumeController | None = volume_controller
+        self._chunks_dropping = False
 
     @property
     def volume(self) -> int:
@@ -432,9 +455,17 @@ class AudioStreamHandler:
                 muted=self._muted,
             )
 
-        self._audio_worker.start(client.compute_play_time, client.compute_server_time)
+        self._audio_worker.start(
+            client.compute_play_time, client.compute_server_time, client.now_us
+        )
         if not self._audio_worker.is_running():
             raise RuntimeError("Audio worker failed to start")
+
+    def notify_delay_change(self, delta_us: int) -> None:
+        """Notify the audio worker that static delay changed."""
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.notify_delay_change(delta_us)
 
     def _clear_audio_worker(self) -> None:
         """Clear worker queue when worker is available."""
@@ -448,8 +479,11 @@ class AudioStreamHandler:
         """Handle incoming audio chunks by enqueueing them to the sync worker."""
         worker = self._audio_worker
         if worker is None or not worker.is_running():
-            logger.debug("Audio chunk dropped: worker not running")
+            if not self._chunks_dropping:
+                logger.debug("Audio chunks dropping: worker not running")
+                self._chunks_dropping = True
             return
+        self._chunks_dropping = False
 
         pcm_format = fmt.pcm_format
         if self._current_format != fmt:
