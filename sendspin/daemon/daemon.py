@@ -232,8 +232,11 @@ class SendspinDaemon:
 
         Assumes both clients have completed their handshake.
         """
-        assert old_client.server_info is not None
         assert new_client.server_info is not None
+
+        # Old client may have disconnected before we acquired the lock.
+        if old_client.server_info is None:
+            return True
 
         if new_client.server_info.server_id == old_client.server_info.server_id:
             return True
