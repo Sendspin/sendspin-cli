@@ -81,6 +81,8 @@ async def test_find_mixer_element_digital(monkeypatch) -> None:
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols.encode())
+        # On real HiFiBerry DAC+ (PCM5122), both Analogue and Digital
+        # have pvolume. The preference logic should pick Digital.
         if "Analogue" in argv or "Digital" in argv:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
@@ -160,6 +162,7 @@ async def test_find_mixer_element_capability_scan_fallback(monkeypatch) -> None:
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=scontrols_output.encode())
+        # sget calls: return capabilities based on element name
         if "Mic" in argv:
             return _FakeProcess(stdout=sget_mic.encode())
         return _FakeProcess(stdout=sget_output.encode())
@@ -294,6 +297,7 @@ async def test_monitoring_detects_external_change(monkeypatch) -> None:
         try:
             return next(state_iter)
         except StopIteration:
+            # Keep returning last state after sequence ends
             return (75, False)
 
     ctrl.get_state = fake_get  # type: ignore[assignment]
@@ -379,6 +383,7 @@ async def test_hifiberry_dac_discovery(monkeypatch) -> None:
     async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
         if "scontrols" in argv:
             return _FakeProcess(stdout=_HIFIBERRY_SCONTROLS.encode())
+        # Both Analogue and Digital have pvolume on real hardware.
         if "Analogue" in argv or "Digital" in argv:
             return _FakeProcess(stdout=sget_with_pvolume.encode())
         return _FakeProcess(stdout=sget_without_pvolume.encode())
@@ -401,6 +406,7 @@ async def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     ctrl = AlsaVolumeController(card=1, element="Digital")
 
+    # Server sends volume command -> controller sets ALSA mixer
     await ctrl.set_state(74, muted=False)
     assert calls[-1] == (
         "amixer",
@@ -414,6 +420,7 @@ async def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
         "unmute",
     )
 
+    # Read back the volume
     volume, muted = await ctrl.get_state()
     assert calls[-1] == ("amixer", "-M", "-c", "1", "sget", "Digital")
     assert volume == 74
