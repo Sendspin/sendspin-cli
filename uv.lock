@@ -98,20 +98,24 @@ wheels = [
 
 [[package]]
 name = "aiosendspin"
-version = "4.4.0"
+version = "5.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
-    { name = "av" },
     { name = "mashumaro" },
-    { name = "numpy" },
     { name = "orjson" },
-    { name = "pillow" },
     { name = "zeroconf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4a/e0/3ea32f8afddff7e06d11296e21db7093e09c5b979384b311393e00260b84/aiosendspin-4.4.0.tar.gz", hash = "sha256:223a703ea58316e2becea0bd3db0db4bd49816b69031aa5151b1a7492cdd5f9e", size = 116224 }
+sdist = { url = "https://files.pythonhosted.org/packages/0f/14/87fed3a34789682657a58ecf1a2426e4e244b9e6237730b2f072647692da/aiosendspin-5.1.0.tar.gz", hash = "sha256:0081294b41af7059b84c88a16f112f3fac208b855158a5a4dedf891fd8efad6f", size = 123367 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/a0/75f8d69d4f7cab81b39d4293082036a6b35532987385b0b27952eb9de347/aiosendspin-4.4.0-py3-none-any.whl", hash = "sha256:56222d0ffc68427cd3d18e4268af09b590200b17cdeda8632ba450dac9d64df9", size = 138587 },
+    { url = "https://files.pythonhosted.org/packages/c4/2e/c408407bde620747fbca2fbcea5cdea263c81d3ed911958fe371db305a35/aiosendspin-5.1.0-py3-none-any.whl", hash = "sha256:7cac547cb94df59585ca7fdff9a458331a7e8074a10dbaa3f274b30721fae9b1", size = 145001 },
+]
+
+[package.optional-dependencies]
+server = [
+    { name = "av" },
+    { name = "numpy" },
+    { name = "pillow" },
 ]
 
 [[package]]
@@ -1112,6 +1116,19 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-asyncio"
+version = "1.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/90/2c/8af215c0f776415f3590cac4f9086ccefd6fd463befeae41cd4d3f193e5a/pytest_asyncio-1.3.0.tar.gz", hash = "sha256:d7f52f36d231b80ee124cd216ffb19369aa168fc10095013c6b014a34d3ee9e5", size = 50087 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e5/35/f8b19922b6a25bc0880171a2f1a003eaeb93657475193ab516fd87cac9da/pytest_asyncio-1.3.0-py3-none-any.whl", hash = "sha256:611e26147c7f77640e6d0a92a38ed17c3e9848063698d5c93d5aa7aa11cebff5", size = 15075 },
+]
+
+[[package]]
 name = "python-discovery"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1259,7 +1276,7 @@ name = "sendspin"
 version = "0.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "aiosendspin" },
+    { name = "aiosendspin", extra = ["server"] },
     { name = "aiosendspin-mpris" },
     { name = "av" },
     { name = "numpy" },
@@ -1280,22 +1297,24 @@ test = [
     { name = "pre-commit" },
     { name = "pre-commit-hooks" },
     { name = "pytest" },
+    { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "aiosendspin", specifier = "~=4.4" },
+    { name = "aiosendspin", extras = ["server"], specifier = "~=5.1" },
     { name = "aiosendspin-mpris", specifier = "~=2.1.1" },
-    { name = "av", specifier = ">=14.0.0" },
+    { name = "av", specifier = ">=15.0.0" },
     { name = "codespell", marker = "extra == 'test'", specifier = "==2.4.1" },
     { name = "mypy", marker = "extra == 'test'", specifier = "==1.18.2" },
-    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "numpy", specifier = ">=1.26.0" },
     { name = "pre-commit", marker = "extra == 'test'", specifier = "==4.4.0" },
     { name = "pre-commit-hooks", marker = "extra == 'test'", specifier = "==6.0.0" },
     { name = "pulsectl-asyncio", marker = "sys_platform == 'linux'", specifier = ">=1.2.2" },
     { name = "pychromecast", marker = "extra == 'cast'", specifier = ">=14.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4.2" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.0.0" },
     { name = "qrcode", specifier = ">=8.0" },
     { name = "readchar", specifier = ">=4.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
