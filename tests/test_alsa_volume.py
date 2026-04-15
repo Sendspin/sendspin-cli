@@ -489,7 +489,7 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 # The TAS58xx driver reports "volume" (or "volume volume-joined") instead of
 # the standard "pvolume" capability.
 
-_TAS58XX_SCONTROLS = "Simple mixer control 'Analog Gain',0\n" "Simple mixer control 'Digital',0\n"
+_TAS58XX_SCONTROLS = "Simple mixer control 'Analog Gain',0\nSimple mixer control 'Digital',0\n"
 
 _TAS58XX_SGET_DIGITAL_MONO = (
     "Simple mixer control 'Digital',0\n"
