@@ -109,15 +109,15 @@ async def find_mixer_element(card: int) -> str | None:
         return None
 
     seen: set[str] = set()
-    pvolume_elements: list[str] = []
+    volume_elements: list[str] = []
     for element in available:
         if element in seen:
             continue
         seen.add(element)
         if await _has_playback_volume(card, element):
-            pvolume_elements.append(element)
+            volume_elements.append(element)
 
-    if not pvolume_elements:
+    if not volume_elements:
         logger.debug(
             "ALSA card %d: no playback volume element among %s",
             card,
@@ -127,12 +127,12 @@ async def find_mixer_element(card: int) -> str | None:
 
     # Prefer well-known element names used by common DAC HATs.
     for preferred in _PREFERRED_ELEMENTS:
-        if preferred in pvolume_elements:
+        if preferred in volume_elements:
             logger.debug("ALSA card %d: selected preferred mixer element %r", card, preferred)
             return preferred
 
     # Fallback: first element with playback volume (e.g. USB DACs with non-standard names).
-    selected = pvolume_elements[0]
+    selected = volume_elements[0]
     logger.debug("ALSA card %d: selected mixer element %r", card, selected)
     return selected
 

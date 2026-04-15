@@ -5,6 +5,8 @@ from collections.abc import Awaitable, Callable
 from typing import NoReturn
 from types import SimpleNamespace
 
+import pytest
+
 import sendspin.alsa_volume as _alsa_mod
 from sendspin.alsa_volume import (
     AlsaVolumeController,
@@ -487,8 +489,6 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 # The TAS58xx driver reports "volume" (or "volume volume-joined") instead of
 # the standard "pvolume" capability.
 
-import pytest
-
 _TAS58XX_SCONTROLS = (
     "Simple mixer control 'Analog Gain',0\n"
     "Simple mixer control 'Digital',0\n"
@@ -526,15 +526,15 @@ def _tas58xx_exec(digital_output: str) -> _AmixerExecFactory:
 
 
 @pytest.mark.parametrize(
-    ("digital_output", "desc"),
+    "digital_output",
     [
-        (_TAS58XX_SGET_DIGITAL_MONO, "mono (volume volume-joined)"),
-        (_TAS58XX_SGET_DIGITAL_STEREO, "stereo (volume)"),
+        _TAS58XX_SGET_DIGITAL_MONO,
+        _TAS58XX_SGET_DIGITAL_STEREO,
     ],
     ids=["mono", "stereo"],
 )
-def test_find_mixer_element_tas58xx(monkeypatch, digital_output: str, desc: str) -> None:
-    """TAS58xx 'volume' capability is detected — {desc}."""
+def test_find_mixer_element_tas58xx(monkeypatch, digital_output: str) -> None:
+    """TAS58xx 'volume' capability is detected."""
 
     async def exercise() -> str | None:
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _tas58xx_exec(digital_output))
