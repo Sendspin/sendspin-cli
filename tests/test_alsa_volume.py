@@ -481,3 +481,91 @@ def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
         assert muted is False
 
     asyncio.run(exercise())
+
+
+# -- TAS58xx / Sonocotta Louder Raspberry HAT --------------------------------
+# The TAS58xx driver reports "volume" (or "volume volume-joined") instead of
+# the standard "pvolume" capability.
+
+import pytest
+
+_TAS58XX_SCONTROLS = (
+    "Simple mixer control 'Analog Gain',0\n"
+    "Simple mixer control 'Digital',0\n"
+)
+
+_TAS58XX_SGET_DIGITAL_MONO = (
+    "Simple mixer control 'Digital',0\n"
+    "  Capabilities: volume volume-joined\n"
+    "  Playback channels: Mono\n"
+    "  Limits: 0 - 127\n"
+    "  Mono: 73 [57%]\n"
+)
+
+_TAS58XX_SGET_DIGITAL_STEREO = (
+    "Simple mixer control 'Digital',0\n"
+    "  Capabilities: volume\n"
+    "  Playback channels: Front Left - Front Right\n"
+    "  Limits: 0 - 127\n"
+    "  Front Left: 73 [57%]\n"
+    "  Front Right: 73 [57%]\n"
+)
+
+
+def _tas58xx_exec(digital_output: str) -> _AmixerExecFactory:
+    """Build a fake amixer exec for TAS58xx scenarios."""
+
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
+        if "scontrols" in argv:
+            return _FakeProcess(stdout=_TAS58XX_SCONTROLS.encode())
+        if "Digital" in argv:
+            return _FakeProcess(stdout=digital_output.encode())
+        return _FakeProcess(stdout=b"")
+
+    return fake_exec
+
+
+@pytest.mark.parametrize(
+    ("digital_output", "desc"),
+    [
+        (_TAS58XX_SGET_DIGITAL_MONO, "mono (volume volume-joined)"),
+        (_TAS58XX_SGET_DIGITAL_STEREO, "stereo (volume)"),
+    ],
+    ids=["mono", "stereo"],
+)
+def test_find_mixer_element_tas58xx(monkeypatch, digital_output: str, desc: str) -> None:
+    """TAS58xx 'volume' capability is detected — {desc}."""
+
+    async def exercise() -> str | None:
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _tas58xx_exec(digital_output))
+        return await find_mixer_element(2)
+
+    assert asyncio.run(exercise()) == "Digital"
+
+
+def test_louder_raspberry_discovery(monkeypatch) -> None:
+    """Full discovery flow for a Sonocotta Louder Raspberry HAT on card 2."""
+
+    async def exercise() -> tuple[int, str] | None:
+        monkeypatch.setattr(_alsa_mod, "AVAILABLE", True)
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _tas58xx_exec(_TAS58XX_SGET_DIGITAL_MONO))
+        device = SimpleNamespace(
+            name="Louder-Raspberry: bcm2835-i2s-tas58xx-amplifier tas58xx-amplifier-0 (hw:2,0)",
+            is_default=False,
+        )
+        return await async_check_alsa_available(device)
+
+    assert asyncio.run(exercise()) == (2, "Digital")
+
+
+def test_louder_raspberry_get_volume(monkeypatch) -> None:
+    """get_state reads back the correct volume from a TAS58xx Digital control."""
+
+    async def exercise() -> tuple[int, bool]:
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _amixer_exec(_TAS58XX_SGET_DIGITAL_MONO))
+        ctrl = AlsaVolumeController(card=2, element="Digital")
+        return await ctrl.get_state()
+
+    volume, muted = asyncio.run(exercise())
+    assert volume == 57
+    assert muted is False
