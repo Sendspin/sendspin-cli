@@ -46,6 +46,7 @@ test = [
   "pre-commit==4.4.0",
   "pre-commit-hooks==6.0.0",
   "pytest>=8.4.2",
+  "pytest-asyncio>=1.0.0",
   "ruff==0.14.5",
 ]
 
@@ -146,6 +147,9 @@ ignore = [
 "setup.py" = ["T201"]
 
 select = ["ALL"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [tool.ruff.lint.flake8-pytest-style]
 fixture-parentheses = false
