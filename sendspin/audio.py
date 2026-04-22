@@ -1225,8 +1225,15 @@ class AudioPlayer:
             # Update expected position for next chunk
             self._expected_next_timestamp = server_timestamp_us + chunk_duration_us
 
-        # Start stream immediately when first chunk arrives
-        if not self._stream_started and self._queue.qsize() > 0 and self._stream is not None:
+        # Start stream once we have enough buffer to avoid immediate underflow
+        if (
+            not self._stream_started
+            and self._stream is not None
+            and (
+                self._queued_duration_us >= self._MIN_BUFFER_DURATION_US
+                or self._queue.qsize() >= self._MIN_CHUNKS_TO_START
+            )
+        ):
             self._stream_started = True
             self._stream_executor.submit(self._call_stream, self._stream.start)
             logger.info(
