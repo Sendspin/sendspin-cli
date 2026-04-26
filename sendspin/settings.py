@@ -127,6 +127,8 @@ class ClientSettings(BaseSettings):
     manufacturer: str | None = None
     product_name: str | None = None
     last_played_server_id: str | None = None
+    # IP address of the network interface to use for mDNS discovery and (in daemon
+    # server-initiated mode) for binding the incoming-connection listener.
     interface: str | None = None
 
     def update(
