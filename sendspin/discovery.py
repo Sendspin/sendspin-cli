@@ -130,8 +130,14 @@ class _ServiceDiscoveryListener:
 class ServiceDiscovery:
     """Manages continuous discovery of Sendspin servers via mDNS."""
 
-    def __init__(self) -> None:
-        """Initialize the service discovery manager."""
+    def __init__(self, interfaces: list[str] | None = None) -> None:
+        """Initialize the service discovery manager.
+
+        Args:
+            interfaces: Optional list of IP addresses or interface names to restrict
+                mDNS discovery to. If None, all interfaces are used.
+        """
+        self._interfaces = interfaces
         self._listener: _ServiceDiscoveryListener | None = None
         self._browser: AsyncServiceBrowser | None = None
         self._zeroconf: AsyncZeroconf | None = None
@@ -140,7 +146,10 @@ class ServiceDiscovery:
         """Start continuous discovery (keeps running until stop() is called)."""
         loop = asyncio.get_running_loop()
         self._listener = _ServiceDiscoveryListener(loop)
-        self._zeroconf = AsyncZeroconf()
+        if self._interfaces is not None:
+            self._zeroconf = AsyncZeroconf(interfaces=self._interfaces)
+        else:
+            self._zeroconf = AsyncZeroconf()
         await self._zeroconf.__aenter__()
 
         try:
@@ -181,16 +190,21 @@ class ServiceDiscovery:
         self._listener = None
 
 
-async def discover_servers(discovery_time: float = 3.0) -> list[DiscoveredServer]:
+async def discover_servers(
+    discovery_time: float = 3.0,
+    interfaces: list[str] | None = None,
+) -> list[DiscoveredServer]:
     """Discover Sendspin servers on the network.
 
     Args:
         discovery_time: How long to wait for discovery in seconds.
+        interfaces: Optional list of IP addresses or interface names to restrict
+            mDNS discovery to. If None, all interfaces are used.
 
     Returns:
         List of discovered servers.
     """
-    discovery = ServiceDiscovery()
+    discovery = ServiceDiscovery(interfaces=interfaces)
     await discovery.start()
     try:
         await asyncio.sleep(discovery_time)
@@ -243,11 +257,16 @@ class _ClientDiscoveryListener:
         self._clients.pop(name, None)
 
 
-async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient]:
+async def discover_clients(
+    discovery_time: float = 3.0,
+    interfaces: list[str] | None = None,
+) -> list[DiscoveredClient]:
     """Discover Sendspin clients and Chromecast devices on the network.
 
     Args:
         discovery_time: How long to wait for discovery in seconds.
+        interfaces: Optional list of IP addresses or interface names to restrict
+            mDNS discovery to. If None, all interfaces are used.
 
     Returns:
         List of discovered clients (Sendspin clients and Chromecast devices).
@@ -269,7 +288,8 @@ async def discover_clients(discovery_time: float = 3.0) -> list[DiscoveredClient
     loop = asyncio.get_running_loop()
     sendspin_listener = _ClientDiscoveryListener(loop)
 
-    async with AsyncZeroconf() as zeroconf:
+    zc = AsyncZeroconf(interfaces=interfaces) if interfaces is not None else AsyncZeroconf()
+    async with zc as zeroconf:
         chromecast_browser = None
         if cast_browser_cls is not None and cast_listener_cls is not None:
             # Start Chromecast discovery (non-blocking) when the optional dependency is present.

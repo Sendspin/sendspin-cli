@@ -127,6 +127,7 @@ class ClientSettings(BaseSettings):
     manufacturer: str | None = None
     product_name: str | None = None
     last_played_server_id: str | None = None
+    interface: str | None = None
 
     def update(
         self,
@@ -148,6 +149,7 @@ class ClientSettings(BaseSettings):
         hook_stop: str | None = None,
         visualizer: bool | None = None,
         last_played_server_id: str | None = None,
+        interface: str | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = False
@@ -179,6 +181,7 @@ class ClientSettings(BaseSettings):
                     "hook_stop": hook_stop,
                     "visualizer": visualizer,
                     "last_played_server_id": last_played_server_id,
+                    "interface": interface,
                 }
             )
             or changed
@@ -220,6 +223,7 @@ class ClientSettings(BaseSettings):
             self.manufacturer = data.get("manufacturer")
             self.product_name = data.get("product_name")
             self.last_played_server_id = data.get("last_played_server_id")
+            self.interface = data.get("interface")
             logger.info(
                 "Loaded settings from %s: volume=%d%%, muted=%s",
                 self._settings_file,

@@ -53,6 +53,7 @@ class DaemonArgs:
     hook_stop: str | None = None
     manufacturer: str | None = None
     product_name: str | None = None
+    interface: str | None = None
 
 
 class SendspinDaemon:
@@ -210,6 +211,7 @@ class SendspinDaemon:
             on_connection=self._handle_server_connection,
             port=self._args.listen_port,
             client_name=self._args.client_name,
+            host=self._args.interface or "0.0.0.0",
         )
         await self._listener.start()
 

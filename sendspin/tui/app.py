@@ -230,6 +230,7 @@ class AppArgs:
     hook_stop: str | None = None
     manufacturer: str | None = None
     product_name: str | None = None
+    interface: str | None = None
 
 
 class SendspinApp:
@@ -252,7 +253,8 @@ class SendspinApp:
         self._visualizer_handler: VisualizerHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
-        self._discovery = ServiceDiscovery()
+        interfaces = [args.interface] if args.interface else None
+        self._discovery = ServiceDiscovery(interfaces=interfaces)
         self._connection_manager = ConnectionManager(self._discovery)
         self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
