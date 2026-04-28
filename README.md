@@ -195,22 +195,6 @@ sendspin --url ws://192.168.1.100:8080/sendspin
 sendspin servers list
 ```
 
-### Network Interface Binding
-
-On machines with multiple network interfaces (e.g., a home server with both a LAN and a WAN/internet interface), you can restrict Sendspin to a specific interface using `--interface`:
-
-```bash
-sendspin --interface 192.168.1.5
-sendspin daemon --interface 192.168.1.5
-```
-
-The `--interface` option takes the **IP address** of the interface to use. This affects:
-
-- **mDNS discovery**: only servers advertising on that interface will be found.
-- **Daemon listening mode** (no `--url`): the incoming-connection server binds only to that IP, so servers on other interfaces (e.g., the WAN) cannot connect.
-
-This is useful when you want Sendspin to be accessible only on your LAN, not on the internet-facing interface.
-
 ### Client Identification
 
 If you want to run multiple players on the **same computer**, you can specify unique identifiers:
@@ -371,6 +355,22 @@ sendspin --log-level DEBUG
 ```
 
 This provides detailed information about time synchronization. The output can be helpful when reporting issues.
+
+### Network Interface Binding
+
+On machines with multiple network interfaces (e.g., a home server with both a LAN and a WAN/internet interface), you can restrict Sendspin to a specific interface using `--interface`:
+
+```bash
+sendspin --interface 192.168.1.5
+sendspin daemon --interface 192.168.1.5
+```
+
+The `--interface` option takes the **IP address** of the interface to use. This affects:
+
+- **mDNS discovery**: only servers advertising on that interface will be found.
+- **Daemon listening mode** (no `--url`): the incoming-connection server binds only to that IP, so servers on other interfaces (e.g., the WAN) cannot connect.
+
+This is useful when you want Sendspin to be accessible only on your LAN, not on the internet-facing interface.
 
 ## Install as Daemon (systemd, Linux)
 
