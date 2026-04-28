@@ -205,6 +205,7 @@ class AlsaVolumeController:
             self._card,
             "sget",
             self._element,
+            "playback",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

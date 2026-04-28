@@ -271,6 +271,30 @@ async def test_get_state_mono_channel(monkeypatch) -> None:
     assert muted is False
 
 
+async def test_get_state_requests_playback_only(monkeypatch) -> None:
+    """get_state scopes amixer query to playback channels."""
+    calls: list[tuple[str, ...]] = []
+    amixer_output = (
+        "Simple mixer control 'Headset',0\n"
+        "  Capabilities: pvolume pswitch cvolume cswitch\n"
+        "  Playback channels: Front Left - Front Right\n"
+        "  Capture channels: Front Left - Front Right\n"
+        "  Front Left: Playback 20 [80%] [on]\n"
+        "  Front Right: Playback 20 [80%] [on]\n"
+    )
+
+    async def fake_exec(*argv: object, **kwargs: object) -> _FakeProcess:
+        calls.append(argv)
+        return _FakeProcess(stdout=amixer_output.encode())
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    ctrl = AlsaVolumeController(card=0, element="Headset")
+    volume, muted = await ctrl.get_state()
+    assert calls == [("amixer", "-M", "-c", "0", "sget", "Headset", "playback")]
+    assert volume == 80
+    assert muted is False
+
+
 # -- AlsaVolumeController.start_monitoring ------------------------------------
 
 
@@ -422,7 +446,7 @@ async def test_hifiberry_dac_set_and_get_volume(monkeypatch) -> None:
 
     # Read back the volume
     volume, muted = await ctrl.get_state()
-    assert calls[-1] == ("amixer", "-M", "-c", "1", "sget", "Digital")
+    assert calls[-1] == ("amixer", "-M", "-c", "1", "sget", "Digital", "playback")
     assert volume == 74
     assert muted is False
 
