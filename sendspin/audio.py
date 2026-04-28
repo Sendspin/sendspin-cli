@@ -315,9 +315,14 @@ class AudioPlayer:
         callback thread updates ``_current_chunk``.  Also returns True
         when the stream is not actively playing (nothing to drain).
         """
+        # Chunks may be buffered before the stream has started (waiting for
+        # the startup buffer to fill); treat them as not-yet-drained so
+        # format switches don't skip the drain loop and play stale PCM.
+        if not self._queue.empty():
+            return False
         if not self._stream_started:
             return True
-        return self._queue.empty() and self._current_chunk is None
+        return self._current_chunk is None
 
     def stop(self) -> None:
         """Stop playback and release resources."""
