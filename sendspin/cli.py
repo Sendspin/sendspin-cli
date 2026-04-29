@@ -408,7 +408,8 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
+            "Audio output device by index (e.g., 0, 1, 2), name prefix (e.g., 'MacBook'), "
+            "or raw ALSA device name (e.g., 'dmixer', 'olohuone') for plugin devices like dmix. "
             "On Linux desktops, 'pulse', 'pipewire', or 'default' route through the sound "
             "server. Use 'sendspin audio-devices list' to see available devices."
         ),
@@ -727,7 +728,8 @@ async def _run_daemon_mode(
 
 def main() -> int:
     """Run the CLI client."""
-    _set_pulse_client_metadata()
+    if sys.platform.startswith("linux"):
+        _set_pulse_client_metadata()
     args = parse_args(sys.argv[1:])
 
     # Handle serve subcommand
