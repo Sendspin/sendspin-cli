@@ -63,6 +63,25 @@ def arg_str_to_bool(v: str) -> bool:
     raise argparse.ArgumentTypeError("Expected true or false")
 
 
+def _set_pulse_client_metadata() -> None:
+    """Identify the audio stream as Sendspin to the desktop sound server.
+
+    libpulse reads these env vars when it opens the client connection
+    (used by the ALSA ``pulse`` / ``pipewire`` plug devices and by
+    pipewire-pulse). Without them, the stream registers under a generic
+    name like ``ALSA plug-in [python3]``. Only set values that aren't
+    already in the environment so the user can override.
+    """
+    defaults = {
+        "PULSE_PROP_application.name": "Sendspin",
+        "PULSE_PROP_application.id": "org.sendspin.cli",
+        "PULSE_PROP_application.icon_name": "audio-x-generic",
+        "PULSE_PROP_media.role": "music",
+    }
+    for key, value in defaults.items():
+        os.environ.setdefault(key, value)
+
+
 def list_audio_devices() -> None:
     """List all available audio output devices."""
     try:
@@ -106,6 +125,19 @@ def list_audio_devices() -> None:
                 if description:
                     print(f"       {description}")
 
+            alsa_names = {name for name, _ in alsa_devices}
+            recommended = [
+                ("pulse", "Routes through PulseAudio"),
+                ("pipewire", "Routes through PipeWire"),
+                ("default", "System default"),
+            ]
+            recommended = [(n, d) for n, d in recommended if n in alsa_names]
+            if recommended:
+                print("\nRecommended for desktop usage:")
+                print()
+                for name, description in recommended:
+                    print(f"  {name:<12} {description}")
+
 
 def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bool = False) -> None:
     """Add the interactive player's runtime options."""
@@ -146,7 +178,8 @@ def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bo
         help=(
             "Audio output device by index (e.g., 0, 1, 2), name prefix (e.g., 'MacBook'), "
             "or raw ALSA device name (e.g., 'dmixer', 'olohuone') for plugin devices like dmix. "
-            "Use 'sendspin audio-devices list' to see enumerated devices."
+            "On Linux desktops, 'pulse', 'pipewire', or 'default' route through the sound "
+            "server. Use 'sendspin audio-devices list' to see enumerated devices."
         ),
     )
     target.add_argument(
@@ -376,7 +409,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Audio output device by index (e.g., 0, 1, 2) or name prefix (e.g., 'MacBook'). "
-            "Use 'sendspin audio-devices list' to see available devices."
+            "On Linux desktops, 'pulse', 'pipewire', or 'default' route through the sound "
+            "server. Use 'sendspin audio-devices list' to see available devices."
         ),
     )
     daemon_parser.add_argument(
@@ -693,6 +727,7 @@ async def _run_daemon_mode(
 
 def main() -> int:
     """Run the CLI client."""
+    _set_pulse_client_metadata()
     args = parse_args(sys.argv[1:])
 
     # Handle serve subcommand
