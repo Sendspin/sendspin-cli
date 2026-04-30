@@ -61,8 +61,18 @@ class _StopWorkItem:
     """Stop signal for the synchronous audio worker."""
 
 
+@dataclass(slots=True)
+class _CloseStreamWorkItem:
+    """Close the audio stream and release the audio device on stream end."""
+
+
 type _AudioWorkItem = (
-    _ChunkWorkItem | _ClearWorkItem | _SetVolumeWorkItem | _DelayChangeWorkItem | _StopWorkItem
+    _ChunkWorkItem
+    | _ClearWorkItem
+    | _SetVolumeWorkItem
+    | _DelayChangeWorkItem
+    | _StopWorkItem
+    | _CloseStreamWorkItem
 )
 
 
@@ -118,6 +128,10 @@ class _AudioSyncWorker:
     def clear(self) -> None:
         """Clear queued audio on worker."""
         self._enqueue(_ClearWorkItem())
+
+    def close_stream(self) -> None:
+        """Clear queued audio and close the stream to release the audio device."""
+        self._enqueue(_CloseStreamWorkItem())
 
     def notify_delay_change(self, delta_us: int) -> None:
         """Notify the worker that static delay changed."""
@@ -198,6 +212,12 @@ class _AudioSyncWorker:
                 player.clear()
                 continue
 
+            if item_type is _CloseStreamWorkItem:
+                player.clear()
+                player.close_stream()
+                current_format = None  # force set_format() when next track begins
+                continue
+
             if item_type is _DelayChangeWorkItem:
                 player.apply_delay_change(cast(_DelayChangeWorkItem, item).delta_us)
                 continue
@@ -218,6 +238,7 @@ class _AudioSyncWorker:
                 buffered_chunks: list[_ChunkWorkItem] = [chunk_item]
                 drained = player.is_drained()
                 deadline = time.monotonic() + 60.0
+                close_requested = False
 
                 while not drained and time.monotonic() < deadline:
                     try:
@@ -235,6 +256,13 @@ class _AudioSyncWorker:
                         buffered_chunks.clear()
                         drained = True
                         break
+                    if drain_type is _CloseStreamWorkItem:
+                        player.clear()
+                        player.close_stream()
+                        buffered_chunks.clear()
+                        drained = True
+                        close_requested = True
+                        break
                     if drain_type is _SetVolumeWorkItem:
                         vol = cast(_SetVolumeWorkItem, drain_item)
                         software_volume = vol.volume
@@ -251,6 +279,10 @@ class _AudioSyncWorker:
                 if not drained:
                     logger.warning("Drain timeout during format switch; forcing clear")
                     player.clear()
+
+                if close_requested:
+                    current_format = None
+                    continue
 
                 current_format = fmt
                 player.set_format(fmt, device=self._audio_device)
@@ -473,6 +505,12 @@ class AudioStreamHandler:
         if worker is not None and worker.is_running():
             worker.clear()
 
+    def _close_stream_audio_worker(self) -> None:
+        """Clear queue and fully close the stream to release the audio device."""
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.close_stream()
+
     def _on_audio_chunk(
         self, server_timestamp_us: int, audio_data: bytes | bytearray, fmt: AudioFormat
     ) -> None:
@@ -515,11 +553,11 @@ class AudioStreamHandler:
                 self._on_event("start")
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
-        """Handle stream end by clearing audio queue."""
+        """Handle stream end by closing the audio stream to release the audio device."""
         if roles is not None and Roles.PLAYER.value not in roles:
             return
 
-        self._clear_audio_worker()
+        self._close_stream_audio_worker()
 
         if self._stream_active:
             self._stream_active = False

@@ -24,6 +24,8 @@ class _FakeWorker:
         self.volume = volume
         self.muted = muted
         self.running = False
+        self.cleared = False
+        self.stream_closed = False
         self.submitted: list[tuple[int, bytes | bytearray, object]] = []
         _FakeWorker.instances.append(self)
 
@@ -41,7 +43,10 @@ class _FakeWorker:
         self.submitted.append((server_timestamp_us, audio_data, fmt))
 
     def clear(self) -> None:
-        return
+        self.cleared = True
+
+    def close_stream(self) -> None:
+        self.stream_closed = True
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         self.volume = volume
@@ -247,3 +252,25 @@ def test_external_volume_controller_updates_logical_volume(tmp_path) -> None:
         assert changes == [(41, False)]
 
     asyncio.run(exercise())
+
+
+def test_stream_end_closes_stream_not_just_clears(monkeypatch) -> None:
+    """stream_end must fully close the stream (release the device), not just clear."""
+    monkeypatch.setattr(audio_connector, "_AudioSyncWorker", _FakeWorker)
+    _FakeWorker.instances.clear()
+
+    handler = AudioStreamHandler(
+        audio_device=SimpleNamespace(index=0, name="Fake Device"),
+        volume=10,
+        muted=False,
+    )
+    client = _FakeClient()
+    handler.attach_client(client)
+
+    worker = _FakeWorker.instances[0]
+    assert not worker.stream_closed
+
+    handler._on_stream_end(None)
+
+    assert worker.stream_closed, "_on_stream_end must call close_stream(), not just clear()"
+    assert not worker.cleared, "_on_stream_end must not call clear() separately"
