@@ -213,7 +213,6 @@ class _AudioSyncWorker:
                 continue
 
             if item_type is _CloseStreamWorkItem:
-                player.clear()
                 player.close_stream()
                 current_format = None  # force set_format() when next track begins
                 continue
@@ -251,17 +250,14 @@ class _AudioSyncWorker:
                     if drain_type is _StopWorkItem:
                         player.stop()
                         return
-                    if drain_type is _ClearWorkItem:
-                        player.clear()
+                    if drain_type is _ClearWorkItem or drain_type is _CloseStreamWorkItem:
+                        if drain_type is _CloseStreamWorkItem:
+                            player.close_stream()
+                            close_requested = True
+                        else:
+                            player.clear()
                         buffered_chunks.clear()
                         drained = True
-                        break
-                    if drain_type is _CloseStreamWorkItem:
-                        player.clear()
-                        player.close_stream()
-                        buffered_chunks.clear()
-                        drained = True
-                        close_requested = True
                         break
                     if drain_type is _SetVolumeWorkItem:
                         vol = cast(_SetVolumeWorkItem, drain_item)
@@ -505,12 +501,6 @@ class AudioStreamHandler:
         if worker is not None and worker.is_running():
             worker.clear()
 
-    def _close_stream_audio_worker(self) -> None:
-        """Clear queue and fully close the stream to release the audio device."""
-        worker = self._audio_worker
-        if worker is not None and worker.is_running():
-            worker.close_stream()
-
     def _on_audio_chunk(
         self, server_timestamp_us: int, audio_data: bytes | bytearray, fmt: AudioFormat
     ) -> None:
@@ -557,7 +547,9 @@ class AudioStreamHandler:
         if roles is not None and Roles.PLAYER.value not in roles:
             return
 
-        self._close_stream_audio_worker()
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.close_stream()
 
         if self._stream_active:
             self._stream_active = False
