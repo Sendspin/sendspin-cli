@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from aiosendspin.models.core import StreamStartMessage
-from aiosendspin.models.types import AudioCodec, ClientStateType, Roles
+from aiosendspin.models.types import AudioCodec, ClientStateType
 
 from sendspin.audio import AudioPlayer
 from sendspin.audio_devices import AudioDevice
@@ -544,7 +544,7 @@ class AudioStreamHandler:
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end by closing the audio stream to release the audio device."""
-        if roles is not None and Roles.PLAYER.value not in roles:
+        if roles is not None and "player" not in roles:
             return
 
         worker = self._audio_worker
@@ -558,7 +558,7 @@ class AudioStreamHandler:
 
     def _on_stream_clear(self, roles: list[str] | None) -> None:
         """Handle stream clear by clearing audio queue (e.g., for seek operations)."""
-        if roles is None or Roles.PLAYER.value in roles:
+        if roles is None or "player" in roles:
             self._clear_audio_worker()
 
     def clear_queue(self) -> None:

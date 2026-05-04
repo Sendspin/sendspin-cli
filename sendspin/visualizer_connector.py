@@ -9,7 +9,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiosendspin.models.core import StreamStartMessage
-from aiosendspin.models.types import Roles
 from aiosendspin.models.visualizer import VisualizerFrame
 
 if TYPE_CHECKING:
@@ -99,7 +98,7 @@ class VisualizerHandler:
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end for visualizer role."""
-        if roles is not None and Roles.VISUALIZER.value not in roles:
+        if roles is not None and "visualizer" not in roles:
             return
         self._pending.clear()
         if self._timer is not None:
@@ -110,7 +109,7 @@ class VisualizerHandler:
 
     def _on_stream_clear(self, roles: list[str] | None) -> None:
         """Handle stream clear for visualizer role."""
-        if roles is not None and Roles.VISUALIZER.value not in roles:
+        if roles is not None and "visualizer" not in roles:
             return
         self._pending.clear()
         if self._timer is not None:
