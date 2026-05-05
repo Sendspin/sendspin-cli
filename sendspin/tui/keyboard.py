@@ -32,6 +32,7 @@ class CommandHandler:
         audio_handler: AudioStreamHandler,
         ui: SendspinUI,
         settings: ClientSettings,
+        on_delay_changed: Callable[[float], None] | None = None,
     ) -> None:
         """Initialize the command handler."""
         self._get_client = get_client
@@ -39,6 +40,7 @@ class CommandHandler:
         self._audio_handler = audio_handler
         self._ui = ui
         self._settings = settings
+        self._on_delay_changed = on_delay_changed
 
     async def send_media_command(self, command: MediaCommand) -> None:
         """Send a media command with validation."""
@@ -120,6 +122,8 @@ class CommandHandler:
             self._audio_handler.notify_delay_change(actual_delta_us)
         self._ui.set_delay(client.static_delay_ms)
         self._settings.update(static_delay_ms=client.static_delay_ms)
+        if self._on_delay_changed is not None:
+            self._on_delay_changed(client.static_delay_ms)
         self._audio_handler.send_player_volume()
 
     def close_server_selector(self) -> None:
@@ -137,6 +141,7 @@ async def keyboard_loop(
     on_server_selected: Callable[[], Awaitable[None]],
     request_shutdown: Callable[[], None],
     on_toggle_visualizer: Callable[[], Awaitable[None]],
+    on_delay_changed: Callable[[float], None] | None = None,
 ) -> None:
     """Run the keyboard input loop.
 
@@ -151,7 +156,14 @@ async def keyboard_loop(
         request_shutdown: Callback to request application shutdown.
         on_toggle_visualizer: Async callback to toggle the visualizer.
     """
-    handler = CommandHandler(get_client, state, audio_handler, ui, settings)
+    handler = CommandHandler(
+        get_client,
+        state,
+        audio_handler,
+        ui,
+        settings,
+        on_delay_changed=on_delay_changed,
+    )
 
     # Key dispatch table: key -> (highlight_name | None, action)
     # Actions can be sync or async. For keys that need case-insensitive matching, use lowercase.

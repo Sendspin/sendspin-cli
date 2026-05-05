@@ -72,13 +72,16 @@ class SendspinDaemon:
         self._audio_handler: AudioStreamHandler | None = None
         self._settings = args.settings
         self._mpris: SendspinMpris | None = None
+        # Currently-applied static delay (mirror of client._static_delay_us). Tracked
+        # separately from settings because CLI overrides aren't persisted to settings,
+        # so settings.static_delay_ms can lag the value actually given to the client.
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
         self._group_update_unsubscribe: Callable[[], None] | None = None
         self._server_command_unsubscribe: Callable[[], None] | None = None
 
-    def _create_client(self, static_delay_ms: float = 0.0) -> SendspinClient:
+    def _create_client(self) -> SendspinClient:
         """Create a new SendspinClient instance."""
         assert self._audio_handler is not None
         client_roles = [Roles.PLAYER]
@@ -103,7 +106,7 @@ class SendspinDaemon:
                 buffer_capacity=32_000_000,
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
-            static_delay_ms=static_delay_ms,
+            static_delay_ms=self._static_delay_ms,
             state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
@@ -133,6 +136,7 @@ class SendspinDaemon:
             if self._args.static_delay_ms is not None
             else self._settings.static_delay_ms
         )
+        self._static_delay_ms = max(0.0, min(5000.0, delay))
 
         self._audio_handler = AudioStreamHandler(
             audio_device=self._args.audio_device,
@@ -149,10 +153,10 @@ class SendspinDaemon:
         try:
             if self._args.url is not None:
                 # Client-initiated connection mode
-                await self._run_client_initiated(delay)
+                await self._run_client_initiated()
             else:
                 # Server-initiated connection mode (listen for incoming connections)
-                await self._run_server_initiated(delay)
+                await self._run_server_initiated()
         except asyncio.CancelledError:
             logger.debug("Daemon cancelled")
         finally:
@@ -181,11 +185,11 @@ class SendspinDaemon:
         if not self._audio_handler.uses_external_volume_controller:
             self._settings.update(player_volume=volume, player_muted=muted)
 
-    async def _run_client_initiated(self, static_delay_ms: float) -> None:
+    async def _run_client_initiated(self) -> None:
         """Run in client-initiated mode, connecting to a specific URL."""
         assert self._args.url is not None
         assert self._audio_handler is not None
-        self._client = self._create_client(static_delay_ms)
+        self._client = self._create_client()
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
@@ -196,14 +200,13 @@ class SendspinDaemon:
         )
         await self._connection_loop(self._args.url)
 
-    async def _run_server_initiated(self, static_delay_ms: float) -> None:
+    async def _run_server_initiated(self) -> None:
         """Run in server-initiated mode, listening for incoming connections."""
         logger.info(
             "Listening for server connections on port %d (mDNS: _sendspin._tcp.local.)",
             self._args.listen_port,
         )
 
-        self._static_delay_ms = static_delay_ms  # Store for use in connection handler
         self._connection_lock = asyncio.Lock()
 
         self._listener = ClientListener(
@@ -287,7 +290,7 @@ class SendspinDaemon:
 
             # Per spec: always complete the handshake before deciding which
             # server to keep.
-            client = self._create_client(self._static_delay_ms)
+            client = self._create_client()
 
             try:
                 await client.attach_websocket(ws)
@@ -410,11 +413,12 @@ class SendspinDaemon:
             # Client library already applied the delay change;
             # notify audio worker so sync correction adjusts timing gradually
             assert self._client is not None
-            old_delay_ms = self._settings.static_delay_ms
-            delta_us = int((self._client.static_delay_ms - old_delay_ms) * 1000)
+            new_delay_ms = self._client.static_delay_ms
+            delta_us = int((new_delay_ms - self._static_delay_ms) * 1000)
             if delta_us != 0:
                 self._audio_handler.notify_delay_change(delta_us)
-            self._settings.update(static_delay_ms=self._client.static_delay_ms)
+            self._static_delay_ms = new_delay_ms
+            self._settings.update(static_delay_ms=new_delay_ms)
             logger.info("Server set delay: %dms", player_cmd.static_delay_ms)
 
     def _handle_format_change(

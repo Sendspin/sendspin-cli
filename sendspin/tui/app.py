@@ -253,6 +253,10 @@ class SendspinApp:
         self._visualizer_handler: VisualizerHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
+        # Currently-applied static delay (canonical local mirror of client._static_delay_us).
+        # Tracked separately from settings because CLI overrides aren't persisted to settings,
+        # so settings.static_delay_ms can lag the value actually given to the client.
+        self._applied_delay_ms: float = 0.0
         interfaces = [args.interface] if args.interface else None
         self._discovery = ServiceDiscovery(interfaces=interfaces)
         self._connection_manager = ConnectionManager(self._discovery)
@@ -286,11 +290,6 @@ class SendspinApp:
             roles.append(Roles.VISUALIZER)
 
         assert self._audio_handler is not None
-        delay = (
-            args.static_delay_ms
-            if args.static_delay_ms is not None
-            else self._settings.static_delay_ms
-        )
 
         return SendspinClient(
             client_id=args.client_id,
@@ -306,7 +305,7 @@ class SendspinApp:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             visualizer_support=visualizer_support,
-            static_delay_ms=delay,
+            static_delay_ms=self._applied_delay_ms,
             state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
             initial_muted=self._audio_handler.muted,
@@ -378,6 +377,7 @@ class SendspinApp:
                 if args.static_delay_ms is not None
                 else self._settings.static_delay_ms
             )
+            self._applied_delay_ms = max(0.0, min(5000.0, delay))
 
             self._audio_handler = AudioStreamHandler(
                 audio_device=args.audio_device,
@@ -431,6 +431,7 @@ class SendspinApp:
                     self._on_server_selected,
                     request_shutdown,
                     on_toggle_visualizer=self._toggle_visualizer,
+                    on_delay_changed=self._set_applied_delay,
                 )
             )
 
@@ -780,12 +781,13 @@ class SendspinApp:
             # notify audio worker so sync correction adjusts timing gradually
             assert self._client is not None
             assert self._audio_handler is not None
-            old_delay_ms = self._settings.static_delay_ms
-            delta_us = int((self._client.static_delay_ms - old_delay_ms) * 1000)
+            new_delay_ms = self._client.static_delay_ms
+            delta_us = int((new_delay_ms - self._applied_delay_ms) * 1000)
             if delta_us != 0:
                 self._audio_handler.notify_delay_change(delta_us)
-            self._ui.set_delay(self._client.static_delay_ms)
-            self._settings.update(static_delay_ms=self._client.static_delay_ms)
+            self._applied_delay_ms = new_delay_ms
+            self._ui.set_delay(new_delay_ms)
+            self._settings.update(static_delay_ms=new_delay_ms)
             self._ui.add_event(f"Server set delay: {player_cmd.static_delay_ms}ms")
 
     def _handle_format_change(
@@ -794,6 +796,10 @@ class SendspinApp:
         """Handle audio format changes by updating the UI."""
         assert self._ui is not None
         self._ui.set_audio_format(codec, sample_rate, bit_depth, channels)
+
+    def _set_applied_delay(self, delay_ms: float) -> None:
+        """Mirror the locally-applied static delay so SET_STATIC_DELAY deltas stay correct."""
+        self._applied_delay_ms = delay_ms
 
     async def _toggle_visualizer(self) -> None:
         """Toggle the visualizer on/off, reconnecting with updated roles."""
