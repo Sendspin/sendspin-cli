@@ -253,9 +253,10 @@ class SendspinApp:
         self._visualizer_handler: VisualizerHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
-        # Currently-applied static delay (canonical local mirror of client._static_delay_us).
-        # Tracked separately from settings because CLI overrides aren't persisted to settings,
-        # so settings.static_delay_ms can lag the value actually given to the client.
+        # Currently-applied static delay in milliseconds, mirroring
+        # `SendspinClient.static_delay_ms`. Tracked separately from settings
+        # because CLI overrides aren't persisted to settings, so
+        # `settings.static_delay_ms` can lag the value actually given to the client.
         self._applied_delay_ms: float = 0.0
         interfaces = [args.interface] if args.interface else None
         self._discovery = ServiceDiscovery(interfaces=interfaces)
@@ -405,7 +406,7 @@ class SendspinApp:
             await self._audio_handler.start_volume_monitor()
 
             self._ui = SendspinUI(
-                delay,
+                self._applied_delay_ms,
                 player_volume=self._audio_handler.volume,
                 player_muted=self._audio_handler.muted,
                 use_external_volume=self._audio_handler.uses_external_volume_controller,

@@ -155,6 +155,9 @@ async def keyboard_loop(
         on_server_selected: Async callback when a server is selected.
         request_shutdown: Callback to request application shutdown.
         on_toggle_visualizer: Async callback to toggle the visualizer.
+        on_delay_changed: Optional callback invoked with the new static delay
+            (milliseconds) after a local adjust, so the app can keep its
+            applied-delay tracker in sync.
     """
     handler = CommandHandler(
         get_client,

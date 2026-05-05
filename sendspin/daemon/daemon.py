@@ -72,9 +72,10 @@ class SendspinDaemon:
         self._audio_handler: AudioStreamHandler | None = None
         self._settings = args.settings
         self._mpris: SendspinMpris | None = None
-        # Currently-applied static delay (mirror of client._static_delay_us). Tracked
-        # separately from settings because CLI overrides aren't persisted to settings,
-        # so settings.static_delay_ms can lag the value actually given to the client.
+        # Currently-applied static delay in milliseconds, mirroring
+        # `SendspinClient.static_delay_ms`. Tracked separately from settings
+        # because CLI overrides aren't persisted to settings, so
+        # `settings.static_delay_ms` can lag the value actually given to the client.
         self._static_delay_ms: float = 0.0
         self._connection_lock: asyncio.Lock | None = None
         self._server_url: str | None = None
