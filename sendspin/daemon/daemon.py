@@ -196,10 +196,11 @@ class SendspinDaemon:
         assert self._args.url is not None
         assert self._audio_handler is not None
         self._client = self._create_client()
-        self._setup_metadata_listeners()
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
+        if self._args.log_metadata:
+                self._setup_metadata_listeners()
         self._audio_handler.attach_client(self._client)
         self._server_url = self._args.url
         self._server_command_unsubscribe = self._client.add_server_command_listener(
@@ -343,6 +344,8 @@ class SendspinDaemon:
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)
                 self._mpris.start()
+            if self._args.log_metadata:
+                self._setup_metadata_listeners()
 
         # Handshake complete, release lock so new connections can proceed
         # Now wait for disconnect (outside the lock)
@@ -461,6 +464,7 @@ class SendspinDaemon:
     def _setup_metadata_listeners(self) -> None:
         """Register event handlers with the Sendspin client."""
         if self._client is None:
+            logger.warning("Cannot register metadata listener: client not initialized")
             return
 
         self._client.add_metadata_listener(self._handle_metadata)
