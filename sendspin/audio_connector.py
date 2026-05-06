@@ -100,12 +100,14 @@ class _AudioSyncWorker:
         compute_play_time: Callable[[int], int],
         compute_server_time: Callable[[int], int],
         now_us: Callable[[], int] | None = None,
+        is_clock_synced: Callable[[], bool] | None = None,
     ) -> None:
         """Start worker thread if needed."""
         if self._thread is not None and self._thread.is_alive():
             return
 
         self._now_us = now_us
+        self._is_clock_synced = is_clock_synced
         self._queue = queue.Queue(maxsize=512)
         self._thread = threading.Thread(
             target=self._run,
@@ -188,7 +190,12 @@ class _AudioSyncWorker:
         if queue_obj is None:
             return
 
-        player = AudioPlayer(compute_play_time, compute_server_time, now_us=self._now_us)
+        player = AudioPlayer(
+            compute_play_time,
+            compute_server_time,
+            now_us=self._now_us,
+            is_clock_synced=self._is_clock_synced,
+        )
         current_format: AudioFormat | None = None
         flac_decoder: FlacDecoder | None = None
         software_volume = self._initial_volume
@@ -484,7 +491,10 @@ class AudioStreamHandler:
             )
 
         self._audio_worker.start(
-            client.compute_play_time, client.compute_server_time, client.now_us
+            client.compute_play_time,
+            client.compute_server_time,
+            client.now_us,
+            client.is_time_synchronized,
         )
         if not self._audio_worker.is_running():
             raise RuntimeError("Audio worker failed to start")
