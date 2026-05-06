@@ -463,25 +463,31 @@ class SendspinDaemon:
         if self._client is None:
             return
 
-        # Use the explicit listener registration method
         self._client.add_metadata_listener(self._handle_metadata)
         
         logger.info("Successfully registered metadata listener")
 
     def _handle_metadata(self, payload: any) -> None:
         """Logs the raw content of any server payload to stdout."""
-        # Only log if the --metadata flag was passed as 'true'
         if getattr(self._args, "log_metadata", False):
             event_type = payload.__class__.__name__
             try:
-                # Convert the dataclass to a dictionary for JSON output
-                raw_data = asdict(payload)
+                raw_data = asdict(
+                    payload,
+                    dict_factory=lambda x: {k: v for k, v in x if v is not None}
+                    )
 
                 # Manual fix for the Enum before dumping
                 if payload.metadata and payload.metadata.repeat:
                     raw_data["metadata"]["repeat"] = payload.metadata.repeat.value
+                
+                pretty_json = json.dumps(
+                    raw_data, 
+                    indent=2, 
+                    default=lambda o: o.value if hasattr(o, 'value') else str(o)
+                )
 
-                logger.info(f"RAW_SERVER_DATA|{event_type}|{json.dumps(raw_data)}")
+                logger.info(f"{event_type}:\n{pretty_json}")
             except Exception as e:
                 # Fallback if asdict fails
-                logger.error(f"RAW_SERVER_DATA|{event_type}|ERROR: {str(e)} | {str(payload)}")
+                logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
