@@ -14,7 +14,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-  "aiosendspin[server]~=5.1",
+  "aiosendspin[server]~=5.2",
   "aiosendspin-mpris~=2.1.1",
   "av>=15.0.0",
   "numpy>=1.26.0",
