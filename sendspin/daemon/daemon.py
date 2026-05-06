@@ -468,26 +468,32 @@ class SendspinDaemon:
         logger.info("Successfully registered metadata listener")
 
     def _handle_metadata(self, payload: any) -> None:
-        """Logs the raw content of any server payload to stdout."""
-        if getattr(self._args, "log_metadata", False):
-            event_type = payload.__class__.__name__
-            try:
-                raw_data = asdict(
-                    payload,
-                    dict_factory=lambda x: {k: v for k, v in x if v is not None}
-                    )
+        """Logs the raw content of any server payload to stdout, stripping empty/undefined fields."""
+        if not getattr(self._args, "log_metadata", False):
+            return
 
-                # Manual fix for the Enum before dumping
-                if payload.metadata and payload.metadata.repeat:
-                    raw_data["metadata"]["repeat"] = payload.metadata.repeat.value
-                
+        def clean_empty(value):
+            """Recursively remove None, UndefinedField, and empty dicts/lists."""
+            if isinstance(value, dict):
+                cleaned = {k: clean_empty(v) for k, v in value.items()}
+                return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
+            elif value.__class__.__name__ == "UndefinedField":
+                return None
+            return value
+
+        event_type = payload.__class__.__name__
+        try:
+            raw_data = asdict(payload) 
+
+            final_data = clean_empty(raw_data)
+
+            if final_data:
                 pretty_json = json.dumps(
-                    raw_data, 
+                    final_data, 
                     indent=2, 
                     default=lambda o: o.value if hasattr(o, 'value') else str(o)
                 )
-
                 logger.info(f"{event_type}:\n{pretty_json}")
-            except Exception as e:
-                # Fallback if asdict fails
-                logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
+                
+        except Exception as e:
+            logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
