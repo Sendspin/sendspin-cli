@@ -367,6 +367,12 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     daemon_parser.add_argument(
+        "--metadata", 
+        type=str, 
+        default="false", 
+        help="Enable metadata logging (default:false)"
+    )
+    daemon_parser.add_argument(
         "--url",
         default=None,
         help=(
@@ -703,6 +709,7 @@ async def _run_daemon_mode(
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
 
     client_id, client_name = _resolve_client_info(args.id, args.name)
+    should_log_metadata = args.metadata.lower() == "true"
 
     daemon_args = DaemonArgs(
         audio_device=audio_device,
@@ -720,6 +727,7 @@ async def _run_daemon_mode(
         manufacturer=args.manufacturer,
         product_name=args.product_name,
         interface=args.interface,
+        log_metadata=should_log_metadata,
     )
 
     daemon = SendspinDaemon(daemon_args)

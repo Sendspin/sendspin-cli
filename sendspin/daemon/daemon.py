@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import signal
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
-from aiosendspin.models.core import GroupUpdateServerPayload, ServerCommandPayload
+from aiosendspin.models.core import GroupUpdateServerPayload, ServerCommandPayload, ServerStatePayload
 from aiosendspin.models.player import ClientHelloPlayerSupport, SupportedAudioFormat
 from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
@@ -54,6 +55,7 @@ class DaemonArgs:
     manufacturer: str | None = None
     product_name: str | None = None
     interface: str | None = None
+    log_metadata: bool = False
 
 
 class SendspinDaemon:
@@ -88,6 +90,9 @@ class SendspinDaemon:
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
+        if self._args.log_metadata and not self._args.use_mpris:
+            client_roles.append([Roles.METADATA])
+
 
         supported_formats = detect_supported_audio_formats(self._args.audio_device)
         if self._args.preferred_format is not None:
@@ -191,6 +196,7 @@ class SendspinDaemon:
         assert self._args.url is not None
         assert self._audio_handler is not None
         self._client = self._create_client()
+        self._setup_metadata_listeners()
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
@@ -451,3 +457,37 @@ class SendspinDaemon:
                 client_name=self._args.client_name,
             )
         )
+
+    def _setup_metadata_listeners(self) -> None:
+        """Register event handlers with the Sendspin client."""
+        if self._client is None:
+            return
+
+        self._client.add_metadata_listener(self._handle_metadata)
+        
+        logger.info("Successfully registered metadata listener")
+
+    def _handle_metadata(self, payload: any) -> None:
+        """Logs the raw content of any server payload to stdout."""
+        if getattr(self._args, "log_metadata", False):
+            event_type = payload.__class__.__name__
+            try:
+                raw_data = asdict(
+                    payload,
+                    dict_factory=lambda x: {k: v for k, v in x if v is not None}
+                    )
+
+                # Manual fix for the Enum before dumping
+                if payload.metadata and payload.metadata.repeat:
+                    raw_data["metadata"]["repeat"] = payload.metadata.repeat.value
+                
+                pretty_json = json.dumps(
+                    raw_data, 
+                    indent=2, 
+                    default=lambda o: o.value if hasattr(o, 'value') else str(o)
+                )
+
+                logger.info(f"{event_type}:\n{pretty_json}")
+            except Exception as e:
+                # Fallback if asdict fails
+                logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
