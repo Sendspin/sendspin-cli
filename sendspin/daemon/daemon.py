@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import signal
 from dataclasses import dataclass, asdict
@@ -492,12 +491,7 @@ class SendspinDaemon:
             final_data = clean_empty(raw_data)
 
             if final_data:
-                pretty_json = json.dumps(
-                    final_data, 
-                    indent=2, 
-                    default=lambda o: o.value if hasattr(o, 'value') else str(o)
-                )
-                logger.info(f"{event_type}:\n{pretty_json}")
-                
+                logger.info(f"{event_type}:{final_data}")
+
         except Exception as e:
             logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
