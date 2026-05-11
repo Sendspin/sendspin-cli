@@ -190,15 +190,9 @@ class SendspinDaemon:
         """Run in client-initiated mode, connecting to a specific URL."""
         assert self._args.url is not None
         assert self._audio_handler is not None
-        self._client = self._create_client()
-        if MPRIS_AVAILABLE and self._args.use_mpris:
-            self._mpris = SendspinMpris(self._client)
-            self._mpris.start()
-        self._audio_handler.attach_client(self._client)
+        client = self._create_client()
         self._server_url = self._args.url
-        self._server_command_unsubscribe = self._client.add_server_command_listener(
-            self._handle_server_command
-        )
+        self._attach_client(client)
         await self._connection_loop(self._args.url)
 
     async def _run_server_initiated(self) -> None:
@@ -223,17 +217,35 @@ class SendspinDaemon:
         while True:
             await asyncio.sleep(3600)
 
-    async def _handle_disconnect(self, *, stop_mpris: bool = True) -> None:
-        """Reset connection-scoped state and optionally stop MPRIS."""
+    def _attach_client(self, client: SendspinClient) -> None:
+        """Attach listeners, audio handler, and MPRIS to a client."""
+        assert self._audio_handler is not None
+        self._client = client
+        self._audio_handler.attach_client(client)
+        self._server_command_unsubscribe = client.add_server_command_listener(
+            self._handle_server_command
+        )
+        self._group_update_unsubscribe = client.add_group_update_listener(self._on_group_update)
+        if MPRIS_AVAILABLE and self._args.use_mpris:
+            self._mpris = SendspinMpris(client)
+            self._mpris.start()
+
+    def _detach_client(self) -> None:
+        """Detach listeners, audio handler, and MPRIS from the current client."""
         if self._server_command_unsubscribe is not None:
             self._server_command_unsubscribe()
             self._server_command_unsubscribe = None
         if self._group_update_unsubscribe is not None:
             self._group_update_unsubscribe()
             self._group_update_unsubscribe = None
-        if stop_mpris and self._mpris is not None:
+        if self._mpris is not None:
             self._mpris.stop()
             self._mpris = None
+        if self._audio_handler is not None:
+            self._audio_handler.detach_client()
+
+    async def _handle_disconnect(self) -> None:
+        """Reset audio state after a connection drop."""
         if self._audio_handler is not None:
             await self._audio_handler.handle_disconnect()
 
@@ -311,7 +323,7 @@ class SendspinDaemon:
                         client.server_info.name,
                         client.server_info.connection_reason.value,
                     )
-                    self._audio_handler.detach_client()
+                    self._detach_client()
                     await self._handle_disconnect()
                     await old_client.send_goodbye(GoodbyeReason.ANOTHER_SERVER)
                     await old_client.disconnect()
@@ -328,15 +340,7 @@ class SendspinDaemon:
                     await client.disconnect()
                     return
 
-            self._client = client
-            self._audio_handler.attach_client(client)
-            self._server_command_unsubscribe = client.add_server_command_listener(
-                self._handle_server_command
-            )
-            self._group_update_unsubscribe = client.add_group_update_listener(self._on_group_update)
-            if MPRIS_AVAILABLE and self._args.use_mpris:
-                self._mpris = SendspinMpris(client)
-                self._mpris.start()
+            self._attach_client(client)
 
         # Handshake complete, release lock so new connections can proceed
         # Now wait for disconnect (outside the lock)
@@ -351,6 +355,7 @@ class SendspinDaemon:
         finally:
             # Only cleanup if we're still the active client (not replaced by new connection)
             if self._client is client:
+                self._detach_client()
                 await self._handle_disconnect()
 
     async def _connection_loop(self, url: str) -> None:
@@ -374,8 +379,7 @@ class SendspinDaemon:
 
                 # Connection dropped
                 logger.info("Disconnected from server")
-                # Keep MPRIS alive across reconnects in client-initiated mode.
-                await self._handle_disconnect(stop_mpris=False)
+                await self._handle_disconnect()
 
                 logger.info("Reconnecting to %s", url)
 
