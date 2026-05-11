@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import signal
+import time
 from dataclasses import dataclass, asdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -90,7 +91,7 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
         if self._args.log_metadata and not self._args.use_mpris:
-            client_roles.append([Roles.METADATA])
+            client_roles.extend([Roles.METADATA])
 
 
         supported_formats = detect_supported_audio_formats(self._args.audio_device)
@@ -470,28 +471,47 @@ class SendspinDaemon:
         
         logger.info("Successfully registered metadata listener")
 
-    def _handle_metadata(self, payload: any) -> None:
+    def _handle_metadata(self, payload: ServerStatePayload) -> None:
         """Logs the raw content of any server payload to stdout, stripping empty/undefined fields."""
         if not getattr(self._args, "log_metadata", False):
             return
+        
+        create_task(self._log_metadata_delayed(payload))
 
-        def clean_empty(value):
-            """Recursively remove None, UndefinedField, and empty dicts/lists."""
-            if isinstance(value, dict):
-                cleaned = {k: clean_empty(v) for k, v in value.items()}
-                return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
-            elif value.__class__.__name__ == "UndefinedField":
-                return None
-            return value
-
-        event_type = payload.__class__.__name__
+    async def _log_metadata_delayed(self, payload: ServerStatePayload) -> None:
+        """Calculates the delay and waits for the specific audio sync point."""
         try:
-            raw_data = asdict(payload) 
+            raw_data = asdict(payload)
+            
+            meta = raw_data.get("metadata", {})
+            server_ts = meta.get("timestamp") or raw_data.get("timestamp")
+            
+            if server_ts and self._client and self._client.is_time_synchronized():
+                
+                target_time_us = self._client.compute_play_time(server_ts)
+                
+                # Convert microseconds to seconds for asyncio.sleep and time.monotonic
+                target_time_s = target_time_us / 1_000_000.0
+                
+                # 2. Wait until the local clock hits the target moment
+                wait_time = target_time_s - time.monotonic()
+                if 0 < wait_time < 10:  # Sane bounds check
+                    await asyncio.sleep(wait_time)
 
+            # --- Data Cleaning Logic ---
+            def clean_empty(value):
+                if isinstance(value, dict):
+                    cleaned = {k: clean_empty(v) for k, v in value.items()}
+                    return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
+                elif hasattr(value, "__class__") and value.__class__.__name__ == "UndefinedField":
+                    return None
+                return value
+
+            event_type = payload.__class__.__name__
             final_data = clean_empty(raw_data)
 
             if final_data:
-                logger.info(f"{event_type}:{final_data}")
+                logger.info(f"METADATA:{event_type}:{final_data}")
 
         except Exception as e:
-            logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
+            logger.error(f"Metadata Sync Error: {e}")
