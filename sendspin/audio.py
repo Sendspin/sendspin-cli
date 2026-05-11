@@ -141,6 +141,7 @@ class AudioPlayer:
         compute_client_time: Callable[[int], int],
         compute_server_time: Callable[[int], int],
         now_us: Callable[[], int] | None = None,
+        is_clock_synced: Callable[[], bool] | None = None,
     ) -> None:
         """
         Initialize the audio player.
@@ -155,10 +156,15 @@ class AudioPlayer:
             now_us: Function returning current monotonic time in microseconds.
                 Must be in the same clock domain as compute_client_time.
                 Defaults to time.monotonic().
+            is_clock_synced: Returns True when the time filter has converged.
+                Used to tell a real mid-stream join (start time near now, clock
+                trustworthy) apart from the unsynced fallback in compute_play_time
+                (now + 500ms). Defaults to always-True.
         """
         self._compute_client_time = compute_client_time
         self._compute_server_time = compute_server_time
         self._now_us = now_us or (lambda: int(time.monotonic() * 1_000_000))
+        self._is_clock_synced = is_clock_synced or (lambda: True)
         self._format: PCMFormat | None = None
         self._queue: queue.Queue[_QueuedChunk] = queue.Queue()
         self._stream: sounddevice.RawOutputStream | None = None
@@ -1143,10 +1149,14 @@ class AudioPlayer:
             self._scheduled_start_dac_time_us = est_dac if est_dac else None
             self._playback_state = PlaybackState.WAITING_FOR_START
             self._first_server_timestamp_us = server_timestamp_us
-            # If scheduled start is very near now, suspect unsynchronized fallback mapping
+            # Near-now start with unsynced clock = `compute_play_time` fallback;
+            # suppress catch-up. Synced near-now is a real mid-stream join.
             # Cast: we just set this via _compute_and_set_loop_start so it's not None
             scheduled_start = cast("int", self._scheduled_start_loop_time_us)
-            if scheduled_start - now_us <= self._EARLY_START_THRESHOLD_US:
+            if (
+                scheduled_start - now_us <= self._EARLY_START_THRESHOLD_US
+                and not self._is_clock_synced()
+            ):
                 self._early_start_suspect = True
 
         # While waiting to start, keep the scheduled loop start updated as time sync improves

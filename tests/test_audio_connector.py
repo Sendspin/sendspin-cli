@@ -29,10 +29,18 @@ class _FakeWorker:
         self.submitted: list[tuple[int, bytes | bytearray, object]] = []
         _FakeWorker.instances.append(self)
 
-    def start(self, compute_play_time: object, compute_server_time: object) -> None:
+    def start(
+        self,
+        compute_play_time: object,
+        compute_server_time: object,
+        now_us: object | None = None,
+        is_clock_synced: object | None = None,
+    ) -> None:
         self.running = True
         self.compute_play_time = compute_play_time
         self.compute_server_time = compute_server_time
+        self.now_us = now_us
+        self.is_clock_synced = is_clock_synced
 
     def is_running(self) -> bool:
         return self.running
@@ -69,6 +77,12 @@ class _FakeClient:
 
     def compute_server_time(self, timestamp_us: int) -> int:
         return timestamp_us
+
+    def now_us(self) -> int:
+        return 0
+
+    def is_time_synchronized(self) -> bool:
+        return True
 
     async def send_player_state(self, **_: object) -> None:
         return

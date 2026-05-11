@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import signal
+import time
 from dataclasses import dataclass, asdict
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -91,7 +91,7 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
         if self._args.log_metadata and not self._args.use_mpris:
-            client_roles.append([Roles.METADATA])
+            client_roles.extend([Roles.METADATA])
 
 
         supported_formats = detect_supported_audio_formats(self._args.audio_device)
@@ -196,10 +196,11 @@ class SendspinDaemon:
         assert self._args.url is not None
         assert self._audio_handler is not None
         self._client = self._create_client()
-        self._setup_metadata_listeners()
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
+        if self._args.log_metadata:
+                self._setup_metadata_listeners()
         self._audio_handler.attach_client(self._client)
         self._server_url = self._args.url
         self._server_command_unsubscribe = self._client.add_server_command_listener(
@@ -343,6 +344,8 @@ class SendspinDaemon:
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)
                 self._mpris.start()
+            if self._args.log_metadata:
+                self._setup_metadata_listeners()
 
         # Handshake complete, release lock so new connections can proceed
         # Now wait for disconnect (outside the lock)
@@ -461,33 +464,54 @@ class SendspinDaemon:
     def _setup_metadata_listeners(self) -> None:
         """Register event handlers with the Sendspin client."""
         if self._client is None:
+            logger.warning("Cannot register metadata listener: client not initialized")
             return
 
         self._client.add_metadata_listener(self._handle_metadata)
         
         logger.info("Successfully registered metadata listener")
 
-    def _handle_metadata(self, payload: any) -> None:
-        """Logs the raw content of any server payload to stdout."""
-        if getattr(self._args, "log_metadata", False):
-            event_type = payload.__class__.__name__
-            try:
-                raw_data = asdict(
-                    payload,
-                    dict_factory=lambda x: {k: v for k, v in x if v is not None}
-                    )
+    def _handle_metadata(self, payload: ServerStatePayload) -> None:
+        """Logs the raw content of any server payload to stdout, stripping empty/undefined fields."""
+        if not getattr(self._args, "log_metadata", False):
+            return
+        
+        create_task(self._log_metadata_delayed(payload))
 
-                # Manual fix for the Enum before dumping
-                if payload.metadata and payload.metadata.repeat:
-                    raw_data["metadata"]["repeat"] = payload.metadata.repeat.value
+    async def _log_metadata_delayed(self, payload: ServerStatePayload) -> None:
+        """Calculates the delay and waits for the specific audio sync point."""
+        try:
+            raw_data = asdict(payload)
+            
+            meta = raw_data.get("metadata", {})
+            server_ts = meta.get("timestamp") or raw_data.get("timestamp")
+            
+            if server_ts and self._client and self._client.is_time_synchronized():
                 
-                pretty_json = json.dumps(
-                    raw_data, 
-                    indent=2, 
-                    default=lambda o: o.value if hasattr(o, 'value') else str(o)
-                )
+                target_time_us = self._client.compute_play_time(server_ts)
+                
+                # Convert microseconds to seconds for asyncio.sleep and time.monotonic
+                target_time_s = target_time_us / 1_000_000.0
+                
+                # 2. Wait until the local clock hits the target moment
+                wait_time = target_time_s - time.monotonic()
+                if 0 < wait_time < 10:  # Sane bounds check
+                    await asyncio.sleep(wait_time)
 
-                logger.info(f"{event_type}:\n{pretty_json}")
-            except Exception as e:
-                # Fallback if asdict fails
-                logger.error(f"{event_type}|ERROR: {str(e)} | {str(payload)}")
+            # --- Data Cleaning Logic ---
+            def clean_empty(value):
+                if isinstance(value, dict):
+                    cleaned = {k: clean_empty(v) for k, v in value.items()}
+                    return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
+                elif hasattr(value, "__class__") and value.__class__.__name__ == "UndefinedField":
+                    return None
+                return value
+
+            event_type = payload.__class__.__name__
+            final_data = clean_empty(raw_data)
+
+            if final_data:
+                logger.info(f"METADATA:{event_type}:{final_data}")
+
+        except Exception as e:
+            logger.error(f"Metadata Sync Error: {e}")
