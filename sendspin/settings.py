@@ -118,6 +118,7 @@ class ClientSettings(BaseSettings):
     client_id: str | None = None
     audio_device: str | None = None
     use_mpris: bool = True
+    log_metadata: bool = False
     audio_format: str | None = None
     use_hardware_volume: bool | None = None
     hook_set_volume: str | None = None
@@ -144,6 +145,7 @@ class ClientSettings(BaseSettings):
         log_level: str | None = None,
         listen_port: int | None = None,
         use_mpris: bool | None = None,
+        log_metadata: bool = False,
         audio_format: str | None = None,
         use_hardware_volume: bool | None = None,
         hook_set_volume: str | None = None,
@@ -176,6 +178,7 @@ class ClientSettings(BaseSettings):
                     "log_level": log_level,
                     "listen_port": listen_port,
                     "use_mpris": use_mpris,
+                    "log_metadata": log_metadata,
                     "audio_format": audio_format,
                     "use_hardware_volume": use_hardware_volume,
                     "hook_set_volume": hook_set_volume,
@@ -216,6 +219,7 @@ class ClientSettings(BaseSettings):
             self.client_id = data.get("client_id")
             self.audio_device = data.get("audio_device")
             self.use_mpris = data.get("use_mpris", True)
+            self.log_metadata = data.get("log_metadata", False)
             self.audio_format = data.get("audio_format")
             self.use_hardware_volume = data.get("use_hardware_volume")
             self.hook_set_volume = data.get("hook_set_volume")
