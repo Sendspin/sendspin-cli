@@ -221,15 +221,16 @@ class SendspinDaemon:
 
     async def _handle_disconnect(self, *, stop_mpris: bool = True) -> None:
         """Reset connection-scoped state and optionally stop MPRIS."""
-        if self._server_command_unsubscribe is not None:
-            self._server_command_unsubscribe()
-            self._server_command_unsubscribe = None
-        if self._group_update_unsubscribe is not None:
-            self._group_update_unsubscribe()
-            self._group_update_unsubscribe = None
-        if stop_mpris and self._mpris is not None:
-            self._mpris.stop()
-            self._mpris = None
+        if stop_mpris:
+            if self._server_command_unsubscribe is not None:
+                self._server_command_unsubscribe()
+                self._server_command_unsubscribe = None
+            if self._group_update_unsubscribe is not None:
+                self._group_update_unsubscribe()
+                self._group_update_unsubscribe = None
+            if self._mpris is not None:
+                self._mpris.stop()
+                self._mpris = None
         if self._audio_handler is not None:
             await self._audio_handler.handle_disconnect()
 
