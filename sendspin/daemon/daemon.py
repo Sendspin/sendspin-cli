@@ -702,9 +702,39 @@ class SendspinDaemon:
 
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""
+        
+        # Implicitly sync control API state with the physical audio hardware state
+        if event == "start":
+            logger.debug("[ControlAPI] Hardware audio started. Forcing PLAYING state.")
+            self._playback_state = PlaybackStateType.PLAYING
+            self._control_playback["speed"] = 1.0
+            if "position" in self._control_playback:
+                # Re-anchor the system timer so extrapolation resumes seamlessly from current position
+                self._control_metadata_updated_at = time.monotonic()
+                
+        elif event == "stop":
+            logger.debug("[ControlAPI] Hardware audio stopped. Forcing PAUSED state.")
+            self._playback_state = PlaybackStateType.PAUSED
+            
+            # If we were previously playing, snapshot the exact position where it stopped
+            current_speed = self._control_playback.get("speed", 1.0)
+            if current_speed > 0 and "position" in self._control_playback and self._control_metadata_updated_at is not None:
+                elapsed = time.monotonic() - self._control_metadata_updated_at
+                self._control_playback["position"] += elapsed * current_speed
+                
+                if "duration" in self._control_playback:
+                    self._control_playback["position"] = min(
+                        self._control_playback["position"], 
+                        self._control_playback["duration"]
+                    )
+            
+            self._control_playback["speed"] = 0.0
+            self._control_metadata_updated_at = time.monotonic()
+
         hook = self._args.hook_start if event == "start" else self._args.hook_stop
         if not hook:
             return
+        
         server_info = self._client.server_info if self._client else None
         create_task(
             run_hook(
