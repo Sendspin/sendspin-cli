@@ -332,15 +332,37 @@ class SendspinDaemon:
         
         if "position" in playback and self._control_metadata_updated_at is not None:
             current_speed = playback.get("speed", 0)
+            
+            # Defensive check: if daemon state is explicitly paused, override speed to 0
+            if self._playback_state == PlaybackStateType.PAUSED:
+                current_speed = 0
+
             if current_speed > 0:
                 elapsed_seconds = time.monotonic() - self._control_metadata_updated_at
                 realtime_position = playback["position"] + (elapsed_seconds * current_speed)
                 
+                logger.debug(
+                    "[ControlAPI] Extrapolating state -> Baseline Pos: %.3fs, Elapsed: %.3fs, Speed: %s, Calculated Real-time: %.3fs",
+                    playback["position"], elapsed_seconds, current_speed, realtime_position
+                )
+
                 # Cap progress at total duration if duration is available
                 if "duration" in playback:
+                    if realtime_position > playback["duration"]:
+                        logger.debug(
+                            "[ControlAPI] Extrapolated position (%.3fs) exceeded track duration (%.3fs). Capping.",
+                            realtime_position, playback["duration"]
+                        )
                     realtime_position = min(realtime_position, playback["duration"])
                     
                 playback["position"] = realtime_position
+            else:
+                logger.debug("[ControlAPI] Extrapolation paused (speed=0). Static Baseline: %.3fs", playback["position"])
+        else:
+            logger.debug(
+                "[ControlAPI] Skipping extrapolation -> Has baseline position: %s, Has baseline timestamp: %s",
+                "position" in playback, self._control_metadata_updated_at is not None
+            )
 
         volume: dict[str, Any] = {}
         if self._audio_handler is not None:
@@ -355,6 +377,7 @@ class SendspinDaemon:
         """Merge partial metadata updates into the state exposed to the control API."""
         metadata = payload.metadata
         if metadata is None:
+            logger.debug("[ControlAPI] Received null metadata frame. Wiping control state.")
             self._control_track.clear()
             self._control_playback.clear()
             self._control_metadata_updated_at = None
@@ -362,27 +385,60 @@ class SendspinDaemon:
         if self._is_undefined_field(metadata):
             return
 
+        # 1. Track track/song identity changes to force progress resets
+        track_changed = False
         for key in ("title", "artist", "album", "artwork_url"):
             value = self._json_safe_value(self._get_defined_attr(metadata, key))
             if value is not None:
+                if key in ("title", "artist") and self._control_track.get(key) != value:
+                    logger.debug(
+                        "[ControlAPI] Track change detected via %s: %r -> %r", 
+                        key, self._control_track.get(key), value
+                    )
+                    track_changed = True
                 self._control_track[key] = value
 
+        if track_changed:
+            logger.debug("[ControlAPI] Resetting metadata baseline anchors for new track.")
+            self._control_playback["position"] = 0.0
+            self._control_metadata_updated_at = time.monotonic()
+            self._control_playback.pop("duration", None)
+
+        # 2. Process progress updates safely without scrubbing data on partial updates
         progress = self._get_defined_attr(metadata, "progress")
         if progress is None:
-            for key in ("position", "duration", "speed"):
-                self._control_playback.pop(key, None)
+            logger.debug("[ControlAPI] Partial packet: No progress block included. Preserving existing baseline.")
             return
 
         track_progress = self._get_defined_attr(progress, "track_progress")
         track_duration = self._get_defined_attr(progress, "track_duration")
         playback_speed = self._get_defined_attr(progress, "playback_speed")
+
+        logger.debug(
+            "[ControlAPI] Incoming Progress Block -> raw_progress: %s, raw_duration: %s, raw_speed: %s",
+            track_progress, track_duration, playback_speed
+        )
+
         if isinstance(track_progress, int | float):
             self._control_playback["position"] = track_progress / 1000.0
             self._control_metadata_updated_at = time.monotonic()
+            logger.debug(
+                "[ControlAPI] Anchor Updated -> Position: %.3fs, Local System Anchor: %.3f", 
+                self._control_playback["position"], self._control_metadata_updated_at
+            )
+        elif track_changed:
+            # Re-ensure track changes have a fallback starting point if raw_progress is missing
+            self._control_playback["position"] = 0.0
+            self._control_metadata_updated_at = time.monotonic()
+
         if isinstance(track_duration, int | float):
             self._control_playback["duration"] = track_duration / 1000.0
+            logger.debug("[ControlAPI] Anchor Updated -> Duration: %.3fs", self._control_playback["duration"])
+            
         if isinstance(playback_speed, int | float):
-            self._control_playback["speed"] = playback_speed
+            # Scale protocol speed down (e.g. 1000 -> 1.0) to match normal time multipliers
+            self._control_playback["speed"] = playback_speed / 1000.0
+            logger.debug("[ControlAPI] Anchor Updated -> Speed: %s", self._control_playback["speed"])
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, external, etc.)."""
