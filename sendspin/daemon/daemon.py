@@ -202,7 +202,7 @@ class SendspinDaemon:
                 web.get("/state", self._handle_state_request),
             ]
         )
-        self._control_runner = web.AppRunner(app)
+        self._control_runner = web.AppRunner(app, access_log=None)
         await self._control_runner.setup()
         site = web.TCPSite(self._control_runner, self._args.control_host, self._args.control_port)
         await site.start()
