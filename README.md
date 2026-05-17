@@ -1,5 +1,7 @@
 # sendspin
 
+> **Note:** This project is a fork of the original Sendspin client, extended with additional features such as a local real-time HTTP control API.
+
 [![pypi_badge](https://img.shields.io/pypi/v/sendspin.svg)](https://pypi.python.org/pypi/sendspin)
 
 Connect to any [Sendspin](https://www.sendspin-audio.com) server and instantly turn your computer into an audio target that can participate in multi-room audio.
@@ -35,6 +37,59 @@ Host a Sendspin party
 uvx sendspin serve --demo
 uvx sendspin serve /path/to/media.mp3
 uvx sendspin serve https://retro.dancewave.online/retrodance.mp3
+```
+
+## Daemon Control API
+Daemon mode can optionally expose a local HTTP API:
+
+```bash
+sendspin daemon --control-api true --control-host 127.0.0.1 --control-port 59999
+```
+Security Warning: This API is unauthenticated. Ensure you only bind it to trusted local loopback interfaces (e.g., 127.0.0.1) to prevent unauthorized network access.
+
+### `GET /state`
+Returns the current real-time playback state, track metadata, and hardware volume. The track position uses hardware hooks and extrapolation to maintain millisecond accuracy dynamically between server payload frames.
+
+Response Example:
+
+```JSON
+{
+  "track": {
+    "title": "Breaker Breaker",
+    "artist": "Peter Bjorn and John",
+    "album": "Writer's Block",
+    "artwork_url": "https://..."
+  },
+  "playback": {
+    "position": 42.105,
+    "duration": 185.0,
+    "speed": 1.0
+  },
+  "volume": {
+    "volume": 75,
+    "muted": false
+  }
+}
+```
+
+### `POST /control`
+Accepts a JSON payload to securely send playback and volume commands to the active server.
+
+#### Supported Commands:
+
+- `{"command": "play"}`
+- `{"command": "pause"}`
+- `{"command": "toggle_play_pause"}`
+- `{"command": "next"}`
+- `{"command": "previous"}`
+- `{"command": "set_volume", "volume": 50, "muted": false}` (0-100)
+
+#### Request Example:
+
+```bash
+curl -X POST http://127.0.0.1:59999/control \
+     -H "Content-Type: application/json" \
+     -d '{"command": "toggle_play_pause"}'
 ```
 
 ## Installation
