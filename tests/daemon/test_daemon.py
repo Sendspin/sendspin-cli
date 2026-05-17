@@ -158,17 +158,19 @@ def test_control_toggle_uses_playback_state(tmp_path: Path) -> None:
 def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
     daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
     daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
-    daemon._last_state_payload = SimpleNamespace(
-        metadata=SimpleNamespace(
-            title="Track",
-            artist=UndefinedField(),
-            album=None,
-            artwork_url=UndefinedField(),
-            progress=SimpleNamespace(
-                track_progress=12_500,
-                track_duration=UndefinedField(),
-                playback_speed=1,
-            ),
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="Track",
+                artist=UndefinedField(),
+                album=None,
+                artwork_url=UndefinedField(),
+                progress=SimpleNamespace(
+                    track_progress=12_500,
+                    track_duration=UndefinedField(),
+                    playback_speed=1,
+                ),
+            )
         )
     )
 
@@ -176,6 +178,143 @@ def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
 
     assert state == {
         "track": {"title": "Track"},
+        "playback": {"position": 12.5, "speed": 1},
+        "volume": {"volume": 25, "muted": False},
+    }
+
+
+def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="Track One",
+                artist="Artist One",
+                album="Album One",
+                artwork_url="https://example.invalid/art.jpg",
+                progress=SimpleNamespace(
+                    track_progress=10_000,
+                    track_duration=180_000,
+                    playback_speed=1,
+                ),
+            )
+        )
+    )
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="Track Two",
+                artist=UndefinedField(),
+                album=UndefinedField(),
+                artwork_url=UndefinedField(),
+                progress=SimpleNamespace(
+                    track_progress=0,
+                    track_duration=UndefinedField(),
+                    playback_speed=UndefinedField(),
+                ),
+            )
+        )
+    )
+
+    state = daemon._get_control_state()
+
+    assert state == {
+        "track": {
+            "title": "Track Two",
+            "artist": "Artist One",
+            "album": "Album One",
+            "artwork_url": "https://example.invalid/art.jpg",
+        },
+        "playback": {"position": 0.0, "duration": 180.0, "speed": 1},
+        "volume": {"volume": 25, "muted": False},
+    }
+
+
+def test_control_state_clears_metadata_when_server_sends_none(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="Track",
+                artist="Artist",
+                album="Album",
+                artwork_url=None,
+                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1),
+            )
+        )
+    )
+    daemon._update_control_metadata(SimpleNamespace(metadata=None))
+
+    state = daemon._get_control_state()
+
+    assert state == {
+        "track": {},
+        "playback": {},
+        "volume": {"volume": 25, "muted": False},
+    }
+
+
+def test_control_state_clears_progress_when_server_sends_none(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="Track",
+                artist="Artist",
+                album="Album",
+                artwork_url=None,
+                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1),
+            )
+        )
+    )
+    daemon._update_control_metadata(
+        SimpleNamespace(
+            metadata=SimpleNamespace(
+                title=UndefinedField(),
+                artist=UndefinedField(),
+                album=UndefinedField(),
+                artwork_url=UndefinedField(),
+                progress=None,
+            )
+        )
+    )
+
+    state = daemon._get_control_state()
+
+    assert state == {
+        "track": {"title": "Track", "artist": "Artist", "album": "Album"},
+        "playback": {},
+        "volume": {"volume": 25, "muted": False},
+    }
+
+
+def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._handle_metadata(
+        SimpleNamespace(
+        metadata=SimpleNamespace(
+            title="Track",
+            artist="Artist",
+            album=None,
+            artwork_url=UndefinedField(),
+            progress=SimpleNamespace(
+                track_progress=12_500,
+                track_duration=UndefinedField(),
+                playback_speed=1,
+            ),
+        ),
+        playback_state=PlaybackStateType.PLAYING,
+    )
+    )
+
+    state = daemon._get_control_state()
+
+    assert state == {
+        "track": {"title": "Track", "artist": "Artist"},
         "playback": {"position": 12.5, "speed": 1},
         "volume": {"volume": 25, "muted": False},
     }

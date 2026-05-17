@@ -89,6 +89,8 @@ class SendspinDaemon:
         self._server_command_unsubscribe: Callable[[], None] | None = None
         self._control_runner: web.AppRunner | None = None
         self._last_state_payload: ServerStatePayload | None = None
+        self._control_track: dict[str, Any] = {}
+        self._control_playback: dict[str, Any] = {}
         self._playback_state: PlaybackStateType | None = None
 
     def _create_client(self) -> SendspinClient:
@@ -323,29 +325,7 @@ class SendspinDaemon:
 
     def _get_control_state(self) -> dict[str, Any]:
         """Build the current JSON-serializable control state."""
-        track: dict[str, Any] = {}
-        playback: dict[str, Any] = {}
-
-        if self._last_state_payload is not None:
-            metadata = self._last_state_payload.metadata
-            if metadata is not None and not self._is_undefined_field(metadata):
-                for key in ("title", "artist", "album", "artwork_url"):
-                    value = self._json_safe_value(self._get_defined_attr(metadata, key))
-                    if value is not None:
-                        track[key] = value
-
-                progress = self._get_defined_attr(metadata, "progress")
-                if progress is not None:
-                    track_progress = self._get_defined_attr(progress, "track_progress")
-                    track_duration = self._get_defined_attr(progress, "track_duration")
-                    playback_speed = self._get_defined_attr(progress, "playback_speed")
-                    if isinstance(track_progress, int | float):
-                        playback["position"] = track_progress / 1000.0
-                    if isinstance(track_duration, int | float):
-                        playback["duration"] = track_duration / 1000.0
-                    if isinstance(playback_speed, int | float):
-                        playback["speed"] = playback_speed
-
+        playback = dict(self._control_playback)
         if "speed" not in playback and self._playback_state is not None:
             playback["speed"] = 0 if self._playback_state == PlaybackStateType.PAUSED else 1
 
@@ -356,7 +336,38 @@ class SendspinDaemon:
                 "muted": self._audio_handler.muted,
             }
 
-        return {"track": track, "playback": playback, "volume": volume}
+        return {"track": dict(self._control_track), "playback": playback, "volume": volume}
+
+    def _update_control_metadata(self, payload: ServerStatePayload) -> None:
+        """Merge partial metadata updates into the state exposed to the control API."""
+        metadata = payload.metadata
+        if metadata is None:
+            self._control_track.clear()
+            self._control_playback.clear()
+            return
+        if self._is_undefined_field(metadata):
+            return
+
+        for key in ("title", "artist", "album", "artwork_url"):
+            value = self._json_safe_value(self._get_defined_attr(metadata, key))
+            if value is not None:
+                self._control_track[key] = value
+
+        progress = self._get_defined_attr(metadata, "progress")
+        if progress is None:
+            for key in ("position", "duration", "speed"):
+                self._control_playback.pop(key, None)
+            return
+
+        track_progress = self._get_defined_attr(progress, "track_progress")
+        track_duration = self._get_defined_attr(progress, "track_duration")
+        playback_speed = self._get_defined_attr(progress, "playback_speed")
+        if isinstance(track_progress, int | float):
+            self._control_playback["position"] = track_progress / 1000.0
+        if isinstance(track_duration, int | float):
+            self._control_playback["duration"] = track_duration / 1000.0
+        if isinstance(playback_speed, int | float):
+            self._control_playback["speed"] = playback_speed
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, external, etc.)."""
@@ -649,6 +660,7 @@ class SendspinDaemon:
     def _handle_metadata(self, payload: ServerStatePayload) -> None:
         """Logs the raw content of any server payload to stdout, stripping empty/undefined fields."""
         self._last_state_payload = payload
+        self._update_control_metadata(payload)
         playback_state = getattr(payload, "playback_state", None)
         if playback_state is not None:
             self._playback_state = playback_state
