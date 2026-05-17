@@ -373,6 +373,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Enable metadata logging (default:false)"
     )
     daemon_parser.add_argument(
+        "--control-api",
+        type=arg_str_to_bool,
+        default=False,
+        metavar="{true,false}",
+        help="Enable the local HTTP control API for integrations such as Kodi",
+    )
+    daemon_parser.add_argument(
+        "--control-host",
+        type=str,
+        default="127.0.0.1",
+        help="Host/IP address for the local HTTP control API",
+    )
+    daemon_parser.add_argument(
+        "--control-port",
+        type=int,
+        default=59999,
+        help="Port for the local HTTP control API",
+    )
+    daemon_parser.add_argument(
         "--url",
         default=None,
         help=(
@@ -728,6 +747,9 @@ async def _run_daemon_mode(
         product_name=args.product_name,
         interface=args.interface,
         log_metadata=should_log_metadata,
+        control_api=args.control_api,
+        control_host=args.control_host,
+        control_port=args.control_port,
     )
 
     daemon = SendspinDaemon(daemon_args)

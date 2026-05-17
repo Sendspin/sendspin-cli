@@ -7,9 +7,9 @@ import contextlib
 import logging
 import signal
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import ClientError, web
 from aiosendspin.client import ClientListener, SendspinClient
@@ -19,6 +19,7 @@ from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.types import (
     ConnectionReason,
     GoodbyeReason,
+    MediaCommand,
     PlaybackStateType,
     PlayerCommand,
     Roles,
@@ -56,6 +57,9 @@ class DaemonArgs:
     product_name: str | None = None
     interface: str | None = None
     log_metadata: bool = False
+    control_api: bool = False
+    control_host: str = "127.0.0.1"
+    control_port: int = 59999
 
 
 class SendspinDaemon:
@@ -83,6 +87,9 @@ class SendspinDaemon:
         self._server_url: str | None = None
         self._group_update_unsubscribe: Callable[[], None] | None = None
         self._server_command_unsubscribe: Callable[[], None] | None = None
+        self._control_runner: web.AppRunner | None = None
+        self._last_state_payload: ServerStatePayload | None = None
+        self._playback_state: PlaybackStateType | None = None
 
     def _create_client(self) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -90,7 +97,7 @@ class SendspinDaemon:
         client_roles = [Roles.PLAYER]
         if MPRIS_AVAILABLE and self._args.use_mpris:
             client_roles.extend([Roles.METADATA, Roles.CONTROLLER])
-        if self._args.log_metadata and not self._args.use_mpris:
+        if (self._args.log_metadata or self._args.control_api) and not self._args.use_mpris:
             client_roles.extend([Roles.METADATA])
 
 
@@ -155,6 +162,8 @@ class SendspinDaemon:
         )
         await self._audio_handler.read_initial_volume()
         await self._audio_handler.start_volume_monitor()
+        if self._args.control_api:
+            await self._start_control_api()
 
         try:
             if self._args.url is not None:
@@ -177,11 +186,147 @@ class SendspinDaemon:
             if self._listener is not None:
                 await self._listener.stop()
                 self._listener = None
+            await self._stop_control_api()
             if self._settings:
                 await self._settings.flush()
             logger.info("Daemon stopped")
 
         return 0
+
+    async def _start_control_api(self) -> None:
+        """Start the local HTTP control API."""
+        app = web.Application()
+        app.add_routes(
+            [
+                web.post("/control", self._handle_control_request),
+                web.get("/state", self._handle_state_request),
+            ]
+        )
+        self._control_runner = web.AppRunner(app)
+        await self._control_runner.setup()
+        site = web.TCPSite(self._control_runner, self._args.control_host, self._args.control_port)
+        await site.start()
+        logger.info(
+            "Sendspin control API listening on http://%s:%d",
+            self._args.control_host,
+            self._args.control_port,
+        )
+
+    async def _stop_control_api(self) -> None:
+        """Stop the local HTTP control API."""
+        if self._control_runner is None:
+            return
+        await self._control_runner.cleanup()
+        self._control_runner = None
+
+    async def _handle_control_request(self, request: web.Request) -> web.Response:
+        """Handle Kodi control API commands."""
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        if not isinstance(payload, dict):
+            return web.json_response({"error": "Payload must be a JSON object"}, status=400)
+
+        command = payload.get("command")
+        if not isinstance(command, str):
+            return web.json_response({"error": "Missing command"}, status=400)
+
+        try:
+            await self._apply_control_command(command, payload)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except RuntimeError as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+        return web.json_response({"ok": True})
+
+    async def _apply_control_command(self, command: str, payload: dict[str, Any]) -> None:
+        """Apply a validated control command."""
+        match command:
+            case "play":
+                await self._send_media_command(MediaCommand.PLAY)
+            case "pause":
+                await self._send_media_command(MediaCommand.PAUSE)
+            case "toggle_play_pause":
+                media_command = (
+                    MediaCommand.PAUSE
+                    if self._playback_state == PlaybackStateType.PLAYING
+                    else MediaCommand.PLAY
+                )
+                await self._send_media_command(media_command)
+            case "next":
+                await self._send_media_command(MediaCommand.NEXT)
+            case "previous":
+                await self._send_media_command(MediaCommand.PREVIOUS)
+            case "set_volume":
+                self._set_control_volume(payload)
+            case "seek":
+                raise ValueError("seek is not supported by this Sendspin daemon yet")
+            case _:
+                raise ValueError(f"Unknown command: {command}")
+
+    async def _send_media_command(self, command: MediaCommand) -> None:
+        """Send a group media command to the connected Sendspin server."""
+        if self._client is None or not self._client.connected:
+            raise RuntimeError("No connected Sendspin server")
+        await self._client.send_group_command(command)
+
+    def _set_control_volume(self, payload: dict[str, Any]) -> None:
+        """Apply a local player volume command from the control API."""
+        if self._audio_handler is None:
+            raise RuntimeError("Audio handler is not initialized")
+
+        raw_volume = payload.get("volume")
+        if not isinstance(raw_volume, int):
+            raise ValueError("volume must be an integer")
+        if not 0 <= raw_volume <= 100:
+            raise ValueError("volume must be between 0 and 100")
+
+        muted = bool(payload.get("muted", False))
+        self._audio_handler.set_volume(raw_volume, muted=muted)
+
+    async def _handle_state_request(self, _request: web.Request) -> web.Response:
+        """Return the daemon state expected by the Kodi add-on."""
+        return web.json_response(self._get_control_state())
+
+    def _get_control_state(self) -> dict[str, Any]:
+        """Build the current JSON-serializable control state."""
+        track: dict[str, Any] = {}
+        playback: dict[str, Any] = {}
+
+        if self._last_state_payload is not None:
+            metadata = self._last_state_payload.metadata
+            if metadata is not None:
+                for key in ("title", "artist", "album", "artwork_url"):
+                    value = getattr(metadata, key, None)
+                    if value is not None:
+                        track[key] = value
+
+                progress = getattr(metadata, "progress", None)
+                if progress is not None:
+                    track_progress = getattr(progress, "track_progress", None)
+                    track_duration = getattr(progress, "track_duration", None)
+                    playback_speed = getattr(progress, "playback_speed", None)
+                    if track_progress is not None:
+                        playback["position"] = track_progress / 1000.0
+                    if track_duration is not None:
+                        playback["duration"] = track_duration / 1000.0
+                    if playback_speed is not None:
+                        playback["speed"] = playback_speed
+
+        if "speed" not in playback and self._playback_state is not None:
+            playback["speed"] = 0 if self._playback_state == PlaybackStateType.PAUSED else 1
+
+        volume: dict[str, Any] = {}
+        if self._audio_handler is not None:
+            volume = {
+                "volume": self._audio_handler.volume,
+                "muted": self._audio_handler.muted,
+            }
+
+        return {"track": track, "playback": playback, "volume": volume}
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
         """Handle volume changes from any source (server command, external, etc.)."""
@@ -199,8 +344,8 @@ class SendspinDaemon:
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
-        if self._args.log_metadata:
-                self._setup_metadata_listeners()
+        if self._args.log_metadata or self._args.control_api:
+            self._setup_metadata_listeners()
         self._audio_handler.attach_client(self._client)
         self._server_url = self._args.url
         self._server_command_unsubscribe = self._client.add_server_command_listener(
@@ -344,7 +489,7 @@ class SendspinDaemon:
             if MPRIS_AVAILABLE and self._args.use_mpris:
                 self._mpris = SendspinMpris(client)
                 self._mpris.start()
-            if self._args.log_metadata:
+            if self._args.log_metadata or self._args.control_api:
                 self._setup_metadata_listeners()
 
         # Handshake complete, release lock so new connections can proceed
@@ -468,42 +613,46 @@ class SendspinDaemon:
             return
 
         self._client.add_metadata_listener(self._handle_metadata)
-        
+
         logger.info("Successfully registered metadata listener")
 
     def _handle_metadata(self, payload: ServerStatePayload) -> None:
         """Logs the raw content of any server payload to stdout, stripping empty/undefined fields."""
+        self._last_state_payload = payload
+        playback_state = getattr(payload, "playback_state", None)
+        if playback_state is not None:
+            self._playback_state = playback_state
+
         if not getattr(self._args, "log_metadata", False):
             return
-        
+
         create_task(self._log_metadata_delayed(payload))
 
     async def _log_metadata_delayed(self, payload: ServerStatePayload) -> None:
         """Calculates the delay and waits for the specific audio sync point."""
         try:
             raw_data = asdict(payload)
-            
+
             meta = raw_data.get("metadata", {})
             server_ts = meta.get("timestamp") or raw_data.get("timestamp")
-            
+
             if server_ts and self._client and self._client.is_time_synchronized():
-                
                 target_time_us = self._client.compute_play_time(server_ts)
-                
+
                 # Convert microseconds to seconds for asyncio.sleep and time.monotonic
                 target_time_s = target_time_us / 1_000_000.0
-                
+
                 # 2. Wait until the local clock hits the target moment
                 wait_time = target_time_s - time.monotonic()
                 if 0 < wait_time < 10:  # Sane bounds check
                     await asyncio.sleep(wait_time)
 
             # --- Data Cleaning Logic ---
-            def clean_empty(value):
+            def clean_empty(value: Any) -> Any:
                 if isinstance(value, dict):
                     cleaned = {k: clean_empty(v) for k, v in value.items()}
                     return {k: v for k, v in cleaned.items() if v not in (None, {}, [])}
-                elif hasattr(value, "__class__") and value.__class__.__name__ == "UndefinedField":
+                if hasattr(value, "__class__") and value.__class__.__name__ == "UndefinedField":
                     return None
                 return value
 

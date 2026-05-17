@@ -317,6 +317,16 @@ Use `--manufacturer` and `--product-name` to override the device identity report
 sendspin daemon --name "Living Room" --manufacturer "Acme" --product-name "Living Room Speaker"
 ```
 
+### Daemon Control API
+
+Daemon mode can expose a local HTTP API for integrations such as Kodi:
+
+```bash
+sendspin daemon --control-api true --control-host 127.0.0.1 --control-port 59999
+```
+
+The API accepts playback and local player volume commands at `POST /control`, and exposes current track/playback/volume state at `GET /state`. Bind this API only to trusted local interfaces.
+
 ### Hooks
 
 You can run external commands when audio streams start or stop. This is useful for controlling amplifiers, lighting, or other home automation:
