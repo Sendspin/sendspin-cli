@@ -92,6 +92,7 @@ class SendspinDaemon:
         self._control_track: dict[str, Any] = {}
         self._control_playback: dict[str, Any] = {}
         self._playback_state: PlaybackStateType | None = None
+        self._control_metadata_updated_at: float | None = None
 
     def _create_client(self) -> SendspinClient:
         """Create a new SendspinClient instance."""
@@ -328,6 +329,18 @@ class SendspinDaemon:
         playback = dict(self._control_playback)
         if "speed" not in playback and self._playback_state is not None:
             playback["speed"] = 0 if self._playback_state == PlaybackStateType.PAUSED else 1
+        
+        if "position" in playback and self._control_metadata_updated_at is not None:
+            current_speed = playback.get("speed", 0)
+            if current_speed > 0:
+                elapsed_seconds = time.monotonic() - self._control_metadata_updated_at
+                realtime_position = playback["position"] + (elapsed_seconds * current_speed)
+                
+                # Cap progress at total duration if duration is available
+                if "duration" in playback:
+                    realtime_position = min(realtime_position, playback["duration"])
+                    
+                playback["position"] = realtime_position
 
         volume: dict[str, Any] = {}
         if self._audio_handler is not None:
@@ -344,6 +357,7 @@ class SendspinDaemon:
         if metadata is None:
             self._control_track.clear()
             self._control_playback.clear()
+            self._control_metadata_updated_at = None
             return
         if self._is_undefined_field(metadata):
             return
@@ -364,6 +378,7 @@ class SendspinDaemon:
         playback_speed = self._get_defined_attr(progress, "playback_speed")
         if isinstance(track_progress, int | float):
             self._control_playback["position"] = track_progress / 1000.0
+            self._control_metadata_updated_at = time.monotonic()
         if isinstance(track_duration, int | float):
             self._control_playback["duration"] = track_duration / 1000.0
         if isinstance(playback_speed, int | float):
