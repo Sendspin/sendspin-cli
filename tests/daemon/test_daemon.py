@@ -36,6 +36,10 @@ class _FakeClient:
         self.commands.append(command)
 
 
+class UndefinedField:
+    pass
+
+
 def _make_daemon(tmp_path: Path, *, settings_volume: int, settings_muted: bool) -> SendspinDaemon:
     settings = ClientSettings(
         _settings_file=tmp_path / "settings.json",
@@ -149,3 +153,29 @@ def test_control_toggle_uses_playback_state(tmp_path: Path) -> None:
     asyncio.run(run())
 
     assert client.commands == [MediaCommand.PAUSE]
+
+
+def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._last_state_payload = SimpleNamespace(
+        metadata=SimpleNamespace(
+            title="Track",
+            artist=UndefinedField(),
+            album=None,
+            artwork_url=UndefinedField(),
+            progress=SimpleNamespace(
+                track_progress=12_500,
+                track_duration=UndefinedField(),
+                playback_speed=1,
+            ),
+        )
+    )
+
+    state = daemon._get_control_state()
+
+    assert state == {
+        "track": {"title": "Track"},
+        "playback": {"position": 12.5, "speed": 1},
+        "volume": {"volume": 25, "muted": False},
+    }

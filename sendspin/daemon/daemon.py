@@ -291,6 +291,36 @@ class SendspinDaemon:
         """Return the daemon state expected by the Kodi add-on."""
         return web.json_response(self._get_control_state())
 
+    def _get_defined_attr(self, obj: object, name: str) -> Any:
+        """Return an attribute unless aiosendspin marks it as undefined."""
+        value = getattr(obj, name, None)
+        if self._is_undefined_field(value):
+            return None
+        return value
+
+    @staticmethod
+    def _is_undefined_field(value: object) -> bool:
+        return value.__class__.__name__ == "UndefinedField"
+
+    def _json_safe_value(self, value: Any) -> Any:
+        """Convert protocol model values into JSON-safe primitives."""
+        if value is None or self._is_undefined_field(value):
+            return None
+        if isinstance(value, str | int | float | bool):
+            return value
+        if isinstance(value, list | tuple):
+            return [item for item in (self._json_safe_value(item) for item in value) if item is not None]
+        if isinstance(value, dict):
+            return {
+                key: item
+                for key, item in ((key, self._json_safe_value(item)) for key, item in value.items())
+                if item is not None
+            }
+        enum_value = getattr(value, "value", None)
+        if isinstance(enum_value, str | int | float | bool):
+            return enum_value
+        return str(value)
+
     def _get_control_state(self) -> dict[str, Any]:
         """Build the current JSON-serializable control state."""
         track: dict[str, Any] = {}
@@ -298,22 +328,22 @@ class SendspinDaemon:
 
         if self._last_state_payload is not None:
             metadata = self._last_state_payload.metadata
-            if metadata is not None:
+            if metadata is not None and not self._is_undefined_field(metadata):
                 for key in ("title", "artist", "album", "artwork_url"):
-                    value = getattr(metadata, key, None)
+                    value = self._json_safe_value(self._get_defined_attr(metadata, key))
                     if value is not None:
                         track[key] = value
 
-                progress = getattr(metadata, "progress", None)
+                progress = self._get_defined_attr(metadata, "progress")
                 if progress is not None:
-                    track_progress = getattr(progress, "track_progress", None)
-                    track_duration = getattr(progress, "track_duration", None)
-                    playback_speed = getattr(progress, "playback_speed", None)
-                    if track_progress is not None:
+                    track_progress = self._get_defined_attr(progress, "track_progress")
+                    track_duration = self._get_defined_attr(progress, "track_duration")
+                    playback_speed = self._get_defined_attr(progress, "playback_speed")
+                    if isinstance(track_progress, int | float):
                         playback["position"] = track_progress / 1000.0
-                    if track_duration is not None:
+                    if isinstance(track_duration, int | float):
                         playback["duration"] = track_duration / 1000.0
-                    if playback_speed is not None:
+                    if isinstance(playback_speed, int | float):
                         playback["speed"] = playback_speed
 
         if "speed" not in playback and self._playback_state is not None:
