@@ -3,7 +3,15 @@
 import time
 from unittest.mock import patch
 
-from sendspin.tui.visualizer import VisualizerState, loudness_to_colors, render_spectrum
+from aiosendspin.models.visualizer import BeatTiming
+
+from sendspin.tui.visualizer import (
+    BeatState,
+    VisualizerState,
+    loudness_to_colors,
+    render_beat_strip,
+    render_spectrum,
+)
 
 
 # --- loudness_to_colors tests ---
@@ -160,3 +168,144 @@ def test_render_spectrum_freq_peak_color_styles_peak_marker() -> None:
         if row.plain[span.start : span.end] == "▔"
     ]
     assert marker_styles == ["#ff00ff"]
+
+
+def test_render_spectrum_beat_pulse_brightens_tip() -> None:
+    """beat_pulse>0 should brighten the tip color (top row) without going full white."""
+    magnitudes = [1.0]
+    peaks = [0.0]
+    no_pulse = render_spectrum(
+        magnitudes, width=1, height=2, loudness=0.5, peaks=peaks, beat_pulse=0.0
+    )
+    full_pulse = render_spectrum(
+        magnitudes, width=1, height=2, loudness=0.5, peaks=peaks, beat_pulse=1.0
+    )
+    no_top_style = no_pulse[0].spans[0].style if no_pulse[0].spans else ""
+    full_top_style = full_pulse[0].spans[0].style if full_pulse[0].spans else ""
+    assert no_top_style != full_top_style
+    # Cap of 0.5 means peak pulse must not reach pure white (#ffffff).
+    assert "#ffffff" not in str(full_top_style)
+
+
+# --- BeatState tests ---
+
+
+def test_beat_state_idle_pulse_is_zero() -> None:
+    state = BeatState()
+    assert state.pulse_intensity() == 0.0
+    assert state.is_active is False
+
+
+def test_beat_state_pulse_decays_to_zero() -> None:
+    state = BeatState()
+    state.record_beat(BeatTiming(0))
+    assert state.pulse_intensity() > 0.5
+
+    with patch("sendspin.tui.visualizer.time") as mock_time:
+        # 1 second after — way past decay window
+        mock_time.monotonic.return_value = time.monotonic() + 1.0
+        assert state.pulse_intensity() == 0.0
+
+
+def test_beat_state_set_schedule_marks_active() -> None:
+    state = BeatState()
+    state.set_schedule([BeatTiming(100), BeatTiming(200), BeatTiming(300)])
+    assert state.is_active is True
+    assert [b.timestamp_us for b in state.upcoming()] == [100, 200, 300]
+
+
+def test_beat_state_clear_resets() -> None:
+    state = BeatState()
+    state.record_beat(BeatTiming(0))
+    state.set_schedule([BeatTiming(1), BeatTiming(2)])
+    state.clear()
+    assert state.is_active is False
+    assert state.upcoming() == []
+    assert state.recent() == []
+
+
+def test_beat_state_recent_windowed() -> None:
+    """Recent beats outside the visible window are pruned."""
+    now = [10_000_000_000]
+    state = BeatState(now_us=lambda: now[0])
+    state.record_beat(BeatTiming(now[0]))
+    # Advance clock past the strip window
+    now[0] += 10_000_000  # 10s
+    state.record_beat(BeatTiming(now[0]))
+    assert len(state.recent()) == 1
+    assert state.recent()[0].timestamp_us == now[0]
+
+
+# --- render_beat_strip tests ---
+
+
+def test_render_beat_strip_playhead_in_center() -> None:
+    line = render_beat_strip(width=21, now_us=0, recent=[], upcoming=[], loudness=0.5, pulse=0.0)
+    # Idle pulse uses the thin playhead glyph.
+    assert line.plain[10] == "│"
+
+
+def test_render_beat_strip_playhead_grows_on_pulse() -> None:
+    mid = render_beat_strip(width=21, now_us=0, recent=[], upcoming=[], loudness=0.5, pulse=0.3)
+    peak = render_beat_strip(width=21, now_us=0, recent=[], upcoming=[], loudness=0.5, pulse=1.0)
+    assert mid.plain[10] == "┃"
+    assert peak.plain[10] == "█"
+
+
+def test_render_beat_strip_past_and_future_dots() -> None:
+    half_s = 4.0
+    line = render_beat_strip(
+        width=21,
+        now_us=0,
+        recent=[BeatTiming(-int(half_s * 0.5 * 1_000_000))],
+        upcoming=[BeatTiming(int(half_s * 0.5 * 1_000_000))],
+        loudness=0.5,
+        pulse=0.0,
+    )
+    # Past beat lands ~25% to the left of center, future beat ~25% right.
+    assert line.plain.count("●") == 2
+    assert line.plain[5] == "●"
+    assert line.plain[15] == "●"
+
+
+def test_render_beat_strip_downbeat_renders_square() -> None:
+    """Downbeats render as a square block (■) instead of a circle (●)."""
+    line = render_beat_strip(
+        width=21,
+        now_us=0,
+        recent=[BeatTiming(-2_000_000, is_downbeat=True)],
+        upcoming=[BeatTiming(2_000_000, is_downbeat=False)],
+        loudness=0.5,
+        pulse=0.0,
+    )
+    assert line.plain.count("■") == 1
+    assert line.plain.count("●") == 1
+    assert line.plain[5] == "■"
+    assert line.plain[15] == "●"
+
+
+def test_render_beat_strip_downbeat_wins_overlap() -> None:
+    """When a regular and a downbeat fall on the same cell, the downbeat keeps it."""
+    line = render_beat_strip(
+        width=21,
+        now_us=0,
+        recent=[BeatTiming(-2_000_000, is_downbeat=True)],
+        upcoming=[BeatTiming(-2_000_000, is_downbeat=False)],
+        loudness=0.5,
+        pulse=0.0,
+    )
+    assert line.plain[5] == "■"
+    assert line.plain.count("●") == 0
+
+
+def test_render_beat_strip_beats_outside_window_dropped() -> None:
+    line = render_beat_strip(
+        width=21,
+        now_us=0,
+        recent=[BeatTiming(-100_000_000)],  # 100s in the past
+        upcoming=[BeatTiming(100_000_000)],
+        loudness=0.5,
+        pulse=0.0,
+    )
+    assert line.plain.count("●") == 0
+    assert line.plain.count("■") == 0

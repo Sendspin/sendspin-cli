@@ -29,6 +29,7 @@ from aiosendspin.models.player import (
     SupportedAudioFormat,
 )
 from aiosendspin.models.visualizer import (
+    BeatTiming,
     ClientHelloVisualizerSpectrum,
     ClientHelloVisualizerSupport,
     VisualizerFrame,
@@ -50,7 +51,7 @@ from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import ColorMode, SendspinUI
 from sendspin.utils import create_task, get_device_info
-from sendspin.visualizer_connector import VisualizerHandler
+from sendspin.visualizer_connector import BeatHandler, VisualizerHandler
 
 logger = logging.getLogger(__name__)
 
@@ -251,6 +252,7 @@ class SendspinApp:
         self._client: SendspinClient | None = None
         self._audio_handler: AudioStreamHandler | None = None
         self._visualizer_handler: VisualizerHandler | None = None
+        self._beat_handler: BeatHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
         # Currently-applied static delay in milliseconds, mirroring
@@ -270,7 +272,7 @@ class SendspinApp:
         """Build visualizer support payload for client/hello."""
         return ClientHelloVisualizerSupport(
             buffer_capacity=65536,
-            types=["loudness", "spectrum"],
+            types=["loudness", "spectrum", "beat"],
             batch_max=8,
             spectrum=ClientHelloVisualizerSpectrum(
                 n_disp_bins=48,
@@ -288,6 +290,9 @@ class SendspinApp:
         visualizer_support = None
         if self._visualizer_enabled:
             visualizer_support = self._build_visualizer_support()
+            # Prefer v1 (downbeat-aware); fall back to the draft wire when a
+            # server only implements the legacy negotiation.
+            roles.append(Roles.VISUALIZER_V1)
             roles.append(Roles.VISUALIZER)
 
         assert self._audio_handler is not None
@@ -331,6 +336,13 @@ class SendspinApp:
                 on_frame=self._handle_visualizer_frame,
             )
             self._visualizer_handler.attach_client(self._client)
+            self._beat_handler = BeatHandler(
+                on_beat=self._handle_beat,
+                on_schedule=self._handle_beat_schedule,
+            )
+            self._beat_handler.attach_client(self._client)
+            if self._ui is not None:
+                self._ui.set_server_clock(self._client.now_us)
 
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
@@ -351,6 +363,11 @@ class SendspinApp:
         if self._visualizer_handler:
             self._visualizer_handler.detach()
             self._visualizer_handler = None
+        if self._beat_handler:
+            self._beat_handler.detach()
+            self._beat_handler = None
+        if self._ui is not None:
+            self._ui.set_server_clock(None)
 
         if self._mpris:
             self._mpris.stop()
@@ -492,6 +509,8 @@ class SendspinApp:
                 self._mpris.stop()
             if self._visualizer_handler:
                 self._visualizer_handler.detach()
+            if self._beat_handler:
+                self._beat_handler.detach()
             if self._ui:
                 self._ui.stop()
             if self._audio_handler:
@@ -524,6 +543,9 @@ class SendspinApp:
         self._ui.set_disconnected(message)
         if self._visualizer_handler:
             self._visualizer_handler.reset()
+        if self._beat_handler:
+            self._beat_handler.reset()
+        self._ui.clear_beats()
         await self._audio_handler.handle_disconnect()
 
     async def _connect_cancellable(self, url: str) -> None:
@@ -844,6 +866,16 @@ class SendspinApp:
         """Handle a visualizer frame from the connector."""
         if self._ui is not None:
             self._ui.set_visualizer_frame(frame.spectrum, frame.loudness)
+
+    def _handle_beat(self, beat: BeatTiming) -> None:
+        """Handle a beat hitting the playhead."""
+        if self._ui is not None:
+            self._ui.record_beat(beat)
+
+    def _handle_beat_schedule(self, scheduled: list[BeatTiming]) -> None:
+        """Handle an updated upcoming-beat schedule."""
+        if self._ui is not None:
+            self._ui.set_beat_schedule(scheduled)
 
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""

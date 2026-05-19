@@ -14,6 +14,7 @@ from typing import Any, Self
 
 from aiosendspin.models.color import SessionUpdateColor
 from aiosendspin.models.types import PlaybackStateType, RepeatMode, UndefinedField
+from aiosendspin.models.visualizer import BeatTiming
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -22,7 +23,9 @@ from rich.text import Text
 
 from sendspin.discovery import DiscoveredServer
 from sendspin.tui.visualizer import (
+    BeatState,
     VisualizerState,
+    render_beat_strip,
     render_spectrum,
 )
 from sendspin.utils import create_task
@@ -116,6 +119,9 @@ class UIState:
     # Visualizer
     visualizer_enabled: bool = False
     visualizer_state: VisualizerState = field(default_factory=VisualizerState)
+    beat_state: BeatState = field(default_factory=BeatState)
+    # Synced server clock provider used for the beat timeline strip.
+    server_now_us: Callable[[], int] | None = None
 
     # Artwork palette pushed by the server via color@v1.
     palette_primary: tuple[int, int, int] | None = None
@@ -208,7 +214,9 @@ class SendspinUI:
 
     def _needs_visualizer_refresh(self) -> bool:
         """Check if the visualizer needs periodic refreshes for interpolation."""
-        return self._state.visualizer_enabled and self._state.visualizer_state.is_active
+        if not self._state.visualizer_enabled:
+            return False
+        return self._state.visualizer_state.is_active or self._state.beat_state.is_active
 
     def _next_refresh_interval(self) -> float | None:
         """Return the next periodic refresh interval, if any."""
@@ -766,12 +774,17 @@ class SendspinUI:
         return self._make_panel(content, title="Server", default_border="yellow", expand=expand)
 
     def _build_visualizer_rows(self, height: int) -> list[Text]:
-        """Build the spectrum visualizer as raw Text rows."""
+        """Build the visualizer as raw Text rows, totaling `height`.
+
+        Reserves the top row for the beat timeline strip when there's room;
+        the remaining rows are the spectrum.
+        """
         state = self._state.visualizer_state
         state.step()
         magnitudes = state.get_spectrum()
         loudness = state.loudness
         peaks = state.get_peaks()
+        beat_pulse = self._state.beat_state.pulse_intensity()
 
         # Low end uses opposite-mode bg to pop, high end uses on-color for contrast.
         if not self._palette_active():
@@ -793,17 +806,40 @@ class SendspinUI:
                 palette_high = self._state.palette_on_light
 
         bar_width = max(10, self._console.width - 1)
-        return render_spectrum(
-            magnitudes,
-            bar_width,
-            height,
-            loudness,
-            peaks,
-            palette_low=palette_low,
-            palette_high=palette_high,
-            bg_color=self._palette_bg_hex(),
-            freq_peak_color=freq_peak,
+        bg_color = self._palette_bg_hex()
+        rows: list[Text] = []
+        spectrum_height = height
+        if height >= 2:
+            spectrum_height = height - 1
+            if self._state.server_now_us is not None:
+                now_us = self._state.server_now_us()
+                rows.append(
+                    render_beat_strip(
+                        width=bar_width,
+                        now_us=now_us,
+                        recent=self._state.beat_state.recent(),
+                        upcoming=self._state.beat_state.upcoming(),
+                        loudness=loudness,
+                        pulse=beat_pulse,
+                    )
+                )
+            else:
+                rows.append(Text(" " * bar_width))
+        rows.extend(
+            render_spectrum(
+                magnitudes,
+                bar_width,
+                spectrum_height,
+                loudness,
+                peaks,
+                beat_pulse=beat_pulse,
+                palette_low=palette_low,
+                palette_high=palette_high,
+                bg_color=bg_color,
+                freq_peak_color=freq_peak,
+            )
         )
+        return rows
 
     def _measure_layout_height(self, layout: Table) -> int:
         """Measure the rendered height of a layout table."""
@@ -1111,6 +1147,33 @@ class SendspinUI:
         self._state.visualizer_enabled = enabled
         if not enabled:
             self._state.visualizer_state.clear()
+            self._state.beat_state.clear()
+        self.refresh()
+
+    def set_server_clock(self, now_us: Callable[[], int] | None) -> None:
+        """Inject the synced-clock callable used by the beat timeline strip."""
+        self._state.server_now_us = now_us
+        # Rebuild beat state with the new clock for proper recent-beat windowing.
+        self._state.beat_state = BeatState(now_us=now_us)
+        self.refresh()
+
+    def record_beat(self, beat: BeatTiming) -> None:
+        """Record a beat that has just landed on the client."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.beat_state.record_beat(beat)
+        self.refresh()
+
+    def set_beat_schedule(self, scheduled: list[BeatTiming]) -> None:
+        """Update the upcoming beats used by the timeline strip."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.beat_state.set_schedule(scheduled)
+        self.refresh()
+
+    def clear_beats(self) -> None:
+        """Clear all beat state immediately."""
+        self._state.beat_state.clear()
         self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:

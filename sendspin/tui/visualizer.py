@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 
+from aiosendspin.models.visualizer import BeatTiming
 from rich.text import Text
 
 # Unicode block characters for bar rendering (9 levels including space)
@@ -16,6 +18,11 @@ _SMOOTH_RATE_PER_SECOND = 14.0
 # Peak hold configuration
 _PEAK_HOLD_SECONDS = 0.5
 _PEAK_FALL_RATE = 0.375  # normalized units per second (≈6 rows/sec at 16 rows)
+
+# Beat flash decay (seconds for pulse to fully fade)
+_BEAT_PULSE_DECAY_SECONDS = 0.18
+# Beat strip half-window (seconds shown on either side of the playhead)
+_BEAT_STRIP_HALF_WINDOW_S = 4.0
 
 # Loudness-to-color tier stops: (loudness_threshold, (R, G, B))
 _COLOR_TIERS: list[tuple[float, tuple[int, int, int]]] = [
@@ -172,12 +179,155 @@ class VisualizerState:
         return list(self._peaks)
 
 
+class BeatState:
+    """Stores beat events and produces a decaying pulse intensity.
+
+    The scheduled BeatHandler calls record_beat() exactly when a beat is due
+    on the client; the render loop reads pulse_intensity() each frame to drive
+    the tip flash. set_schedule() feeds upcoming beats for the timeline strip.
+    Each beat carries its downbeat flag so the strip can paint bar starts
+    differently.
+    """
+
+    def __init__(self, now_us: Callable[[], int] | None = None) -> None:
+        """Initialize beat state.
+
+        :param now_us: Function returning the synced server clock in microseconds.
+            Optional; falls back to local monotonic time scaled to microseconds.
+        """
+        self._now_us = now_us
+        self._last_beat_monotonic: float | None = None
+        self._scheduled: list[BeatTiming] = []
+        self._recent: list[BeatTiming] = []
+
+    def record_beat(self, beat: BeatTiming) -> None:
+        """Record that a beat has just landed (call from BeatHandler.on_beat)."""
+        self._last_beat_monotonic = time.monotonic()
+        # Record the beat's actual server timestamp so it lands on the playhead
+        # cell instead of drifting one cell right.
+        self._recent.append(beat)
+        if self._now_us is not None:
+            cutoff = self._now_us() - int(_BEAT_STRIP_HALF_WINDOW_S * 1_000_000)
+            self._recent = [b for b in self._recent if b.timestamp_us >= cutoff]
+
+    def set_schedule(self, scheduled: list[BeatTiming]) -> None:
+        """Set the upcoming beat list (BeatTiming with server-clock timestamps)."""
+        self._scheduled = list(scheduled)
+
+    def clear(self) -> None:
+        """Clear all beat state immediately."""
+        self._last_beat_monotonic = None
+        self._scheduled = []
+        self._recent = []
+
+    def pulse_intensity(self) -> float:
+        """Return current beat pulse intensity (0.0 idle, 1.0 just hit)."""
+        if self._last_beat_monotonic is None:
+            return 0.0
+        elapsed = time.monotonic() - self._last_beat_monotonic
+        if elapsed >= _BEAT_PULSE_DECAY_SECONDS:
+            return 0.0
+        return max(0.0, 1.0 - elapsed / _BEAT_PULSE_DECAY_SECONDS)
+
+    def upcoming(self) -> list[BeatTiming]:
+        """Return upcoming beats."""
+        return list(self._scheduled)
+
+    def recent(self) -> list[BeatTiming]:
+        """Return recent past beats inside the strip window."""
+        return list(self._recent)
+
+    @property
+    def is_active(self) -> bool:
+        """Whether there is current or recent beat activity."""
+        return bool(self._scheduled) or self._last_beat_monotonic is not None
+
+
+def render_beat_strip(
+    width: int,
+    now_us: int,
+    recent: list[BeatTiming],
+    upcoming: list[BeatTiming],
+    loudness: float,
+    pulse: float,
+) -> Text:
+    """Render a single-row beat timeline strip.
+
+    Past beats appear left of center, upcoming beats appear right of center,
+    `│` marks the playhead. Each beat falls onto the closest character cell.
+    Downbeats render as ``■``, regular beats as ``●``. If a downbeat and a
+    regular beat land on the same cell, the downbeat wins.
+    """
+    if width <= 0:
+        return Text("")
+    half_us = int(_BEAT_STRIP_HALF_WINDOW_S * 1_000_000)
+    if half_us <= 0:
+        return Text(" " * width)
+
+    cells = [" "] * width
+    styles: list[str | None] = [None] * width
+    # Tracks whether a cell already shows a downbeat so a later regular beat
+    # doesn't overwrite it.
+    is_downbeat_cell = [False] * width
+    center = width // 2
+
+    tip, base = loudness_to_colors(loudness)
+    past_color = _rgb_to_hex(*base)
+    upcoming_color = _rgb_to_hex(*_lerp_rgb(base, tip, 0.5))
+
+    def place(timestamp_us: int, glyph: str, style: str, *, downbeat: bool) -> None:
+        offset_us = timestamp_us - now_us
+        if abs(offset_us) > half_us:
+            return
+        cell = center + int(round((offset_us / half_us) * (width / 2)))
+        if not 0 <= cell < width:
+            return
+        if is_downbeat_cell[cell] and not downbeat:
+            return
+        cells[cell] = glyph
+        styles[cell] = style
+        if downbeat:
+            is_downbeat_cell[cell] = True
+
+    for beat in recent:
+        glyph = "■" if beat.is_downbeat else "●"
+        place(beat.timestamp_us, glyph, past_color, downbeat=beat.is_downbeat)
+    for beat in upcoming:
+        glyph = "■" if beat.is_downbeat else "●"
+        place(beat.timestamp_us, glyph, upcoming_color, downbeat=beat.is_downbeat)
+
+    # Playhead overlays whatever was at center. Grows on beat pulse:
+    # idle = thin ┃, mid pulse = heavy ┃, peak pulse = full block █.
+    playhead_color = _rgb_to_hex(
+        min(255, int(tip[0] + (255 - tip[0]) * pulse)),
+        min(255, int(tip[1] + (255 - tip[1]) * pulse)),
+        min(255, int(tip[2] + (255 - tip[2]) * pulse)),
+    )
+    if pulse >= 0.6:
+        playhead_glyph = "█"
+    elif pulse >= 0.15:
+        playhead_glyph = "┃"
+    else:
+        playhead_glyph = "│"
+    cells[center] = playhead_glyph
+    styles[center] = playhead_color
+
+    line = Text()
+    for ch, style in zip(cells, styles, strict=True):
+        if style is None:
+            line.append(ch)
+        else:
+            line.append(ch, style=style)
+    return line
+
+
 def render_spectrum(
     magnitudes: list[float],
     width: int,
     height: int,
     loudness: float,
     peaks: list[float],
+    beat_pulse: float = 0.0,
     palette_low: tuple[int, int, int] | None = None,
     palette_high: tuple[int, int, int] | None = None,
     bg_color: str | None = None,
@@ -191,6 +341,7 @@ def render_spectrum(
         height: Number of text rows (each row = 8 block levels).
         loudness: Normalized 0.0-1.0 loudness for color selection.
         peaks: Normalized 0.0-1.0 peak hold heights per bin.
+        beat_pulse: 0.0-1.0 intensity mixing the tip color toward white on beat.
         palette_low: Optional RGB anchor for low-loudness tip color.
         palette_high: Optional RGB anchor for high-loudness tip color.
         bg_color: Optional hex background painted behind every cell.
@@ -204,6 +355,16 @@ def render_spectrum(
         return [Text(" " * max(0, width), style=empty_style) for _ in range(max(0, height))]
 
     tip, base = loudness_to_colors(loudness, palette_low, palette_high)
+    if beat_pulse > 0.0:
+        # Mix tip toward white at peak pulse; keep base untouched so the bottom
+        # of the bars doesn't flicker. Capped at 0.5 for a gentle lift instead
+        # of a hard strobe.
+        flash_t = max(0.0, min(1.0, beat_pulse)) * 0.5
+        tip = (
+            int(tip[0] + (255 - tip[0]) * flash_t),
+            int(tip[1] + (255 - tip[1]) * flash_t),
+            int(tip[2] + (255 - tip[2]) * flash_t),
+        )
 
     # Find frequency peak bin (for highlight color on its peak marker)
     freq_peak_bin = max(range(len(magnitudes)), key=lambda i: magnitudes[i])
