@@ -62,6 +62,8 @@ class ColorMode(Enum):
         return cls.DARK
 
 
+# `dim` deliberately omitted: terminals render it ~50% grey, which fails the
+# ≥4.5:1 contrast the spec requires against the artwork backgrounds.
 _STYLE_MODIFIERS: frozenset[str] = frozenset(
     {"bold", "italic", "underline", "reverse", "strike", "blink"}
 )
