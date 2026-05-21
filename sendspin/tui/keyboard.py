@@ -178,6 +178,7 @@ async def keyboard_loop(
         "r": ("repeat", handler.cycle_repeat),
         "x": ("shuffle", handler.toggle_shuffle),
         "v": ("visualizer", on_toggle_visualizer),
+        "t": ("theme", ui.cycle_color_mode),
         # Delay adjustment
         ",": ("delay-", lambda: handler.adjust_delay(-10)),
         ".": ("delay+", lambda: handler.adjust_delay(10)),

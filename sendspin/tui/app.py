@@ -48,7 +48,7 @@ from sendspin.discovery import ServiceDiscovery, DiscoveredServer
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
-from sendspin.tui.ui import SendspinUI
+from sendspin.tui.ui import ColorMode, SendspinUI
 from sendspin.utils import create_task, get_device_info
 from sendspin.visualizer_connector import VisualizerHandler
 
@@ -284,7 +284,7 @@ class SendspinApp:
     def _create_client(self) -> SendspinClient:
         """Create a new SendspinClient with roles based on current visualizer state."""
         args = self._args
-        roles = [Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA]
+        roles = [Roles.CONTROLLER, Roles.PLAYER, Roles.METADATA, Roles.COLOR]
         visualizer_support = None
         if self._visualizer_enabled:
             visualizer_support = self._build_visualizer_support()
@@ -322,6 +322,7 @@ class SendspinApp:
             self._client.add_group_update_listener(self._handle_group_update),
             self._client.add_controller_state_listener(self._handle_server_state),
             self._client.add_server_command_listener(self._handle_server_command),
+            self._client.add_color_listener(self._handle_color_update),
         ]
         self._audio_handler.attach_client(self._client)
 
@@ -343,6 +344,9 @@ class SendspinApp:
             unsub()
         self._listener_unsubscribes = []
         self._audio_handler.detach_client()
+        # Drop the per-server palette so a non-color server reverts to unthemed.
+        if self._ui is not None:
+            self._ui.reset_palette()
 
         if self._visualizer_handler:
             self._visualizer_handler.detach()
@@ -411,6 +415,8 @@ class SendspinApp:
                 player_muted=self._audio_handler.muted,
                 use_external_volume=self._audio_handler.uses_external_volume_controller,
                 visualizer_enabled=self._visualizer_enabled,
+                color_mode=ColorMode.parse(self._settings.color_mode),
+                on_color_mode_change=self._persist_color_mode,
             )
             self._ui.start()
             self._ui.add_event(f"Using client ID: {args.client_id}")
@@ -711,6 +717,15 @@ class SendspinApp:
             ui.set_progress(state.track_progress, state.track_duration)
             ui.set_repeat_shuffle(state.repeat_mode, state.shuffle)
         ui.add_event(state.describe())
+
+    def _handle_color_update(self, payload: ServerStatePayload) -> None:
+        """Forward a color@v1 palette payload to the UI."""
+        assert self._ui is not None
+        self._ui.update_palette(payload.color)
+
+    def _persist_color_mode(self, mode: ColorMode) -> None:
+        """Persist the user's color theme choice."""
+        self._settings.update(color_mode=mode.value)
 
     def _handle_group_update(self, payload: GroupUpdateServerPayload) -> None:
         """Handle group update messages."""
