@@ -109,8 +109,8 @@ class AudioPlayer:
     """Maximum DAC-to-loop time ratio to prevent wild extrapolation."""
 
     # Sync error correction: playback speed adjustment range
-    _MAX_SPEED_CORRECTION: Final[float] = 0.04
-    """Maximum playback speed deviation for sync correction (0.04 = ±4% speed variation)."""
+    _MAX_SPEED_CORRECTION: Final[float] = 0.002
+    """Maximum playback speed deviation for sync correction (0.002 = ±0.2% speed variation)."""
 
     # Sync error correction: secondary thresholds (rarely need adjustment)
     _CORRECTION_DEADBAND_US: Final[int] = 2_000
@@ -133,8 +133,10 @@ class AudioPlayer:
     """Minimum threshold for updating start time to avoid churn (5ms)."""
 
     # Sync correction planning
-    _CORRECTION_TARGET_SECONDS: Final[float] = 2.0
-    """Target window to fix sync error through micro-corrections (2 seconds)."""
+    _CORRECTION_TARGET_SECONDS: Final[float] = 8.0
+    """Target window to fix sync error through micro-corrections (8 seconds)."""
+    _CORRECTION_START_GRACE_US: Final[int] = 750_000
+    """Delay sync corrections after startup so DAC/time-sync estimates can settle."""
 
     def __init__(
         self,
@@ -211,6 +213,7 @@ class AudioPlayer:
         # Scheduled start anchoring
         self._scheduled_start_loop_time_us: int | None = None
         self._scheduled_start_dac_time_us: int | None = None
+        self._playback_started_loop_time_us: int = 0
 
         # Server timeline cursor for the next input frame to be consumed
         self._server_ts_cursor_us: int = 0
@@ -384,6 +387,7 @@ class AudioPlayer:
         self._last_dac_calibration_time_us = 0
         self._scheduled_start_loop_time_us = None
         self._scheduled_start_dac_time_us = None
+        self._playback_started_loop_time_us = 0
         self._server_ts_cursor_us = 0
         self._server_ts_cursor_remainder = 0
         self._first_server_timestamp_us = None
@@ -531,15 +535,19 @@ class AudioPlayer:
                         # Handle correction event if at boundary
                         if frames_remaining > 0:
                             if drop_counter <= 0 and drop_every_n > 0:
-                                # Drop frame: read EXTRA frame to advance cursor faster
-                                _ = self._read_one_input_frame()  # Read frame we're replacing
-                                _ = self._read_one_input_frame()  # Read frame we're DROPPING
+                                # Drop one input frame, then output the following frame. This
+                                # advances the source cursor by two frames while rendering one,
+                                # avoiding the old duplicate-then-skip artifact.
+                                _ = self._read_one_input_frame()
+                                replacement_frame = self._read_one_input_frame()
+                                if replacement_frame is None:
+                                    replacement_frame = self._last_output_frame
                                 drop_counter = drop_every_n
                                 self._frames_dropped_since_log += 1
-                                # Output last frame instead (don't output either frame we read)
                                 output_buffer[bytes_written : bytes_written + frame_size] = (
-                                    self._last_output_frame
+                                    replacement_frame
                                 )
+                                self._last_output_frame = replacement_frame
                                 bytes_written += frame_size
                                 frames_remaining -= 1
                                 insert_counter -= 1
@@ -1035,13 +1043,19 @@ class AudioPlayer:
                     // self._MICROSECONDS_PER_SECOND
                 )
                 self._skip_input_frames(frames_to_drop)
-                self._playback_state = PlaybackState.PLAYING
+                self._set_playing()
 
         # If we've reached/overrun the scheduled time, arm playback
         if current_time_us >= target_time_us:
-            self._playback_state = PlaybackState.PLAYING
+            self._set_playing()
 
         return bytes_written
+
+    def _set_playing(self) -> None:
+        """Transition to PLAYING and start the correction grace window once."""
+        if self._playback_state != PlaybackState.PLAYING:
+            self._playback_started_loop_time_us = self._now_us()
+        self._playback_state = PlaybackState.PLAYING
 
     def _update_correction_schedule(self, error_us: int) -> None:
         """Plan occasional sample drop/insert to correct sync error.
@@ -1061,6 +1075,13 @@ class AudioPlayer:
         self._smooth_sync_error(error_us)
 
         abs_err = abs(self._sync_error_filtered_us)
+
+        if self._playback_started_loop_time_us:
+            since_start_us = self._now_us() - self._playback_started_loop_time_us
+            if since_start_us < self._CORRECTION_START_GRACE_US:
+                self._insert_every_n_frames = 0
+                self._drop_every_n_frames = 0
+                return
 
         # Do nothing within deadband
         if abs_err <= self._CORRECTION_DEADBAND_US:
