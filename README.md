@@ -21,7 +21,29 @@ When using an explicit app (`daemon`, `serve`, or `player`), put it immediately 
 
 [![A project from the Open Home Foundation](https://www.openhomefoundation.org/badges/ohf-project.png)](https://www.openhomefoundation.org/)
 
-## Quick Start
+## Installation
+
+**Install as daemon (Linux):**
+```bash
+curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/install-systemd.sh | sudo bash
+```
+
+**With uv:**
+```bash
+uv tool install sendspin
+```
+
+Support for Chromecast devices requires installation of extra dependencies:
+```bash
+uv tool install 'sendspin[cast]'
+```
+
+**With pip:**
+```bash
+pip install sendspin
+```
+
+## Try it without installation
 
 **Run directly with [uv](https://docs.astral.sh/uv/getting-started/installation/):**
 
@@ -94,46 +116,6 @@ curl -X POST http://127.0.0.1:59999/control \
      -d '{"command": "toggle_play_pause"}'
 ```
 
-## Installation
-
-**With uv:**
-```bash
-uv tool install sendspin
-```
-
-Support for Chromecast devices requires installation of extra dependencies:
-```bash
-uv tool install 'sendspin[cast]'
-```
-
-**Install as daemon (Linux):**
-```bash
-curl -fsSL https://raw.githubusercontent.com/Sendspin/sendspin-cli/refs/heads/main/scripts/systemd/install-systemd.sh | sudo bash
-```
-
-**With pip:**
-```bash
-pip install sendspin
-```
-
-<details>
-<summary>Install from source</summary>
-
-```bash
-git clone https://github.com/Sendspin-Protocol/sendspin.git
-cd sendspin
-pip install .
-```
-
-</details>
-
-**After installation, run:**
-```bash
-sendspin
-```
-
-The player will automatically connect to a Sendspin server on your local network and be available for playback.
-
 ## Updating
 
 To update to the latest version of Sendspin:
@@ -155,9 +137,6 @@ The systemd daemon preserves your configuration during updates. Simply upgrade t
 ```bash
 # Upgrade sendspin (the daemon installer uses uv by default)
 uv tool upgrade sendspin
-
-# Or if you installed with pip
-pip install --upgrade sendspin
 
 # Restart the service to use the new version
 sudo systemctl restart sendspin

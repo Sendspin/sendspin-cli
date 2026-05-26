@@ -1,5 +1,7 @@
 """Custom SendspinServer with embedded web player."""
 
+from __future__ import annotations
+
 from importlib.resources import files
 from multiprocessing.sharedctypes import Synchronized
 from pathlib import Path

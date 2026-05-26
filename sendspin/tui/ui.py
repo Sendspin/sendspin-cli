@@ -7,11 +7,13 @@ import time
 from collections.abc import Callable
 from collections.abc import Iterator
 from contextlib import contextmanager
+from enum import Enum
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from typing import Any, Self
 
-from aiosendspin.models.types import PlaybackStateType, RepeatMode
+from aiosendspin.models.color import SessionUpdateColor
+from aiosendspin.models.types import PlaybackStateType, RepeatMode, UndefinedField
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -44,6 +46,27 @@ PLAYBACK_REFRESH_INTERVAL = 0.25
 HIGHLIGHT_REFRESH_INTERVAL = 0.05
 VISUALIZER_REFRESH_INTERVAL = 1 / 60
 RESIZE_POLL_INTERVAL = 0.25
+
+
+class ColorMode(Enum):
+    """User-selected color theme. Active only when a palette is available."""
+
+    DARK = "dark"
+    LIGHT = "light"
+
+    @classmethod
+    def parse(cls, value: str | None) -> ColorMode:
+        """Coerce a stored string to a mode, defaulting to DARK."""
+        if value == cls.LIGHT.value:
+            return cls.LIGHT
+        return cls.DARK
+
+
+# `dim` deliberately omitted: terminals render it ~50% grey, which fails the
+# ≥4.5:1 contrast the spec requires against the artwork backgrounds.
+_STYLE_MODIFIERS: frozenset[str] = frozenset(
+    {"bold", "italic", "underline", "reverse", "strike", "blink"}
+)
 
 
 @dataclass
@@ -94,6 +117,17 @@ class UIState:
     visualizer_enabled: bool = False
     visualizer_state: VisualizerState = field(default_factory=VisualizerState)
 
+    # Artwork palette pushed by the server via color@v1.
+    palette_primary: tuple[int, int, int] | None = None
+    palette_accent: tuple[int, int, int] | None = None
+    palette_on_dark: tuple[int, int, int] | None = None
+    palette_on_light: tuple[int, int, int] | None = None
+    palette_background_dark: tuple[int, int, int] | None = None
+    palette_background_light: tuple[int, int, int] | None = None
+    # Gates themed rendering once the five spec-functional fields are present.
+    palette_available: bool = False
+    color_mode: ColorMode = ColorMode.DARK
+
     # Shortcut highlight
     highlighted_shortcut: str | None = None
     highlight_time: float = 0.0
@@ -110,9 +144,14 @@ class SendspinUI:
         player_muted: bool = False,
         use_external_volume: bool = False,
         visualizer_enabled: bool = False,
+        color_mode: ColorMode = ColorMode.DARK,
+        on_color_mode_change: Callable[[ColorMode], None] | None = None,
     ) -> None:
         """Initialize the UI."""
         self._console = Console()
+        # Hex backgrounds need truecolor or 256-color support to keep contrast.
+        self._supports_palette = self._console.color_system in ("truecolor", "256")
+        self._on_color_mode_change = on_color_mode_change
         self._state = UIState(
             delay_ms=delay_ms,
             volume=player_volume,
@@ -120,6 +159,7 @@ class SendspinUI:
             player_muted=player_muted,
             use_external_volume=use_external_volume,
             visualizer_enabled=visualizer_enabled,
+            color_mode=color_mode,
         )
         self._live: Live | None = None
         self._running = False
@@ -224,7 +264,8 @@ class SendspinUI:
 
     def _shortcut_style(self, shortcut: str) -> str:
         """Get the style for a shortcut key."""
-        return "bold yellow reverse" if self._is_highlighted(shortcut) else "bold cyan"
+        raw = "bold yellow reverse" if self._is_highlighted(shortcut) else "bold cyan"
+        return self._themed(raw)
 
     def _cached_panel(self, name: str, key: tuple[Any, ...], builder: Callable[[], Panel]) -> Panel:
         """Return cached panel if key matches, otherwise rebuild and cache."""
@@ -251,36 +292,42 @@ class SendspinUI:
             content.add_column()
             content.add_row("")
             line1 = Text()
-            line1.append("Press ", style="dim")
-            line1.append("<space>", style="bold cyan")
-            line1.append(" to start playing", style="dim")
+            line1.append("Press ", style=self._themed("dim"))
+            line1.append("<space>", style=self._themed("bold cyan"))
+            line1.append(" to start playing", style=self._themed("dim"))
             content.add_row(line1)
             line2 = Text()
-            line2.append("Press ", style="dim")
-            line2.append("g", style="bold cyan")
-            line2.append(" to join an existing session", style="dim")
+            line2.append("Press ", style=self._themed("dim"))
+            line2.append("g", style=self._themed("bold cyan"))
+            line2.append(" to join an existing session", style=self._themed("dim"))
             content.add_row(line2)
             content.add_row("")
             content.add_row("")
-            return Panel(content, title="Now Playing", border_style="blue", expand=expand)
+            return self._make_panel(
+                content, title="Now Playing", default_border="blue", expand=expand
+            )
 
         # Info grid with label/value columns
         info = Table.grid(padding=(0, 1))
-        info.add_column(style="dim", width=8)
+        info.add_column(style=self._themed("dim"), width=8)
         info.add_column()
 
         if self._state.title:
-            info.add_row("Title:", Text(self._state.title, style="bold white"))
-            info.add_row("Artist:", Text(self._state.artist or "Unknown artist", style="cyan"))
-            info.add_row("Album:", Text(self._state.album or "Unknown album", style="dim"))
+            info.add_row("Title:", Text(self._state.title, style=self._themed("bold white")))
+            info.add_row(
+                "Artist:", Text(self._state.artist or "Unknown artist", style=self._themed("cyan"))
+            )
+            info.add_row(
+                "Album:", Text(self._state.album or "Unknown album", style=self._themed("dim"))
+            )
         else:
             state_label = (
                 self._state.playback_state.value.capitalize()
                 if self._state.playback_state
                 else "Active"
             )
-            info.add_row("Status:", Text(state_label, style="bold white"))
-            info.add_row("", Text("No metadata available", style="dim"))
+            info.add_row("Status:", Text(state_label, style=self._themed("bold white")))
+            info.add_row("", Text("No metadata available", style=self._themed("dim")))
             info.add_row("")
 
         # Vertical container for info + shortcuts (5 lines total)
@@ -293,14 +340,134 @@ class SendspinUI:
         space_label = "pause" if self._state.playback_state == PlaybackStateType.PLAYING else "play"
         shortcuts = Text()
         shortcuts.append("←", style=self._shortcut_style("prev"))
-        shortcuts.append(" prev  ", style="dim")
+        shortcuts.append(" prev  ", style=self._themed("dim"))
         shortcuts.append("<space>", style=self._shortcut_style("space"))
-        shortcuts.append(f" {space_label}  ", style="dim")
+        shortcuts.append(f" {space_label}  ", style=self._themed("dim"))
         shortcuts.append("→", style=self._shortcut_style("next"))
-        shortcuts.append(" next", style="dim")
+        shortcuts.append(" next", style=self._themed("dim"))
         content.add_row(shortcuts)
 
-        return Panel(content, title="Now Playing", border_style="blue", expand=expand)
+        return self._make_panel(content, title="Now Playing", default_border="blue", expand=expand)
+
+    _PALETTE_REQUIRED = (
+        "palette_primary",
+        "palette_on_dark",
+        "palette_on_light",
+        "palette_background_dark",
+        "palette_background_light",
+    )
+
+    def _palette_active(self) -> bool:
+        """True when palette is complete and the terminal can render it."""
+        return self._state.palette_available and self._supports_palette
+
+    def _themed(self, style: str) -> str:
+        """Force palette-contrast text color, keep only Rich modifiers."""
+        if not self._palette_active():
+            return style
+        target = "white" if self._state.color_mode == ColorMode.DARK else "black"
+        mods = [t for t in style.split() if t in _STYLE_MODIFIERS]
+        return " ".join([target, *mods])
+
+    def _palette_bg_hex(self) -> str | None:
+        """Background hex for the active mode, or None if palette inactive."""
+        if not self._palette_active():
+            return None
+        if self._state.color_mode == ColorMode.DARK:
+            bg = self._state.palette_background_dark
+        else:
+            bg = self._state.palette_background_light
+        if bg is None:
+            return None
+        return f"#{bg[0]:02x}{bg[1]:02x}{bg[2]:02x}"
+
+    def _palette_fg(self) -> str:
+        """Spec-mandated text color paired with the active background."""
+        return "black" if self._state.color_mode == ColorMode.LIGHT else "white"
+
+    def _palette_border_style(self) -> str | None:
+        """Border color: the on-color for the active mode."""
+        if not self._palette_active():
+            return None
+        if self._state.color_mode == ColorMode.DARK:
+            border = self._state.palette_on_dark
+        else:
+            border = self._state.palette_on_light
+        if border is None:
+            return None
+        return f"#{border[0]:02x}{border[1]:02x}{border[2]:02x}"
+
+    def _palette_panel_style(self) -> str | None:
+        """Rich `<fg> on <bg>` style painting the panel with the album background."""
+        bg = self._palette_bg_hex()
+        if bg is None:
+            return None
+        return f"{self._palette_fg()} on {bg}"
+
+    def update_palette(self, color: SessionUpdateColor | None) -> None:
+        """Merge a color@v1 payload into state and invalidate cached panels."""
+        # UndefinedField keeps current value, None clears, tuple sets.
+        if color is None:
+            updates: dict[str, tuple[int, int, int] | None] = dict.fromkeys(
+                ("primary", "accent", "on_dark", "on_light", "background_dark", "background_light")
+            )
+        else:
+            updates = {
+                attr: getattr(color, attr)
+                for attr in (
+                    "primary",
+                    "accent",
+                    "on_dark",
+                    "on_light",
+                    "background_dark",
+                    "background_light",
+                )
+                if not isinstance(getattr(color, attr), UndefinedField)
+            }
+
+        changed = False
+        for attr, value in updates.items():
+            state_attr = f"palette_{attr}"
+            if getattr(self._state, state_attr) != value:
+                setattr(self._state, state_attr, value)
+                changed = True
+        if not changed:
+            return
+
+        # Accent is best-effort per spec, so gate only on the five required fields.
+        all_present = all(getattr(self._state, attr) is not None for attr in self._PALETTE_REQUIRED)
+        self._state.palette_available = all_present
+        self._panel_cache.clear()
+        self.refresh()
+
+    def reset_palette(self) -> None:
+        """Clear palette state. Used when the active server disconnects."""
+        self.update_palette(None)
+
+    def cycle_color_mode(self) -> None:
+        """Toggle DARK ↔ LIGHT and persist the preference."""
+        new_mode = ColorMode.LIGHT if self._state.color_mode == ColorMode.DARK else ColorMode.DARK
+        self._state.color_mode = new_mode
+        if self._on_color_mode_change is not None:
+            self._on_color_mode_change(new_mode)
+        if self._palette_active():
+            self._panel_cache.clear()
+            self.refresh()
+
+    def _make_panel(
+        self,
+        content: Any,
+        *,
+        title: str,
+        default_border: str,
+        expand: bool = False,
+    ) -> Panel:
+        """Build a Panel tinted with the current artwork palette when active."""
+        border = self._palette_border_style() or default_border
+        style = self._palette_panel_style()
+        if style is None:
+            return Panel(content, title=title, border_style=border, expand=expand)
+        return Panel(content, title=title, border_style=border, style=style, expand=expand)
 
     def _build_progress_bar(self, *, expand: bool = False) -> Panel:
         """Build the progress bar panel."""
@@ -330,17 +497,17 @@ class SendspinUI:
         empty = bar_width - filled
 
         bar = Text()
-        bar.append("[", style="dim")
-        bar.append("=" * filled, style="green bold")
+        bar.append("[", style=self._themed("dim"))
+        bar.append("=" * filled, style=self._themed("green bold"))
         if filled < bar_width:
-            bar.append(">", style="green bold")
-            bar.append("-" * max(0, empty - 1), style="dim")
-        bar.append("] ", style="dim")
+            bar.append(">", style=self._themed("green bold"))
+            bar.append("-" * max(0, empty - 1), style=self._themed("dim"))
+        bar.append("] ", style=self._themed("dim"))
 
         time_text_styled = Text()
-        time_text_styled.append(self._format_time(progress_ms), style="cyan")
-        time_text_styled.append(" / ", style="dim")
-        time_text_styled.append(self._format_time(duration_ms), style="cyan")
+        time_text_styled.append(self._format_time(progress_ms), style=self._themed("cyan"))
+        time_text_styled.append(" / ", style=self._themed("dim"))
+        time_text_styled.append(self._format_time(duration_ms), style=self._themed("cyan"))
 
         # Use grid to keep bar and time on same line
         content = Table.grid(expand=True, padding=0)
@@ -348,7 +515,7 @@ class SendspinUI:
         content.add_column(justify="right", no_wrap=True)
         content.add_row(bar, time_text_styled)
 
-        return Panel(content, title="Progress", border_style="green", expand=expand)
+        return self._make_panel(content, title="Progress", default_border="green", expand=expand)
 
     def _build_volume_panel(self, *, expand: bool = False) -> Panel:
         """Build the volume panel."""
@@ -359,13 +526,13 @@ class SendspinUI:
 
         # Group volume
         vol = self._state.volume if self._state.volume is not None else 0
-        vol_style = "red" if self._state.muted else "cyan"
+        vol_style = self._themed("red" if self._state.muted else "cyan")
         vol_text = f"{vol}%" + (" [MUTED]" if self._state.muted else "")
         info.add_row("Group:", Text(vol_text, style=vol_style))
 
         # Player volume
         pvol = self._state.player_volume
-        pvol_style = "red" if self._state.player_muted else "cyan"
+        pvol_style = self._themed("red" if self._state.player_muted else "cyan")
         pvol_text = f"{pvol}%" + (" [MUTED]" if self._state.player_muted else "")
         player_label = "External:" if self._state.use_external_volume else "Player:"
         info.add_row(player_label, Text(pvol_text, style=pvol_style))
@@ -379,42 +546,42 @@ class SendspinUI:
         # Player volume shortcuts
         player_sc = Text()
         player_sc.append("↑", style=self._shortcut_style("up"))
-        player_sc.append("/", style="dim")
+        player_sc.append("/", style=self._themed("dim"))
         player_sc.append("↓", style=self._shortcut_style("down"))
-        player_sc.append(" player  ", style="dim")
+        player_sc.append(" player  ", style=self._themed("dim"))
         player_sc.append("m", style=self._shortcut_style("mute"))
-        player_sc.append(" mute", style="dim")
+        player_sc.append(" mute", style=self._themed("dim"))
         content.add_row(player_sc)
 
         # Group volume shortcuts
         group_sc = Text()
         group_sc.append("[", style=self._shortcut_style("group-down"))
-        group_sc.append("/", style="dim")
+        group_sc.append("/", style=self._themed("dim"))
         group_sc.append("]", style=self._shortcut_style("group-up"))
-        group_sc.append(" group  ", style="dim")
+        group_sc.append(" group  ", style=self._themed("dim"))
         group_sc.append("M", style=self._shortcut_style("group-mute"))
-        group_sc.append(" mute", style="dim")
+        group_sc.append(" mute", style=self._themed("dim"))
         content.add_row(group_sc)
 
-        return Panel(content, title="Volume", border_style="magenta", expand=expand)
+        return self._make_panel(content, title="Volume", default_border="magenta", expand=expand)
 
     def _build_connection_panel(self, *, expand: bool = False) -> Panel:
         """Build the connection status panel."""
         content = Table.grid(padding=(0, 1))
-        content.add_column(style="dim", width=8)
+        content.add_column(style=self._themed("dim"), width=8)
         content.add_column()
 
         if self._state.connected and self._state.server_url:
-            status = Text("Connected", style="green bold")
-            url = Text(self._state.server_url, style="cyan")
+            status = Text("Connected", style=self._themed("green bold"))
+            url = Text(self._state.server_url, style=self._themed("cyan"))
         else:
-            status = Text("Disconnected", style="red bold")
-            url = Text(self._state.status_message, style="yellow")
+            status = Text("Disconnected", style=self._themed("red bold"))
+            url = Text(self._state.status_message, style=self._themed("yellow"))
 
         content.add_row("Status:", status)
         content.add_row("Server:", url)
 
-        return Panel(content, title="Connection", border_style="yellow", expand=expand)
+        return self._make_panel(content, title="Connection", default_border="yellow", expand=expand)
 
     def _build_server_selector_panel(self) -> Panel:
         """Build the server selector panel."""
@@ -423,7 +590,7 @@ class SendspinUI:
 
         if not self._state.available_servers:
             content.add_row("")
-            content.add_row(Text("Searching for servers...", style="dim"))
+            content.add_row(Text("Searching for servers...", style=self._themed("dim")))
             content.add_row("")
         else:
             for i, server in enumerate(self._state.available_servers):
@@ -432,7 +599,7 @@ class SendspinUI:
 
                 line = Text()
                 if is_selected:
-                    line.append(" > ", style="bold cyan")
+                    line.append(" > ", style=self._themed("bold cyan"))
                 else:
                     line.append("   ")
 
@@ -442,7 +609,7 @@ class SendspinUI:
 
                 # Current server indicator
                 if is_current:
-                    line.append(" (current)", style="dim green")
+                    line.append(" (current)", style=self._themed("dim green"))
 
                 content.add_row(line)
 
@@ -458,36 +625,39 @@ class SendspinUI:
         # Shortcuts
         shortcuts = Text()
         shortcuts.append("↑", style=self._shortcut_style("selector-up"))
-        shortcuts.append("/", style="dim")
+        shortcuts.append("/", style=self._themed("dim"))
         shortcuts.append("↓", style=self._shortcut_style("selector-down"))
-        shortcuts.append(" navigate  ", style="dim")
+        shortcuts.append(" navigate  ", style=self._themed("dim"))
         shortcuts.append("<enter>", style=self._shortcut_style("selector-enter"))
-        shortcuts.append(" connect  ", style="dim")
+        shortcuts.append(" connect  ", style=self._themed("dim"))
         shortcuts.append("r", style=self._shortcut_style("selector-enter"))
-        shortcuts.append(" refresh  ", style="dim")
+        shortcuts.append(" refresh  ", style=self._themed("dim"))
         shortcuts.append("q", style=self._shortcut_style("selector-enter"))
-        shortcuts.append(" back", style="dim")
+        shortcuts.append(" back", style=self._themed("dim"))
         content.add_row(shortcuts)
 
-        return Panel(content, title="Select Server", border_style="cyan")
+        return self._make_panel(content, title="Select Server", default_border="cyan")
 
     def _build_playback_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the playback panel with repeat/shuffle status."""
         info = Table.grid(padding=(0, 2))
-        info.add_column(style="dim", width=8)
+        info.add_column(style=self._themed("dim"), width=8)
         info.add_column()
 
         repeat = self._state.repeat_mode
         info.add_row(
             "Repeat:",
-            Text(repeat.value if repeat is not None else "—", style="cyan" if repeat else "dim"),
+            Text(
+                repeat.value if repeat is not None else "—",
+                style=self._themed("cyan" if repeat else "dim"),
+            ),
         )
 
         shuffle = self._state.shuffle
         if shuffle is not None:
-            shuffle_text = Text("on" if shuffle else "off", style="cyan")
+            shuffle_text = Text("on" if shuffle else "off", style=self._themed("cyan"))
         else:
-            shuffle_text = Text("—", style="dim")
+            shuffle_text = Text("—", style=self._themed("dim"))
         info.add_row("Shuffle:", shuffle_text)
         info_rows = 2
 
@@ -501,38 +671,40 @@ class SendspinUI:
         # Shortcuts
         shortcuts = Text()
         shortcuts.append("r", style=self._shortcut_style("repeat"))
-        shortcuts.append(" repeat  ", style="dim")
+        shortcuts.append(" repeat  ", style=self._themed("dim"))
         shortcuts.append("x", style=self._shortcut_style("shuffle"))
-        shortcuts.append(" shuffle", style="dim")
+        shortcuts.append(" shuffle", style=self._themed("dim"))
         content.add_row(shortcuts)
 
-        return Panel(content, title="Playback", border_style="yellow", expand=expand)
+        return self._make_panel(content, title="Playback", default_border="yellow", expand=expand)
 
     def _build_stream_quality_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the stream quality panel."""
         info = Table.grid(padding=(0, 1))
-        info.add_column(style="dim")
+        info.add_column(style=self._themed("dim"))
         info.add_column()
 
         if self._state.audio_sample_rate > 0:
             codec_label = (self._state.audio_codec or "PCM").upper()
-            info.add_row("Codec:", Text(codec_label, style="cyan"))
+            info.add_row("Codec:", Text(codec_label, style=self._themed("cyan")))
             rate_khz = self._state.audio_sample_rate / 1000
-            info.add_row("Rate:", Text(f"{rate_khz:.1f}kHz", style="cyan"))
-            info.add_row("Depth:", Text(f"{self._state.audio_bit_depth}bit", style="cyan"))
+            info.add_row("Rate:", Text(f"{rate_khz:.1f}kHz", style=self._themed("cyan")))
+            info.add_row(
+                "Depth:", Text(f"{self._state.audio_bit_depth}bit", style=self._themed("cyan"))
+            )
             ch_label = (
                 "Stereo" if self._state.audio_channels == 2 else f"{self._state.audio_channels}ch"
             )
-            info.add_row("Channels:", Text(ch_label, style="cyan"))
+            info.add_row("Channels:", Text(ch_label, style=self._themed("cyan")))
         else:
-            info.add_row("Codec:", Text("—", style="dim"))
-            info.add_row("Rate:", Text("—", style="dim"))
-            info.add_row("Depth:", Text("—", style="dim"))
-            info.add_row("Channels:", Text("—", style="dim"))
+            info.add_row("Codec:", Text("—", style=self._themed("dim")))
+            info.add_row("Rate:", Text("—", style=self._themed("dim")))
+            info.add_row("Depth:", Text("—", style=self._themed("dim")))
+            info.add_row("Channels:", Text("—", style=self._themed("dim")))
 
         delay = self._state.delay_ms
         delay_str = f"+{delay:.0f}ms" if delay >= 0 else f"{delay:.0f}ms"
-        info.add_row("Delay:", Text(delay_str, style="cyan"))
+        info.add_row("Delay:", Text(delay_str, style=self._themed("cyan")))
         info_rows = 5
 
         content = Table.grid()
@@ -545,17 +717,17 @@ class SendspinUI:
         # Shortcuts
         shortcuts = Text()
         shortcuts.append(",", style=self._shortcut_style("delay-"))
-        shortcuts.append("/", style="dim")
+        shortcuts.append("/", style=self._themed("dim"))
         shortcuts.append(".", style=self._shortcut_style("delay+"))
-        shortcuts.append(" adjust delay", style="dim")
+        shortcuts.append(" adjust delay", style=self._themed("dim"))
         content.add_row(shortcuts)
 
-        return Panel(content, title="Stream", border_style="yellow", expand=expand)
+        return self._make_panel(content, title="Stream", default_border="yellow", expand=expand)
 
     def _build_server_panel(self, *, expand: bool = False, min_info_rows: int = 0) -> Panel:
         """Build the server panel."""
         info = Table.grid(padding=(0, 1))
-        info.add_column(style="dim")
+        info.add_column(style=self._themed("dim"))
         info.add_column()
 
         if self._state.connected and self._state.server_url:
@@ -563,17 +735,17 @@ class SendspinUI:
             host = parsed.hostname or ""
             port = str(parsed.port) if parsed.port else ""
             path = parsed.path or "/"
-            info.add_row("Status:", Text("Connected", style="green bold"))
-            info.add_row("Host:", Text(host, style="cyan"))
+            info.add_row("Status:", Text("Connected", style=self._themed("green bold")))
+            info.add_row("Host:", Text(host, style=self._themed("cyan")))
             if port:
-                info.add_row("Port:", Text(port, style="cyan"))
-            info.add_row("Path:", Text(path, style="cyan"))
+                info.add_row("Port:", Text(port, style=self._themed("cyan")))
+            info.add_row("Path:", Text(path, style=self._themed("cyan")))
             if self._state.group_name:
-                info.add_row("Group:", Text(self._state.group_name, style="cyan"))
+                info.add_row("Group:", Text(self._state.group_name, style=self._themed("cyan")))
             info_rows = 3 + (1 if port else 0) + (1 if self._state.group_name else 0)
         else:
-            info.add_row("Status:", Text("Disconnected", style="red bold"))
-            info.add_row("Host:", Text(self._state.status_message, style="yellow"))
+            info.add_row("Status:", Text("Disconnected", style=self._themed("red bold")))
+            info.add_row("Host:", Text(self._state.status_message, style=self._themed("yellow")))
             info_rows = 2
 
         content = Table.grid()
@@ -584,14 +756,14 @@ class SendspinUI:
         # Shortcuts
         shortcut_group = Text()
         shortcut_group.append("g", style=self._shortcut_style("switch"))
-        shortcut_group.append(" change group", style="dim")
+        shortcut_group.append(" change group", style=self._themed("dim"))
         content.add_row(shortcut_group)
         shortcut_server = Text()
         shortcut_server.append("s", style=self._shortcut_style("server"))
-        shortcut_server.append(" change server", style="dim")
+        shortcut_server.append(" change server", style=self._themed("dim"))
         content.add_row(shortcut_server)
 
-        return Panel(content, title="Server", border_style="yellow", expand=expand)
+        return self._make_panel(content, title="Server", default_border="yellow", expand=expand)
 
     def _build_visualizer_rows(self, height: int) -> list[Text]:
         """Build the spectrum visualizer as raw Text rows."""
@@ -601,8 +773,37 @@ class SendspinUI:
         loudness = state.loudness
         peaks = state.get_peaks()
 
+        # Low end uses opposite-mode bg to pop, high end uses on-color for contrast.
+        if not self._palette_active():
+            palette_low = None
+            palette_high = None
+            freq_peak = "#ffffff"
+        else:
+            # Marker uses accent (distinct secondary), or primary as fallback.
+            # Primary is required so it's always present; both stay clear of the
+            # bar-tip gradient (palette_high = on_dark/on_light).
+            marker = self._state.palette_accent or self._state.palette_primary
+            assert marker is not None
+            freq_peak = f"#{marker[0]:02x}{marker[1]:02x}{marker[2]:02x}"
+            if self._state.color_mode == ColorMode.DARK:
+                palette_low = self._state.palette_background_light
+                palette_high = self._state.palette_on_dark
+            else:
+                palette_low = self._state.palette_background_dark
+                palette_high = self._state.palette_on_light
+
         bar_width = max(10, self._console.width - 1)
-        return render_spectrum(magnitudes, bar_width, height, loudness, peaks)
+        return render_spectrum(
+            magnitudes,
+            bar_width,
+            height,
+            loudness,
+            peaks,
+            palette_low=palette_low,
+            palette_high=palette_high,
+            bg_color=self._palette_bg_hex(),
+            freq_peak_color=freq_peak,
+        )
 
     def _measure_layout_height(self, layout: Table) -> int:
         """Measure the rendered height of a layout table."""
@@ -616,8 +817,11 @@ class SendspinUI:
         # Get terminal width and leave 1 char margin to prevent wrapping
         width = self._console.width - 1
 
-        # Main layout table
+        # Paint the grid bg so inter-panel gaps inherit the album background.
+        layout_style = self._palette_panel_style()
         layout = Table.grid(expand=False)
+        if layout_style is not None:
+            layout.style = layout_style
         layout.add_column(width=width)
 
         # Show server selector if active
@@ -751,12 +955,16 @@ class SendspinUI:
             bottom_row.add_row(playback, stream, server)
             layout.add_row(bottom_row)
 
-        # Bottom shortcuts below boxes
-        quit_line = Text(justify="right")
+        # Apply panel bg so this row keeps text contrast with the visualizer off.
+        quit_line = Text(justify="right", style=layout_style or "")
+        if self._palette_active():
+            target = "light" if self._state.color_mode == ColorMode.DARK else "dark"
+            quit_line.append("t", style=self._shortcut_style("theme"))
+            quit_line.append(f" {target} theme  ", style=self._themed("dim"))
         quit_line.append("v", style=self._shortcut_style("visualizer"))
-        quit_line.append(" visualizer  ", style="dim")
+        quit_line.append(" visualizer  ", style=self._themed("dim"))
         quit_line.append("q", style=self._shortcut_style("quit"))
-        quit_line.append(" quit  ", style="dim")
+        quit_line.append(" quit  ", style=self._themed("dim"))
         layout.add_row(quit_line)
 
         # Visualizer: fill remaining terminal space

@@ -131,6 +131,8 @@ class ClientSettings(BaseSettings):
     # IP address of the network interface to use for mDNS discovery and (in daemon
     # server-initiated mode) for binding the incoming-connection listener.
     interface: str | None = None
+    # User-selected color theme ("dark" or "light"), re-engaged on next palette.
+    color_mode: str | None = None
 
     def update(
         self,
@@ -154,6 +156,7 @@ class ClientSettings(BaseSettings):
         visualizer: bool | None = None,
         last_played_server_id: str | None = None,
         interface: str | None = None,
+        color_mode: str | None = None,
     ) -> None:
         """Update settings fields. Only changed fields trigger a save."""
         changed = False
@@ -187,6 +190,7 @@ class ClientSettings(BaseSettings):
                     "visualizer": visualizer,
                     "last_played_server_id": last_played_server_id,
                     "interface": interface,
+                    "color_mode": color_mode,
                 }
             )
             or changed
@@ -230,6 +234,7 @@ class ClientSettings(BaseSettings):
             self.product_name = data.get("product_name")
             self.last_played_server_id = data.get("last_played_server_id")
             self.interface = data.get("interface")
+            self.color_mode = data.get("color_mode")
             logger.info(
                 "Loaded settings from %s: volume=%d%%, muted=%s",
                 self._settings_file,

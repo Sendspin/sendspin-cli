@@ -119,3 +119,44 @@ def test_render_spectrum_peak_marker_character() -> None:
     rows = render_spectrum(magnitudes, width=1, height=8, loudness=0.5, peaks=peaks)
     all_chars = "".join(row.plain for row in rows)
     assert "▔" in all_chars
+
+
+def test_palette_anchors_override_color_tiers() -> None:
+    low = (10, 20, 30)
+    high = (200, 100, 50)
+
+    tip_low, base_low = loudness_to_colors(0.0, palette_low=low, palette_high=high)
+    assert tip_low == low
+    assert base_low == (low[0] // 4, low[1] // 4, low[2] // 4)
+
+    tip_high, _ = loudness_to_colors(1.0, palette_low=low, palette_high=high)
+    assert tip_high == high
+
+    tip_mid, _ = loudness_to_colors(0.5, palette_low=low, palette_high=high)
+    assert tip_mid == (105, 60, 40)
+
+
+def test_render_spectrum_bg_color_paints_empty_cells() -> None:
+    rows = render_spectrum([0.0], width=2, height=2, loudness=0.0, peaks=[0.0], bg_color="#abcdef")
+    for row in rows:
+        assert str(row.style) == "on #abcdef"
+
+
+def test_render_spectrum_freq_peak_color_styles_peak_marker() -> None:
+    magnitudes = [0.5]
+    peaks = [0.9]
+    rows = render_spectrum(
+        magnitudes,
+        width=1,
+        height=8,
+        loudness=0.5,
+        peaks=peaks,
+        freq_peak_color="#ff00ff",
+    )
+    marker_styles = [
+        str(span.style)
+        for row in rows
+        for span in row.spans
+        if row.plain[span.start : span.end] == "▔"
+    ]
+    assert marker_styles == ["#ff00ff"]

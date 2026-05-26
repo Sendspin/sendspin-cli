@@ -45,13 +45,21 @@ def _lerp_rgb(c0: tuple[int, int, int], c1: tuple[int, int, int], t: float) -> t
 
 def loudness_to_colors(
     loudness: float,
+    palette_low: tuple[int, int, int] | None = None,
+    palette_high: tuple[int, int, int] | None = None,
 ) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     """Map a 0.0-1.0 loudness value to (tip_rgb, base_rgb).
 
-    Tip color is interpolated between tier stops.
-    Base color is the tip at 25% brightness.
+    When palette anchors are provided, the tip is lerped between them by
+    loudness. Otherwise it follows the static `_COLOR_TIERS`. Base is always
+    the tip at 25% brightness.
     """
     loudness = max(0.0, min(1.0, loudness))
+
+    if palette_low is not None and palette_high is not None:
+        tip = _lerp_rgb(palette_low, palette_high, loudness)
+        base = (tip[0] // 4, tip[1] // 4, tip[2] // 4)
+        return tip, base
 
     for i in range(len(_COLOR_TIERS) - 1):
         t0, c0 = _COLOR_TIERS[i]
@@ -170,6 +178,10 @@ def render_spectrum(
     height: int,
     loudness: float,
     peaks: list[float],
+    palette_low: tuple[int, int, int] | None = None,
+    palette_high: tuple[int, int, int] | None = None,
+    bg_color: str | None = None,
+    freq_peak_color: str = "#ffffff",
 ) -> list[Text]:
     """Render spectrum bars as Rich Text lines with loudness-driven color.
 
@@ -179,14 +191,19 @@ def render_spectrum(
         height: Number of text rows (each row = 8 block levels).
         loudness: Normalized 0.0-1.0 loudness for color selection.
         peaks: Normalized 0.0-1.0 peak hold heights per bin.
+        palette_low: Optional RGB anchor for low-loudness tip color.
+        palette_high: Optional RGB anchor for high-loudness tip color.
+        bg_color: Optional hex background painted behind every cell.
+        freq_peak_color: Hex color for the frequency-peak marker.
 
     Returns:
         List of Text objects, one per row (top to bottom).
     """
+    empty_style = f"on {bg_color}" if bg_color else ""
     if not magnitudes or width <= 0 or height <= 0:
-        return [Text(" " * max(0, width)) for _ in range(max(0, height))]
+        return [Text(" " * max(0, width), style=empty_style) for _ in range(max(0, height))]
 
-    tip, base = loudness_to_colors(loudness)
+    tip, base = loudness_to_colors(loudness, palette_low, palette_high)
 
     # Find frequency peak bin (for highlight color on its peak marker)
     freq_peak_bin = max(range(len(magnitudes)), key=lambda i: magnitudes[i])
@@ -239,12 +256,12 @@ def render_spectrum(
         min(255, int(tip[1] * 1.4)),
         min(255, int(tip[2] * 1.4)),
     )
-    freq_peak_color = "#ffffff"
 
     for row_idx in range(height):
-        line = Text()
+        line = Text(style=empty_style)
         row_bottom = (height - 1 - row_idx) * _BLOCK_LEVELS
         color = row_colors[row_idx]
+        bar_style = f"{color} on {bg_color}" if bg_color else color
 
         for bar_idx, value in enumerate(bars):
             level = value * total_levels
@@ -262,11 +279,11 @@ def render_spectrum(
                 pc = freq_peak_color if bar_is_freq_peak[bar_idx] else peak_color
                 line.append("▔", style=pc)
             elif fill >= _BLOCK_LEVELS:
-                line.append(_BLOCKS[_BLOCK_LEVELS], style=color)
+                line.append(_BLOCKS[_BLOCK_LEVELS], style=bar_style)
             elif fill <= 0:
-                line.append(" ")
+                line.append(" ", style=empty_style)
             else:
-                line.append(_BLOCKS[int(fill)], style=color)
+                line.append(_BLOCKS[int(fill)], style=bar_style)
 
         rows.append(line)
 
