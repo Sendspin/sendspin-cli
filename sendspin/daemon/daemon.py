@@ -354,7 +354,7 @@ class SendspinDaemon:
         """Build the current JSON-serializable control state."""
         playback = dict(self._control_playback)
         if "speed" not in playback and self._playback_state is not None:
-            playback["speed"] = 0 if self._playback_state == PlaybackStateType.PAUSED else 1
+            playback["speed"] = 0 if self._playback_state == PlaybackStateType.PAUSED else 1000
         
         if "position" in playback and self._control_metadata_updated_at is not None:
             current_speed = playback.get("speed", 0)
@@ -365,7 +365,7 @@ class SendspinDaemon:
 
             if current_speed > 0:
                 elapsed_seconds = time.monotonic() - self._control_metadata_updated_at
-                realtime_position = playback["position"] + (elapsed_seconds * current_speed)
+                realtime_position = playback["position"] + (elapsed_seconds * (current_speed / 1000.0))
                 
                 logger.debug(
                     "[ControlAPI] Extrapolating state -> Baseline Pos: %.3fs, Elapsed: %.3fs, Speed: %s, Calculated Real-time: %.3fs",
@@ -473,8 +473,8 @@ class SendspinDaemon:
             logger.debug("[ControlAPI] Anchor Updated -> Duration: %.3fs", self._control_playback["duration"])
             
         if isinstance(playback_speed, int | float):
-            # Scale protocol speed down (e.g. 1000 -> 1.0) to match normal time multipliers
-            self._control_playback["speed"] = playback_speed / 1000.0
+            # Keep protocol speed in 1000-scale for consistent state reporting.
+            self._control_playback["speed"] = playback_speed
             logger.debug("[ControlAPI] Anchor Updated -> Speed: %s", self._control_playback["speed"])
 
     def _on_volume_change(self, volume: int, muted: bool) -> None:
