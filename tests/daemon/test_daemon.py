@@ -180,7 +180,31 @@ def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
         "track": {"title": "Track"},
         "playback": {"position": 12.5, "speed": 1},
         "volume": {"volume": 25, "muted": False},
+        "delay_ms": 0.0,
     }
+
+
+def test_control_set_delay_applies_static_delay_and_notifies_handler(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._static_delay_ms = 100.0
+
+    client = SimpleNamespace(connected=True, static_delay_ms=100.0)
+
+    def set_static_delay_ms(value: float) -> None:
+        client.static_delay_ms = max(0.0, min(5000.0, value))
+
+    client.set_static_delay_ms = set_static_delay_ms
+    daemon._client = client  # type: ignore[assignment]
+
+    async def run() -> None:
+        await daemon._apply_control_command("set_delay", {"command": "set_delay", "delay_ms": 150})
+
+    asyncio.run(run())
+
+    assert daemon._static_delay_ms == 150.0
+    assert daemon._audio_handler.delay_changes == [50_000]
+    assert daemon._settings.static_delay_ms == 150.0
 
 
 def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
@@ -228,6 +252,7 @@ def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
         },
         "playback": {"position": 0.0, "duration": 180.0, "speed": 1},
         "volume": {"volume": 25, "muted": False},
+        "delay_ms": 0.0,
     }
 
 
@@ -253,6 +278,7 @@ def test_control_state_clears_metadata_when_server_sends_none(tmp_path: Path) ->
         "track": {},
         "playback": {},
         "volume": {"volume": 25, "muted": False},
+        "delay_ms": 0.0,
     }
 
 
@@ -288,6 +314,7 @@ def test_control_state_clears_progress_when_server_sends_none(tmp_path: Path) ->
         "track": {"title": "Track", "artist": "Artist", "album": "Album"},
         "playback": {},
         "volume": {"volume": 25, "muted": False},
+        "delay_ms": 0.0,
     }
 
 
@@ -317,4 +344,5 @@ def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
         "track": {"title": "Track", "artist": "Artist"},
         "playback": {"position": 12.5, "speed": 1},
         "volume": {"volume": 25, "muted": False},
+        "delay_ms": 0.0,
     }

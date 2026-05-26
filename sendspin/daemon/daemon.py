@@ -265,10 +265,36 @@ class SendspinDaemon:
                 await self._send_media_command(MediaCommand.PREVIOUS)
             case "set_volume":
                 self._set_control_volume(payload)
+            case "set_delay":
+                self._set_control_delay(payload)
             case "seek":
                 raise ValueError("seek is not supported by this Sendspin daemon yet")
             case _:
                 raise ValueError(f"Unknown command: {command}")
+
+    def _set_control_delay(self, payload: dict[str, Any]) -> None:
+        """Apply a local static delay command from the control API."""
+        if self._audio_handler is None:
+            raise RuntimeError("Audio handler is not initialized")
+        if self._client is None or not getattr(self._client, "connected", False):
+            raise RuntimeError("No connected Sendspin server")
+
+        raw_delay = payload.get("delay_ms")
+        if not isinstance(raw_delay, (int, float)):
+            raise ValueError("delay_ms must be a number")
+
+        new_delay = float(raw_delay)
+        if not 0 <= new_delay <= 5000:
+            raise ValueError("delay_ms must be between 0 and 5000")
+
+        old_delay = self._client.static_delay_ms
+        self._client.set_static_delay_ms(new_delay)
+        actual_delta_us = int((self._client.static_delay_ms - old_delay) * 1000)
+        if actual_delta_us != 0:
+            self._audio_handler.notify_delay_change(actual_delta_us)
+
+        self._static_delay_ms = self._client.static_delay_ms
+        self._settings.update(static_delay_ms=self._static_delay_ms)
 
     async def _send_media_command(self, command: MediaCommand) -> None:
         """Send a group media command to the connected Sendspin server."""
@@ -371,7 +397,18 @@ class SendspinDaemon:
                 "muted": self._audio_handler.muted,
             }
 
-        return {"track": dict(self._control_track), "playback": playback, "volume": volume}
+        delay_ms = (
+            self._client.static_delay_ms
+            if self._client is not None and getattr(self._client, "connected", False)
+            else self._static_delay_ms
+        )
+
+        return {
+            "track": dict(self._control_track),
+            "playback": playback,
+            "volume": volume,
+            "delay_ms": delay_ms,
+        }
 
     def _update_control_metadata(self, payload: ServerStatePayload) -> None:
         """Merge partial metadata updates into the state exposed to the control API."""
