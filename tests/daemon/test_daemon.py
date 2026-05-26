@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from aiosendspin.models.types import MediaCommand, PlaybackStateType, PlayerCommand
 
 from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
@@ -168,7 +170,7 @@ def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
                 progress=SimpleNamespace(
                     track_progress=12_500,
                     track_duration=UndefinedField(),
-                    playback_speed=1,
+                    playback_speed=1000,
                 ),
             )
         )
@@ -176,11 +178,34 @@ def test_control_state_skips_undefined_metadata_fields(tmp_path: Path) -> None:
 
     state = daemon._get_control_state()
 
-    assert state == {
-        "track": {"title": "Track"},
-        "playback": {"position": 12.5, "speed": 1},
-        "volume": {"volume": 25, "muted": False},
-    }
+    assert state["track"] == {"title": "Track"}
+    assert state["volume"] == {"volume": 25, "muted": False}
+    assert state["delay_ms"] == 0.0
+    assert state["playback"]["speed"] == 1000
+    assert state["playback"]["position"] == pytest.approx(12.5, abs=1e-3)
+
+
+def test_control_set_delay_applies_static_delay_and_notifies_handler(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._static_delay_ms = 100.0
+
+    client = SimpleNamespace(connected=True, static_delay_ms=100.0)
+
+    def set_static_delay_ms(value: float) -> None:
+        client.static_delay_ms = max(0.0, min(5000.0, value))
+
+    client.set_static_delay_ms = set_static_delay_ms
+    daemon._client = client  # type: ignore[assignment]
+
+    async def run() -> None:
+        await daemon._apply_control_command("set_delay", {"command": "set_delay", "delay_ms": 150})
+
+    asyncio.run(run())
+
+    assert daemon._static_delay_ms == 150.0
+    assert daemon._audio_handler.delay_changes == [50_000]
+    assert daemon._settings.static_delay_ms == 150.0
 
 
 def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
@@ -196,7 +221,7 @@ def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
                 progress=SimpleNamespace(
                     track_progress=10_000,
                     track_duration=180_000,
-                    playback_speed=1,
+                    playback_speed=1000,
                 ),
             )
         )
@@ -219,16 +244,16 @@ def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:
 
     state = daemon._get_control_state()
 
-    assert state == {
-        "track": {
-            "title": "Track Two",
-            "artist": "Artist One",
-            "album": "Album One",
-            "artwork_url": "https://example.invalid/art.jpg",
-        },
-        "playback": {"position": 0.0, "duration": 180.0, "speed": 1},
-        "volume": {"volume": 25, "muted": False},
+    assert state["track"] == {
+        "title": "Track Two",
+        "artist": "Artist One",
+        "album": "Album One",
+        "artwork_url": "https://example.invalid/art.jpg",
     }
+    assert state["volume"] == {"volume": 25, "muted": False}
+    assert state["delay_ms"] == 0.0
+    assert state["playback"]["speed"] == 1000
+    assert state["playback"]["position"] == pytest.approx(0.0, abs=1e-3)
 
 
 def test_control_state_clears_metadata_when_server_sends_none(tmp_path: Path) -> None:
@@ -241,7 +266,7 @@ def test_control_state_clears_metadata_when_server_sends_none(tmp_path: Path) ->
                 artist="Artist",
                 album="Album",
                 artwork_url=None,
-                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1),
+                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1000),
             )
         )
     )
@@ -249,11 +274,10 @@ def test_control_state_clears_metadata_when_server_sends_none(tmp_path: Path) ->
 
     state = daemon._get_control_state()
 
-    assert state == {
-        "track": {},
-        "playback": {},
-        "volume": {"volume": 25, "muted": False},
-    }
+    assert state["track"] == {}
+    assert state["volume"] == {"volume": 25, "muted": False}
+    assert state["delay_ms"] == 0.0
+    assert state["playback"] == {}
 
 
 def test_control_state_clears_progress_when_server_sends_none(tmp_path: Path) -> None:
@@ -266,7 +290,7 @@ def test_control_state_clears_progress_when_server_sends_none(tmp_path: Path) ->
                 artist="Artist",
                 album="Album",
                 artwork_url=None,
-                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1),
+                progress=SimpleNamespace(track_progress=10_000, track_duration=180_000, playback_speed=1000),
             )
         )
     )
@@ -284,11 +308,12 @@ def test_control_state_clears_progress_when_server_sends_none(tmp_path: Path) ->
 
     state = daemon._get_control_state()
 
-    assert state == {
-        "track": {"title": "Track", "artist": "Artist", "album": "Album"},
-        "playback": {},
-        "volume": {"volume": 25, "muted": False},
-    }
+    assert state["track"] == {"title": "Track", "artist": "Artist", "album": "Album"}
+    assert state["volume"] == {"volume": 25, "muted": False}
+    assert state["delay_ms"] == 0.0
+    assert state["playback"]["duration"] == pytest.approx(180.0, abs=1e-3)
+    assert state["playback"]["speed"] == 1000
+    assert state["playback"]["position"] == pytest.approx(10.0, abs=1e-3)
 
 
 def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
@@ -304,7 +329,7 @@ def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
             progress=SimpleNamespace(
                 track_progress=12_500,
                 track_duration=UndefinedField(),
-                playback_speed=1,
+                playback_speed=1000,
             ),
         ),
         playback_state=PlaybackStateType.PLAYING,
@@ -313,8 +338,8 @@ def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
 
     state = daemon._get_control_state()
 
-    assert state == {
-        "track": {"title": "Track", "artist": "Artist"},
-        "playback": {"position": 12.5, "speed": 1},
-        "volume": {"volume": 25, "muted": False},
-    }
+    assert state["track"] == {"title": "Track", "artist": "Artist"}
+    assert state["volume"] == {"volume": 25, "muted": False}
+    assert state["delay_ms"] == 0.0
+    assert state["playback"]["speed"] == 1000
+    assert state["playback"]["position"] == pytest.approx(12.5, abs=1e-3)

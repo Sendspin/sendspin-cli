@@ -68,7 +68,8 @@ Response Example:
   "volume": {
     "volume": 75,
     "muted": false
-  }
+  },
+  "delay_ms": 50.0
 }
 ```
 
@@ -83,6 +84,7 @@ Accepts a JSON payload to securely send playback and volume commands to the acti
 - `{"command": "next"}`
 - `{"command": "previous"}`
 - `{"command": "set_volume", "volume": 50, "muted": false}` (0-100)
+- `{"command": "set_delay", "delay_ms": 50}` (0-5000)
 
 #### Request Example:
 
