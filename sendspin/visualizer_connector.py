@@ -38,6 +38,13 @@ class VisualizerHandler:
         self._unsubscribes: list[Callable[[], None]] = []
         self._pending: deque[tuple[int, VisualizerFrame]] = deque()
         self._timer: asyncio.TimerHandle | None = None
+        # Latest periodic values, each carried on its own single-type frame.
+        # Attached to the next emitted spectrum frame so they ride the same
+        # playhead schedule instead of being dropped.
+        self._latest_loudness: int | None = None
+        self._latest_pitch_midi: int | None = None
+        self._latest_pitch_conf: int | None = None
+        self._latest_f_peak_freq: int | None = None
 
     def attach_client(self, client: SendspinClient) -> None:
         """Attach to a SendspinClient and register listeners."""
@@ -55,6 +62,10 @@ class VisualizerHandler:
             self._timer.cancel()
             self._timer = None
         self._pending.clear()
+        self._latest_loudness = None
+        self._latest_pitch_midi = None
+        self._latest_pitch_conf = None
+        self._latest_f_peak_freq = None
         self._on_frame(VisualizerFrame(timestamp_us=0))
 
     def detach(self) -> None:
@@ -68,7 +79,9 @@ class VisualizerHandler:
     def _on_visualizer_data(self, frames: list[VisualizerFrame]) -> None:
         """Handle incoming visualizer frames.
 
-        Only use real spectrum frames; drop non-spectrum frames.
+        Each v1 frame carries one field. Spectrum frames are queued on the
+        playhead schedule; loudness rides along as the latest value attached to
+        the next emitted spectrum frame.
         """
         if not frames:
             return
@@ -78,6 +91,13 @@ class VisualizerHandler:
 
         # Queue frames by synced server timestamps (independent of local audio delay).
         for frame in frames:
+            if frame.loudness is not None:
+                self._latest_loudness = frame.loudness
+            if frame.pitch_midi_q88 is not None:
+                self._latest_pitch_midi = frame.pitch_midi_q88
+                self._latest_pitch_conf = frame.pitch_confidence
+            if frame.f_peak_freq is not None:
+                self._latest_f_peak_freq = frame.f_peak_freq
             if frame.spectrum is None:
                 continue
             play_time_us = self._client.compute_play_time(frame.timestamp_us)
@@ -144,6 +164,11 @@ class VisualizerHandler:
             latest_due = frame
 
         if latest_due is not None:
+            if latest_due.loudness is None:
+                latest_due.loudness = self._latest_loudness
+            latest_due.pitch_midi_q88 = self._latest_pitch_midi
+            latest_due.pitch_confidence = self._latest_pitch_conf
+            latest_due.f_peak_freq = self._latest_f_peak_freq
             self._on_frame(latest_due)
 
         if self._pending:
@@ -292,6 +317,127 @@ class BeatHandler:
         ):
             beat = self._pending.popleft()
             self._on_beat(beat)
+        if self._on_schedule is not None:
+            self._on_schedule(list(self._pending))
+        if self._pending:
+            self._schedule_next()
+
+
+class PeakHandler:
+    """Bridges between SendspinClient energy-onset (peak) events and the TUI.
+
+    Peaks arrive as single-type visualizer frames carrying ``peak_strength``
+    (0-255). Unlike spectrum frames they are events, not periodic samples, so
+    each peak is scheduled to fire at its synced play time rather than being
+    coalesced. Pending peaks ``(timestamp_us, strength)`` feed the peak strip.
+    """
+
+    def __init__(
+        self,
+        on_peak: Callable[[int, int], None],
+        on_schedule: Callable[[list[tuple[int, int]]], None] | None = None,
+    ) -> None:
+        """Initialize the peak handler.
+
+        :param on_peak: Invoked as ``(timestamp_us, strength)`` when a peak is due.
+        :param on_schedule: Invoked with the full pending list whenever it changes.
+        """
+        self._on_peak = on_peak
+        self._on_schedule = on_schedule
+        self._client: SendspinClient | None = None
+        self._unsubscribes: list[Callable[[], None]] = []
+        self._pending: deque[tuple[int, int]] = deque()
+        self._timer: asyncio.TimerHandle | None = None
+
+    def attach_client(self, client: SendspinClient) -> None:
+        """Attach to a SendspinClient and register listeners."""
+        self._client = client
+        self._unsubscribes = [
+            client.add_visualizer_listener(self._on_visualizer_data),
+            client.add_stream_start_listener(self._on_stream_start),
+            client.add_stream_end_listener(self._on_stream_end),
+            client.add_stream_clear_listener(self._on_stream_clear),
+        ]
+
+    def reset(self) -> None:
+        """Clear pending peaks and cancel scheduled emissions."""
+        self._cancel_timer()
+        self._pending.clear()
+        if self._on_schedule is not None:
+            self._on_schedule([])
+
+    def detach(self) -> None:
+        """Detach from the client and unregister listeners."""
+        for unsub in self._unsubscribes:
+            unsub()
+        self._unsubscribes = []
+        self.reset()
+        self._client = None
+
+    def _on_visualizer_data(self, frames: list[VisualizerFrame]) -> None:
+        """Queue incoming peak frames, ignoring all other visualizer types."""
+        if self._client is None:
+            return
+        existing_ts = {ts for ts, _ in self._pending}
+        added = False
+        for frame in frames:
+            if frame.peak_strength is None:
+                continue
+            if frame.timestamp_us in existing_ts:
+                continue
+            existing_ts.add(frame.timestamp_us)
+            self._pending.append((frame.timestamp_us, frame.peak_strength))
+            added = True
+        if not added:
+            return
+        if self._on_schedule is not None:
+            self._on_schedule(list(self._pending))
+        self._schedule_next()
+
+    def _on_stream_start(self, message: StreamStartMessage) -> None:
+        """Flush stale peaks when a new visualizer stream starts."""
+        if message.payload.visualizer is None:
+            return
+        self.reset()
+
+    def _on_stream_end(self, roles: list[str] | None) -> None:
+        """Handle stream end for visualizer role."""
+        if roles is not None and "visualizer" not in roles:
+            return
+        self.reset()
+
+    def _on_stream_clear(self, roles: list[str] | None) -> None:
+        """Handle stream clear for visualizer role."""
+        if roles is not None and "visualizer" not in roles:
+            return
+        self.reset()
+
+    def _cancel_timer(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+
+    def _schedule_next(self) -> None:
+        """Schedule emission of the next due peak."""
+        if self._client is None or not self._pending:
+            return
+        self._cancel_timer()
+
+        now_us = self._client.now_us()
+        play_us = self._client.compute_play_time(self._pending[0][0])
+        delay_s = max(0.0, (play_us - now_us) / 1_000_000.0)
+        loop = asyncio.get_running_loop()
+        self._timer = loop.call_later(delay_s, self._emit_due_peaks)
+
+    def _emit_due_peaks(self) -> None:
+        """Emit all peaks whose play time is due, then reschedule for the next."""
+        self._timer = None
+        if self._client is None or not self._pending:
+            return
+        now_us = self._client.now_us()
+        while self._pending and self._client.compute_play_time(self._pending[0][0]) <= now_us:
+            timestamp_us, strength = self._pending.popleft()
+            self._on_peak(timestamp_us, strength)
         if self._on_schedule is not None:
             self._on_schedule(list(self._pending))
         if self._pending:

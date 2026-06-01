@@ -50,8 +50,15 @@ from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import ColorMode, SendspinUI
+from sendspin.tui.visualizer import (
+    SPECTRUM_F_MAX,
+    SPECTRUM_F_MIN,
+    SPECTRUM_N_BINS,
+    SPECTRUM_SCALE,
+    PeakEvent,
+)
 from sendspin.utils import create_task, get_device_info
-from sendspin.visualizer_connector import BeatHandler, VisualizerHandler
+from sendspin.visualizer_connector import BeatHandler, PeakHandler, VisualizerHandler
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +260,7 @@ class SendspinApp:
         self._audio_handler: AudioStreamHandler | None = None
         self._visualizer_handler: VisualizerHandler | None = None
         self._beat_handler: BeatHandler | None = None
+        self._peak_handler: PeakHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
         # Currently-applied static delay in milliseconds, mirroring
@@ -272,13 +280,13 @@ class SendspinApp:
         """Build visualizer support payload for client/hello (visualizer@v1)."""
         return ClientHelloVisualizerSupport(
             buffer_capacity=65536,
-            types=["loudness", "spectrum", "beat"],
+            types=["loudness", "spectrum", "beat", "peak", "f_peak", "pitch"],
             rate_max=30,
             spectrum=ClientHelloVisualizerSpectrum(
-                n_disp_bins=48,
-                scale="mel",
-                f_min=20,
-                f_max=20000,
+                n_disp_bins=SPECTRUM_N_BINS,
+                scale=SPECTRUM_SCALE,
+                f_min=SPECTRUM_F_MIN,
+                f_max=SPECTRUM_F_MAX,
             ),
         )
 
@@ -337,6 +345,11 @@ class SendspinApp:
                 on_schedule=self._handle_beat_schedule,
             )
             self._beat_handler.attach_client(self._client)
+            self._peak_handler = PeakHandler(
+                on_peak=self._handle_peak,
+                on_schedule=self._handle_peak_schedule,
+            )
+            self._peak_handler.attach_client(self._client)
             if self._ui is not None:
                 self._ui.set_server_clock(self._client.now_us)
 
@@ -362,6 +375,9 @@ class SendspinApp:
         if self._beat_handler:
             self._beat_handler.detach()
             self._beat_handler = None
+        if self._peak_handler:
+            self._peak_handler.detach()
+            self._peak_handler = None
         if self._ui is not None:
             self._ui.set_server_clock(None)
 
@@ -861,7 +877,13 @@ class SendspinApp:
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""
         if self._ui is not None:
-            self._ui.set_visualizer_frame(frame.spectrum, frame.loudness)
+            self._ui.set_visualizer_frame(
+                frame.spectrum,
+                frame.loudness,
+                frame.pitch_midi_q88,
+                frame.pitch_confidence,
+                frame.f_peak_freq,
+            )
 
     def _handle_beat(self, beat: BeatTiming) -> None:
         """Handle a beat hitting the playhead."""
@@ -872,6 +894,18 @@ class SendspinApp:
         """Handle an updated upcoming-beat schedule."""
         if self._ui is not None:
             self._ui.set_beat_schedule(scheduled)
+
+    def _handle_peak(self, timestamp_us: int, strength: int) -> None:
+        """Handle an energy-onset peak hitting the playhead."""
+        if self._ui is not None:
+            self._ui.record_peak(PeakEvent(timestamp_us=timestamp_us, strength=strength))
+
+    def _handle_peak_schedule(self, scheduled: list[tuple[int, int]]) -> None:
+        """Handle an updated upcoming-peak schedule."""
+        if self._ui is not None:
+            self._ui.set_peak_schedule(
+                [PeakEvent(timestamp_us=ts, strength=strength) for ts, strength in scheduled]
+            )
 
     def _on_stream_event(self, event: str) -> None:
         """Handle stream lifecycle events by running hooks."""

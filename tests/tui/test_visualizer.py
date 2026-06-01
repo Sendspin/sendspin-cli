@@ -6,10 +6,17 @@ from unittest.mock import patch
 from aiosendspin.models.visualizer import BeatTiming
 
 from sendspin.tui.visualizer import (
+    SPECTRUM_F_MAX,
+    SPECTRUM_F_MIN,
     BeatState,
+    PeakEvent,
+    PeakState,
     VisualizerState,
+    freq_to_display_column,
     loudness_to_colors,
+    midi_to_note_name,
     render_beat_strip,
+    render_peak_strip,
     render_spectrum,
 )
 
@@ -309,3 +316,116 @@ def test_render_beat_strip_beats_outside_window_dropped() -> None:
     )
     assert line.plain.count("●") == 0
     assert line.plain.count("■") == 0
+
+
+# --- BeatState.tempo_bpm tests ---
+
+
+def test_tempo_bpm_even_spacing() -> None:
+    """Beats 0.5s apart yield 120 BPM."""
+    state = BeatState()
+    state.set_schedule([BeatTiming(0), BeatTiming(500_000), BeatTiming(1_000_000)])
+    assert state.tempo_bpm() == 120
+
+
+def test_tempo_bpm_needs_two_beats() -> None:
+    state = BeatState()
+    assert state.tempo_bpm() is None
+    state.set_schedule([BeatTiming(0)])
+    assert state.tempo_bpm() is None
+
+
+# --- PeakState tests ---
+
+
+def test_peak_state_set_schedule_marks_active() -> None:
+    state = PeakState()
+    assert state.is_active is False
+    state.set_schedule([PeakEvent(100, 200), PeakEvent(200, 50)])
+    assert state.is_active is True
+    assert [p.timestamp_us for p in state.upcoming()] == [100, 200]
+
+
+def test_peak_state_recent_windowed() -> None:
+    """Recent peaks outside the visible window are pruned."""
+    now = [10_000_000_000]
+    state = PeakState(now_us=lambda: now[0])
+    state.record_peak(PeakEvent(now[0], 100))
+    now[0] += 10_000_000  # 10s, past the strip window
+    state.record_peak(PeakEvent(now[0], 100))
+    assert len(state.recent()) == 1
+    assert state.recent()[0].timestamp_us == now[0]
+
+
+# --- render_peak_strip tests ---
+
+
+def test_render_peak_strip_marker_placement() -> None:
+    line = render_peak_strip(
+        width=21,
+        now_us=0,
+        recent=[PeakEvent(-2_000_000, 200)],
+        upcoming=[],
+        loudness=0.5,
+    )
+    # A peak 2s in the past lands ~25% left of center (cell 5 of width 21).
+    assert line.plain[5] != " "
+
+
+def test_render_peak_strip_strength_scales_glyph_height() -> None:
+    """A stronger onset draws a taller block glyph than a weaker one."""
+    ramp = "▁▂▃▄▅▆▇█"
+    line = render_peak_strip(
+        width=21,
+        now_us=0,
+        recent=[PeakEvent(-2_000_000, 10)],
+        upcoming=[PeakEvent(2_000_000, 250)],
+        loudness=0.5,
+    )
+    weak = line.plain[5]
+    strong = line.plain[15]
+    assert ramp.index(strong) > ramp.index(weak)
+
+
+# --- pitch / frequency helper tests ---
+
+
+def test_midi_to_note_name_a4() -> None:
+    assert midi_to_note_name(69 * 256) == "A4"
+
+
+def test_midi_to_note_name_rounds_to_nearest_semitone() -> None:
+    # 69.6 in 8.8 fixed-point rounds up to MIDI 70 -> A#4.
+    assert midi_to_note_name(int(69.6 * 256)) == "A#4"
+
+
+def test_freq_to_display_column_clamps_to_endpoints() -> None:
+    assert freq_to_display_column(SPECTRUM_F_MIN, width=48) == 0
+    assert freq_to_display_column(SPECTRUM_F_MAX, width=48) == 47
+
+
+def test_freq_to_display_column_none_for_nonpositive() -> None:
+    assert freq_to_display_column(0, width=48) is None
+
+
+def test_render_spectrum_uses_server_freq_peak_column() -> None:
+    """freq_peak_column overrides the local max bin for the highlight marker."""
+    # Local max is bin 0, but the server says the dominant column is the last one.
+    magnitudes = [1.0, 0.1, 0.1]
+    peaks = [1.0, 1.0, 1.0]
+    rows = render_spectrum(
+        magnitudes,
+        width=3,
+        height=8,
+        loudness=0.5,
+        peaks=peaks,
+        freq_peak_color="#ff00ff",
+        freq_peak_column=2,
+    )
+    highlighted_cols = {
+        span.start
+        for row in rows
+        for span in row.spans
+        if str(span.style) == "#ff00ff" and row.plain[span.start : span.end] == "▔"
+    }
+    assert highlighted_cols == {2}

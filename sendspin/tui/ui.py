@@ -23,9 +23,15 @@ from rich.text import Text
 
 from sendspin.discovery import DiscoveredServer
 from sendspin.tui.visualizer import (
+    PITCH_CONFIDENCE_MIN,
     BeatState,
+    PeakEvent,
+    PeakState,
     VisualizerState,
+    freq_to_display_column,
     render_beat_strip,
+    render_freq_cursor_row,
+    render_peak_strip,
     render_spectrum,
 )
 from sendspin.utils import create_task
@@ -120,7 +126,8 @@ class UIState:
     visualizer_enabled: bool = False
     visualizer_state: VisualizerState = field(default_factory=VisualizerState)
     beat_state: BeatState = field(default_factory=BeatState)
-    # Synced server clock provider used for the beat timeline strip.
+    peak_state: PeakState = field(default_factory=PeakState)
+    # Synced server clock provider used for the beat and peak timeline strips.
     server_now_us: Callable[[], int] | None = None
 
     # Artwork palette pushed by the server via color@v1.
@@ -807,24 +814,68 @@ class SendspinUI:
 
         bar_width = max(10, self._console.width - 1)
         bg_color = self._palette_bg_hex()
+        # Same background the spectrum paints, so the strips/cursor/footer match.
+        row_bg = f"on {bg_color}" if bg_color else ""
+
+        # Frequency-domain cursors: arrows onto the spectrum's freq axis plus a
+        # footer naming each value. pitch uses the bright on-color; f_peak reuses
+        # the spectrum's freq-peak marker color.
+        cursor_markers, footer_parts, f_peak_col = self._build_freq_cursors(
+            bar_width, palette_high, freq_peak
+        )
+        has_tonal = bool(footer_parts)
+
+        clock = self._state.server_now_us
+        # Row budget, highest priority first: beats, peaks (above the spectrum),
+        # then the tonal cursor + footer (below it). The spectrum keeps >=1 row.
+        show_beats = clock is not None and height >= 2
+        show_peaks = clock is not None and height >= 3
+        show_cursor = has_tonal and height >= 4
+        show_footer = has_tonal and height >= 5
+        reserved = sum((show_beats, show_peaks, show_cursor, show_footer))
+        spectrum_height = max(1, height - reserved)
+
         rows: list[Text] = []
-        spectrum_height = height
-        if height >= 2:
-            spectrum_height = height - 1
-            if self._state.server_now_us is not None:
-                now_us = self._state.server_now_us()
+        if clock is not None and (show_beats or show_peaks):
+            now_us = clock()
+            bpm = self._state.beat_state.tempo_bpm()
+            beats_label = f"beats ({bpm} BPM):" if bpm is not None else "beats:"
+            peaks_label = "peaks:"
+            # Drop labels on narrow terminals to keep the strips usable.
+            gutter = max(len(beats_label), len(peaks_label)) + 1 if bar_width > 28 else 0
+            strip_width = bar_width - gutter
+            if show_beats:
                 rows.append(
-                    render_beat_strip(
-                        width=bar_width,
-                        now_us=now_us,
-                        recent=self._state.beat_state.recent(),
-                        upcoming=self._state.beat_state.upcoming(),
-                        loudness=loudness,
-                        pulse=beat_pulse,
+                    self._gutter_label(
+                        beats_label,
+                        gutter,
+                        render_beat_strip(
+                            width=strip_width,
+                            now_us=now_us,
+                            recent=self._state.beat_state.recent(),
+                            upcoming=self._state.beat_state.upcoming(),
+                            loudness=loudness,
+                            pulse=beat_pulse,
+                        ),
+                        row_bg,
                     )
                 )
-            else:
-                rows.append(Text(" " * bar_width))
+            if show_peaks:
+                rows.append(
+                    self._gutter_label(
+                        peaks_label,
+                        gutter,
+                        render_peak_strip(
+                            width=strip_width,
+                            now_us=now_us,
+                            recent=self._state.peak_state.recent(),
+                            upcoming=self._state.peak_state.upcoming(),
+                            loudness=loudness,
+                        ),
+                        row_bg,
+                    )
+                )
+
         rows.extend(
             render_spectrum(
                 magnitudes,
@@ -837,9 +888,90 @@ class SendspinUI:
                 palette_high=palette_high,
                 bg_color=bg_color,
                 freq_peak_color=freq_peak,
+                freq_peak_column=f_peak_col,
             )
         )
+
+        if show_cursor:
+            rows.append(
+                self._pad_bg(render_freq_cursor_row(bar_width, cursor_markers), bar_width, row_bg)
+            )
+        if show_footer:
+            footer = Text()
+            for i, (text, color) in enumerate(footer_parts):
+                if i:
+                    footer.append("   ")
+                footer.append(text, style=color)
+            rows.append(self._pad_bg(footer, bar_width, row_bg))
         return rows
+
+    @staticmethod
+    def _pad_bg(row: Text, width: int, row_bg: str) -> Text:
+        """Pad a row to full width and paint the palette background behind it."""
+        if row.cell_len < width:
+            row.append(" " * (width - row.cell_len))
+        if row_bg:
+            row.style = row_bg
+        return row
+
+    def _build_freq_cursors(
+        self,
+        width: int,
+        palette_high: tuple[int, int, int] | None,
+        freq_peak_color: str,
+    ) -> tuple[list[tuple[int, str, str]], list[tuple[str, str]], int | None]:
+        """Build frequency-cursor markers and footer labels for tonal readouts.
+
+        Returns ``(markers, footer_parts, f_peak_column)`` where markers are
+        ``(column, glyph, hex_color)``, footer_parts are ``(text, hex_color)``,
+        and f_peak_column is the dominant-frequency spectrum column (or None).
+        """
+        state = self._state.visualizer_state
+        footer: list[tuple[str, str]] = []
+        pitch_marker: tuple[int, str, str] | None = None
+        f_peak_marker: tuple[int, str, str] | None = None
+
+        if self._palette_active() and palette_high is not None:
+            pitch_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
+        else:
+            pitch_color = "#ffffff"
+
+        note = state.pitch_note
+        pitch_freq = state.pitch_freq
+        if (
+            note is not None
+            and pitch_freq is not None
+            and state.pitch_confidence >= PITCH_CONFIDENCE_MIN
+        ):
+            col = freq_to_display_column(pitch_freq, width)
+            if col is not None:
+                pitch_marker = (col, "▲", pitch_color)
+            footer.append((f"pitch: {note}", pitch_color))
+
+        f_peak_col: int | None = None
+        f_peak_freq = state.f_peak_freq
+        if f_peak_freq is not None:
+            f_peak_col = freq_to_display_column(f_peak_freq, width)
+            if f_peak_col is not None:
+                f_peak_marker = (f_peak_col, "△", freq_peak_color)
+            footer.append((f"f_peak: {f_peak_freq} Hz", freq_peak_color))
+
+        # Pitch is drawn last so it wins when both land on the same column.
+        markers = [m for m in (f_peak_marker, pitch_marker) if m is not None]
+        return markers, footer, f_peak_col
+
+    @staticmethod
+    def _gutter_label(label: str, gutter: int, strip: Text, row_bg: str) -> Text:
+        """Prefix a timeline strip with a left-gutter label and paint the row bg.
+
+        The label is a dim span so the background (set as the row's base style)
+        shows behind both the label and the strip without dimming the strip.
+        """
+        row = Text(style=row_bg)
+        if gutter > 0:
+            row.append(label.ljust(gutter), style=f"dim {row_bg}".strip())
+        row.append_text(strip)
+        return row
 
     def _measure_layout_height(self, layout: Table) -> int:
         """Measure the rendered height of a layout table."""
@@ -1136,10 +1268,19 @@ class SendspinUI:
         self._state.shuffle = shuffle
         self.refresh()
 
-    def set_visualizer_frame(self, spectrum: list[int] | None, loudness: int | None) -> None:
+    def set_visualizer_frame(
+        self,
+        spectrum: list[int] | None,
+        loudness: int | None,
+        pitch_midi_q88: int | None = None,
+        pitch_confidence: int | None = None,
+        f_peak_freq: int | None = None,
+    ) -> None:
         """Update visualizer state with new frame data."""
         if self._state.visualizer_enabled:
-            self._state.visualizer_state.update(spectrum, loudness)
+            self._state.visualizer_state.update(
+                spectrum, loudness, pitch_midi_q88, pitch_confidence, f_peak_freq
+            )
             self.refresh()
 
     def set_visualizer_enabled(self, enabled: bool) -> None:
@@ -1148,13 +1289,15 @@ class SendspinUI:
         if not enabled:
             self._state.visualizer_state.clear()
             self._state.beat_state.clear()
+            self._state.peak_state.clear()
         self.refresh()
 
     def set_server_clock(self, now_us: Callable[[], int] | None) -> None:
-        """Inject the synced-clock callable used by the beat timeline strip."""
+        """Inject the synced-clock callable used by the beat and peak strips."""
         self._state.server_now_us = now_us
-        # Rebuild beat state with the new clock for proper recent-beat windowing.
+        # Rebuild event state with the new clock for proper recent-event windowing.
         self._state.beat_state = BeatState(now_us=now_us)
+        self._state.peak_state = PeakState(now_us=now_us)
         self.refresh()
 
     def record_beat(self, beat: BeatTiming) -> None:
@@ -1169,6 +1312,20 @@ class SendspinUI:
         if not self._state.visualizer_enabled:
             return
         self._state.beat_state.set_schedule(scheduled)
+        self.refresh()
+
+    def record_peak(self, peak: PeakEvent) -> None:
+        """Record an energy-onset peak that has just landed on the client."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.peak_state.record_peak(peak)
+        self.refresh()
+
+    def set_peak_schedule(self, scheduled: list[PeakEvent]) -> None:
+        """Update the upcoming peaks used by the peak strip."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.peak_state.set_schedule(scheduled)
         self.refresh()
 
     def clear_beats(self) -> None:

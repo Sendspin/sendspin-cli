@@ -321,9 +321,17 @@ Hooks receive these environment variables:
 
 ### Visualizer
 
-The TUI includes a real-time audio spectrum visualizer that displays frequency data received from the server. This uses the experimental `visualizer@_draft_r1` role. The spectrum data is computed on the server and sent via sendspin to the TUI.
+The TUI includes a real-time audio visualizer driven by the `visualizer@v1` role. All analysis is computed on the server and streamed to the TUI, time-aligned to the audio playhead. It shows:
 
-Toggle it by pressing `v` in the TUI. Your preference is saved in settings and remembered on next launch.
+- **Spectrum bars** — frequency magnitude across the range, tinted by overall loudness (and by the album-artwork palette when the server provides one).
+- **Beats timeline** — a `beats (NNN BPM):` strip with the estimated tempo; downbeats render differently from regular beats.
+- **Peaks timeline** — a `peaks:` strip of energy onsets (transients like drum hits), independent of the beat grid, with glyph height scaled by onset strength.
+- **Pitch** — the perceived musical note (e.g. `A4`) with an arrow pointing at its position on the spectrum, shown only when detection confidence is high.
+- **Dominant frequency** — an `f_peak:` readout with an arrow marking the loudest frequency on the spectrum.
+
+Lower rows are dropped first on short terminals, keeping the spectrum visible.
+
+Toggle the visualizer by pressing `v` in the TUI. Your preference is saved in settings and remembered on next launch.
 
 ### Debugging & Troubleshooting
 
