@@ -429,3 +429,38 @@ def test_render_spectrum_uses_server_freq_peak_column() -> None:
         if str(span.style) == "#ff00ff" and row.plain[span.start : span.end] == "▔"
     }
     assert highlighted_cols == {2}
+
+
+def test_render_beat_strip_uses_palette_colors() -> None:
+    """Given palette colors, beats use the marker color and the playhead its own."""
+    line = render_beat_strip(
+        width=21,
+        now_us=0,
+        recent=[BeatTiming(-2_000_000)],
+        upcoming=[],
+        loudness=0.5,
+        pulse=0.0,
+        marker_color="#abcdef",
+        playhead_color="#123456",
+    )
+    beat_styles = {
+        str(span.style) for span in line.spans if line.plain[span.start : span.end] == "●"
+    }
+    playhead_styles = {
+        str(span.style) for span in line.spans if line.plain[span.start : span.end] == "│"
+    }
+    assert beat_styles == {"#abcdef"}
+    assert playhead_styles == {"#123456"}
+
+
+def test_render_peak_strip_uses_palette_color() -> None:
+    line = render_peak_strip(
+        width=21,
+        now_us=0,
+        recent=[PeakEvent(-2_000_000, 200)],
+        upcoming=[],
+        loudness=0.5,
+        color="#abcdef",
+    )
+    styles = {str(span.style) for span in line.spans if line.plain[span.start : span.end] != " "}
+    assert styles == {"#abcdef"}

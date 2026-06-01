@@ -8,7 +8,6 @@ from collections import deque
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from aiosendspin.models.core import StreamStartMessage
 from aiosendspin.models.visualizer import BeatTiming, VisualizerFrame
 
 if TYPE_CHECKING:
@@ -51,7 +50,6 @@ class VisualizerHandler:
         self._client = client
         self._unsubscribes = [
             client.add_visualizer_listener(self._on_visualizer_data),
-            client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
@@ -106,15 +104,6 @@ class VisualizerHandler:
         if not self._pending:
             return
         self._schedule_next()
-
-    def _on_stream_start(self, message: StreamStartMessage) -> None:
-        """Flush stale frames when a new stream begins."""
-        if message.payload.visualizer is None:
-            return
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        self._pending.clear()
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end for visualizer role."""
@@ -207,7 +196,6 @@ class BeatHandler:
         self._client = client
         self._unsubscribes = [
             client.add_beat_listener(self._on_beat_data),
-            client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
@@ -261,15 +249,6 @@ class BeatHandler:
         if self._on_schedule is not None:
             self._on_schedule(list(self._pending))
         self._schedule_next()
-
-    def _on_stream_start(self, message: StreamStartMessage) -> None:
-        """Flush stale beats when a new visualizer stream starts."""
-        if message.payload.visualizer is None:
-            return
-        self._cancel_timer()
-        self._pending.clear()
-        if self._on_schedule is not None:
-            self._on_schedule([])
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end for visualizer role."""
@@ -354,7 +333,6 @@ class PeakHandler:
         self._client = client
         self._unsubscribes = [
             client.add_visualizer_listener(self._on_visualizer_data),
-            client.add_stream_start_listener(self._on_stream_start),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
@@ -393,12 +371,6 @@ class PeakHandler:
         if self._on_schedule is not None:
             self._on_schedule(list(self._pending))
         self._schedule_next()
-
-    def _on_stream_start(self, message: StreamStartMessage) -> None:
-        """Flush stale peaks when a new visualizer stream starts."""
-        if message.payload.visualizer is None:
-            return
-        self.reset()
 
     def _on_stream_end(self, roles: list[str] | None) -> None:
         """Handle stream end for visualizer role."""

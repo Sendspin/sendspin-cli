@@ -417,6 +417,8 @@ def render_beat_strip(
     upcoming: list[BeatTiming],
     loudness: float,
     pulse: float,
+    marker_color: str | None = None,
+    playhead_color: str | None = None,
 ) -> Text:
     """Render a single-row beat timeline strip.
 
@@ -424,6 +426,10 @@ def render_beat_strip(
     `│` marks the playhead. Each beat falls onto the closest character cell.
     Downbeats render as ``■``, regular beats as ``●``. If a downbeat and a
     regular beat land on the same cell, the downbeat wins.
+
+    When ``marker_color`` is given (a contrast-guaranteed palette color) it
+    paints every beat, and ``playhead_color`` paints the playhead; otherwise the
+    colors follow the loudness tiers. Position conveys past vs upcoming.
     """
     if width <= 0:
         return Text("")
@@ -439,8 +445,18 @@ def render_beat_strip(
     center = width // 2
 
     tip, base = loudness_to_colors(loudness)
-    past_color = _rgb_to_hex(*base)
-    upcoming_color = _rgb_to_hex(*_lerp_rgb(base, tip, 0.5))
+    if marker_color is not None:
+        past_color = upcoming_color = marker_color
+        ph_color = playhead_color or marker_color
+    else:
+        past_color = _rgb_to_hex(*base)
+        upcoming_color = _rgb_to_hex(*_lerp_rgb(base, tip, 0.5))
+        # Brighten the playhead toward white as the beat pulse peaks.
+        ph_color = _rgb_to_hex(
+            min(255, int(tip[0] + (255 - tip[0]) * pulse)),
+            min(255, int(tip[1] + (255 - tip[1]) * pulse)),
+            min(255, int(tip[2] + (255 - tip[2]) * pulse)),
+        )
 
     def place(timestamp_us: int, glyph: str, style: str, *, downbeat: bool) -> None:
         offset_us = timestamp_us - now_us
@@ -465,11 +481,7 @@ def render_beat_strip(
 
     # Playhead overlays whatever was at center. Grows on beat pulse:
     # idle = thin ┃, mid pulse = heavy ┃, peak pulse = full block █.
-    playhead_color = _rgb_to_hex(
-        min(255, int(tip[0] + (255 - tip[0]) * pulse)),
-        min(255, int(tip[1] + (255 - tip[1]) * pulse)),
-        min(255, int(tip[2] + (255 - tip[2]) * pulse)),
-    )
+    playhead_color = ph_color
     if pulse >= 0.6:
         playhead_glyph = "█"
     elif pulse >= 0.15:
@@ -494,12 +506,16 @@ def render_peak_strip(
     recent: list[PeakEvent],
     upcoming: list[PeakEvent],
     loudness: float,
+    color: str | None = None,
 ) -> Text:
     """Render a single-row energy-onset (peak) timeline strip.
 
     Shares ``render_beat_strip``'s time geometry so it lines up directly beneath
     the beat strip. Each peak's glyph height scales with its 0-255 strength. No
     playhead glyph: the beat strip above carries it.
+
+    When ``color`` is given (a contrast-guaranteed palette color) it paints every
+    onset; otherwise the colors follow the loudness tiers.
     """
     if width <= 0:
         return Text("")
@@ -513,9 +529,12 @@ def render_peak_strip(
     cell_strength = [-1] * width
     center = width // 2
 
-    tip, base = loudness_to_colors(loudness)
-    past_color = _rgb_to_hex(*base)
-    upcoming_color = _rgb_to_hex(*_lerp_rgb(base, tip, 0.5))
+    if color is not None:
+        past_color = upcoming_color = color
+    else:
+        tip, base = loudness_to_colors(loudness)
+        past_color = _rgb_to_hex(*base)
+        upcoming_color = _rgb_to_hex(*_lerp_rgb(base, tip, 0.5))
 
     def place(timestamp_us: int, strength: int, color: str) -> None:
         offset_us = timestamp_us - now_us

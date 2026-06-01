@@ -793,24 +793,28 @@ class SendspinUI:
         peaks = state.get_peaks()
         beat_pulse = self._state.beat_state.pulse_intensity()
 
-        # Low end uses opposite-mode bg to pop, high end uses on-color for contrast.
-        if not self._palette_active():
+        # Two guaranteed-contrast colors per the color spec: the on-color
+        # (on_dark/on_light, >=4.5:1 vs its background) and white/black text
+        # (guaranteed vs background_dark/background_light). primary/accent carry
+        # NO contrast guarantee, so they are never used against the painted bg.
+        palette_on = self._palette_active()
+        if not palette_on:
             palette_low = None
             palette_high = None
-            freq_peak = "#ffffff"
+            on_color = "#ffffff"
+            text_color = "#ffffff"
+        elif self._state.color_mode == ColorMode.DARK:
+            palette_low = self._state.palette_background_light
+            palette_high = self._state.palette_on_dark
+            text_color = "#ffffff"
+            assert palette_high is not None
+            on_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
         else:
-            # Marker uses accent (distinct secondary), or primary as fallback.
-            # Primary is required so it's always present; both stay clear of the
-            # bar-tip gradient (palette_high = on_dark/on_light).
-            marker = self._state.palette_accent or self._state.palette_primary
-            assert marker is not None
-            freq_peak = f"#{marker[0]:02x}{marker[1]:02x}{marker[2]:02x}"
-            if self._state.color_mode == ColorMode.DARK:
-                palette_low = self._state.palette_background_light
-                palette_high = self._state.palette_on_dark
-            else:
-                palette_low = self._state.palette_background_dark
-                palette_high = self._state.palette_on_light
+            palette_low = self._state.palette_background_dark
+            palette_high = self._state.palette_on_light
+            text_color = "#000000"
+            assert palette_high is not None
+            on_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
 
         bar_width = max(10, self._console.width - 1)
         bg_color = self._palette_bg_hex()
@@ -818,10 +822,10 @@ class SendspinUI:
         row_bg = f"on {bg_color}" if bg_color else ""
 
         # Frequency-domain cursors: arrows onto the spectrum's freq axis plus a
-        # footer naming each value. pitch uses the bright on-color; f_peak reuses
-        # the spectrum's freq-peak marker color.
+        # footer naming each value. pitch uses the on-color, f_peak white/black —
+        # both guaranteed against the background, and distinct from each other.
         cursor_markers, footer_parts, f_peak_col = self._build_freq_cursors(
-            bar_width, palette_high, freq_peak
+            bar_width, on_color, text_color
         )
         has_tonal = bool(footer_parts)
 
@@ -856,6 +860,8 @@ class SendspinUI:
                             upcoming=self._state.beat_state.upcoming(),
                             loudness=loudness,
                             pulse=beat_pulse,
+                            marker_color=on_color if palette_on else None,
+                            playhead_color=text_color if palette_on else None,
                         ),
                         row_bg,
                     )
@@ -871,6 +877,7 @@ class SendspinUI:
                             recent=self._state.peak_state.recent(),
                             upcoming=self._state.peak_state.upcoming(),
                             loudness=loudness,
+                            color=on_color if palette_on else None,
                         ),
                         row_bg,
                     )
@@ -887,7 +894,7 @@ class SendspinUI:
                 palette_low=palette_low,
                 palette_high=palette_high,
                 bg_color=bg_color,
-                freq_peak_color=freq_peak,
+                freq_peak_color=text_color,
                 freq_peak_column=f_peak_col,
             )
         )
@@ -917,24 +924,20 @@ class SendspinUI:
     def _build_freq_cursors(
         self,
         width: int,
-        palette_high: tuple[int, int, int] | None,
-        freq_peak_color: str,
+        pitch_color: str,
+        f_peak_color: str,
     ) -> tuple[list[tuple[int, str, str]], list[tuple[str, str]], int | None]:
         """Build frequency-cursor markers and footer labels for tonal readouts.
 
         Returns ``(markers, footer_parts, f_peak_column)`` where markers are
         ``(column, glyph, hex_color)``, footer_parts are ``(text, hex_color)``,
-        and f_peak_column is the dominant-frequency spectrum column (or None).
+        and f_peak_column is the dominant-frequency spectrum column (or None). The
+        footer text leads with each cursor's glyph so the readout is self-keying.
         """
         state = self._state.visualizer_state
         footer: list[tuple[str, str]] = []
         pitch_marker: tuple[int, str, str] | None = None
         f_peak_marker: tuple[int, str, str] | None = None
-
-        if self._palette_active() and palette_high is not None:
-            pitch_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
-        else:
-            pitch_color = "#ffffff"
 
         note = state.pitch_note
         pitch_freq = state.pitch_freq
@@ -946,15 +949,15 @@ class SendspinUI:
             col = freq_to_display_column(pitch_freq, width)
             if col is not None:
                 pitch_marker = (col, "▲", pitch_color)
-            footer.append((f"pitch: {note}", pitch_color))
+            footer.append((f"▲ pitch: {note}", pitch_color))
 
         f_peak_col: int | None = None
         f_peak_freq = state.f_peak_freq
         if f_peak_freq is not None:
             f_peak_col = freq_to_display_column(f_peak_freq, width)
             if f_peak_col is not None:
-                f_peak_marker = (f_peak_col, "△", freq_peak_color)
-            footer.append((f"f_peak: {f_peak_freq} Hz", freq_peak_color))
+                f_peak_marker = (f_peak_col, "△", f_peak_color)
+            footer.append((f"△ f_peak: {f_peak_freq} Hz", f_peak_color))
 
         # Pitch is drawn last so it wins when both land on the same column.
         markers = [m for m in (f_peak_marker, pitch_marker) if m is not None]
