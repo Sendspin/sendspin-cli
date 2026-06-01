@@ -379,6 +379,7 @@ class AudioStreamHandler:
         self._client_unsubscribers: list[Callable[[], None]] = []
 
         self._volume_controller: VolumeController | None = volume_controller
+        self._audio_released = False
         self._chunks_dropping = False
 
     @property
@@ -411,6 +412,16 @@ class AudioStreamHandler:
     def uses_external_volume_controller(self) -> bool:
         """Whether this handler is using an external volume controller."""
         return self._volume_controller is not None
+
+    @property
+    def audio_released(self) -> bool:
+        """Whether audio output is suspended and the device has been released."""
+        return self._audio_released
+
+    @property
+    def stream_active(self) -> bool:
+        """Whether the handler currently considers a player stream active."""
+        return self._stream_active
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         """Set the volume and muted state.
@@ -505,6 +516,28 @@ class AudioStreamHandler:
         if worker is not None and worker.is_running():
             worker.notify_delay_change(delta_us)
 
+    def release_audio(self) -> None:
+        """Suspend audio output and close the stream to release the device."""
+        self._audio_released = True
+        self._current_format = None
+        self._chunks_dropping = False
+
+        worker = self._audio_worker
+        if worker is not None and worker.is_running():
+            worker.close_stream()
+
+        if self._stream_active:
+            self._stream_active = False
+            if self._on_event:
+                self._on_event("stop")
+
+    def acquire_audio(self) -> None:
+        """Allow audio output again and clear stale queued chunks."""
+        self._audio_released = False
+        self._current_format = None
+        self._chunks_dropping = False
+        self._clear_audio_worker()
+
     def _clear_audio_worker(self) -> None:
         """Clear worker queue when worker is available."""
         worker = self._audio_worker
@@ -515,6 +548,12 @@ class AudioStreamHandler:
         self, server_timestamp_us: int, audio_data: bytes | bytearray, fmt: AudioFormat
     ) -> None:
         """Handle incoming audio chunks by enqueueing them to the sync worker."""
+        if self._audio_released:
+            if not self._chunks_dropping:
+                logger.debug("Audio chunks dropping: audio output released")
+                self._chunks_dropping = True
+            return
+
         worker = self._audio_worker
         if worker is None or not worker.is_running():
             if not self._chunks_dropping:
@@ -541,6 +580,11 @@ class AudioStreamHandler:
         if message.payload.player is None:
             return
         assert self._client is not None, "Received stream start but client is not attached"
+
+        if self._audio_released:
+            self._clear_audio_worker()
+            return
+
         if self._audio_worker is None or not self._audio_worker.is_running():
             self._audio_worker = None
             self._start_audio_worker(self._client)

@@ -237,15 +237,20 @@ class SendspinDaemon:
             return web.json_response({"error": "Missing command"}, status=400)
 
         try:
-            await self._apply_control_command(command, payload)
+            result = await self._apply_control_command(command, payload)
         except ValueError as e:
             return web.json_response({"error": str(e)}, status=400)
         except RuntimeError as e:
             return web.json_response({"error": str(e)}, status=500)
 
-        return web.json_response({"ok": True})
+        response: dict[str, Any] = {"ok": True}
+        if result is not None:
+            response.update(result)
+        return web.json_response(response)
 
-    async def _apply_control_command(self, command: str, payload: dict[str, Any]) -> None:
+    async def _apply_control_command(
+        self, command: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Apply a validated control command."""
         match command:
             case "play":
@@ -267,10 +272,38 @@ class SendspinDaemon:
                 self._set_control_volume(payload)
             case "set_delay":
                 self._set_control_delay(payload)
+            case "release_audio":
+                self._release_control_audio()
+            case "acquire_audio":
+                self._acquire_control_audio()
+            case "audio_status":
+                return {"audio": self._get_audio_status()}
             case "seek":
                 raise ValueError("seek is not supported by this Sendspin daemon yet")
             case _:
                 raise ValueError(f"Unknown command: {command}")
+        return None
+
+    def _release_control_audio(self) -> None:
+        """Release the configured audio output device for another process."""
+        if self._audio_handler is None:
+            raise RuntimeError("Audio handler is not initialized")
+        self._audio_handler.release_audio()
+
+    def _acquire_control_audio(self) -> None:
+        """Resume use of the configured audio output device."""
+        if self._audio_handler is None:
+            raise RuntimeError("Audio handler is not initialized")
+        self._audio_handler.acquire_audio()
+
+    def _get_audio_status(self) -> dict[str, Any]:
+        """Return local audio output status for the control API."""
+        if self._audio_handler is None:
+            return {"released": False, "stream_active": False}
+        return {
+            "released": self._audio_handler.audio_released,
+            "stream_active": self._audio_handler.stream_active,
+        }
 
     def _set_control_delay(self, payload: dict[str, Any]) -> None:
         """Apply a local static delay command from the control API."""
@@ -408,6 +441,7 @@ class SendspinDaemon:
             "playback": playback,
             "volume": volume,
             "delay_ms": delay_ms,
+            "audio": self._get_audio_status(),
         }
 
     def _update_control_metadata(self, payload: ServerStatePayload) -> None:
