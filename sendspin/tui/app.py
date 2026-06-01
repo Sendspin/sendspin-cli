@@ -269,17 +269,16 @@ class SendspinApp:
 
     @staticmethod
     def _build_visualizer_support() -> ClientHelloVisualizerSupport:
-        """Build visualizer support payload for client/hello."""
+        """Build visualizer support payload for client/hello (visualizer@v1)."""
         return ClientHelloVisualizerSupport(
             buffer_capacity=65536,
             types=["loudness", "spectrum", "beat"],
-            batch_max=8,
+            rate_max=30,
             spectrum=ClientHelloVisualizerSpectrum(
                 n_disp_bins=48,
                 scale="mel",
                 f_min=20,
                 f_max=20000,
-                rate_max=30,
             ),
         )
 
@@ -290,9 +289,6 @@ class SendspinApp:
         visualizer_support = None
         if self._visualizer_enabled:
             visualizer_support = self._build_visualizer_support()
-            # Prefer v1 (downbeat-aware); fall back to the draft wire when a
-            # server only implements the legacy negotiation.
-            roles.append(Roles.VISUALIZER_V1)
             roles.append(Roles.VISUALIZER)
 
         assert self._audio_handler is not None
