@@ -351,7 +351,7 @@ class SendspinApp:
             )
             self._peak_handler.attach_client(self._client)
             if self._ui is not None:
-                self._ui.set_server_clock(self._client.now_us)
+                self._ui.set_server_clock(self._server_now_us)
 
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
@@ -873,6 +873,16 @@ class SendspinApp:
                 self._connection_manager.set_pending_server(self._state.selected_server)
             if not self._cancel_connect():
                 await old_client.disconnect()
+
+    def _server_now_us(self) -> int:
+        """Current time in the server clock the beat and peak strips are drawn against.
+
+        Strip events carry server-clock timestamps, so the strip's "now" must be
+        in the same domain. This is the inverse of ``compute_play_time``, so an
+        event lands on the playhead cell exactly when it becomes audible.
+        """
+        assert self._client is not None
+        return self._client.compute_server_time(self._client.now_us())
 
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""

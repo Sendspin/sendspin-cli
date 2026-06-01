@@ -155,6 +155,7 @@ Settings are stored in `~/.config/sendspin/`:
 | `manufacturer` | string | TUI/daemon | Manufacturer name reported in the client hello (`--manufacturer`) |
 | `product_name` | string | TUI/daemon | Product name reported in the client hello (`--product-name`); defaults to auto-detected OS/platform name |
 | `interface` | string | TUI/daemon | IP address of the network interface to use (`--interface`) |
+| `visualizer` | boolean | TUI | Render the `visualizer@v1` audio visualizer on launch (default: false). Toggle with `v` in the TUI |
 | `source` | string | serve | Default audio source (file path or URL, ffmpeg input) |
 | `source_format` | string | serve | ffmpeg container format for audio source |
 | `clients` | array | serve | Client URLs to connect to (`--client`) |
