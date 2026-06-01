@@ -192,10 +192,15 @@ class BeatHandler:
         self._timer: asyncio.TimerHandle | None = None
 
     def attach_client(self, client: SendspinClient) -> None:
-        """Attach to a SendspinClient and register listeners."""
+        """Attach to a SendspinClient and register listeners.
+
+        Beats arrive through the unified visualizer callback on the v1
+        wire: a `VisualizerFrame` whose `is_downbeat` is set carries a
+        beat event.
+        """
         self._client = client
         self._unsubscribes = [
-            client.add_beat_listener(self._on_beat_data),
+            client.add_visualizer_listener(self._on_visualizer_data),
             client.add_stream_end_listener(self._on_stream_end),
             client.add_stream_clear_listener(self._on_stream_clear),
         ]
@@ -221,28 +226,27 @@ class BeatHandler:
         """Snapshot of upcoming beats still waiting to fire."""
         return list(self._pending)
 
-    def _on_beat_data(self, beats: list[BeatTiming]) -> None:
-        """Handle incoming beat events.
+    def _on_visualizer_data(self, frames: list[VisualizerFrame]) -> None:
+        """Handle incoming visualizer frames, picking out beat events.
 
-        Empty list = explicit clear from the server (e.g. before a fresh schedule
-        is pushed after a track change or seek). Otherwise duplicates are filtered
-        by timestamp so a repeated batch doesn't draw twice on the timeline.
+        v1 wire: each binary carries one type. Beat frames are identified
+        by `is_downbeat is not None`; other types are ignored here.
+        Duplicates are filtered by timestamp so a repeated batch doesn't
+        draw twice on the timeline.
         """
         if self._client is None:
             return
-        if not beats:
-            self._cancel_timer()
-            self._pending.clear()
-            if self._on_schedule is not None:
-                self._on_schedule([])
-            return
         existing_ts = {beat.timestamp_us for beat in self._pending}
         added = False
-        for beat in beats:
-            if beat.timestamp_us in existing_ts:
+        for frame in frames:
+            if frame.is_downbeat is None:
                 continue
-            existing_ts.add(beat.timestamp_us)
-            self._pending.append(beat)
+            if frame.timestamp_us in existing_ts:
+                continue
+            existing_ts.add(frame.timestamp_us)
+            self._pending.append(
+                BeatTiming(timestamp_us=frame.timestamp_us, is_downbeat=frame.is_downbeat)
+            )
             added = True
         if not added:
             return
