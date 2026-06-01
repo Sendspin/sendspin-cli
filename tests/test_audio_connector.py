@@ -288,3 +288,45 @@ def test_stream_end_closes_stream_not_just_clears(monkeypatch) -> None:
 
     assert worker.stream_closed, "_on_stream_end must call close_stream(), not just clear()"
     assert not worker.cleared, "_on_stream_end must not call clear() separately"
+
+
+def test_release_audio_closes_stream_and_drops_chunks_until_acquired(monkeypatch) -> None:
+    monkeypatch.setattr(audio_connector, "_AudioSyncWorker", _FakeWorker)
+    _FakeWorker.instances.clear()
+
+    events: list[str] = []
+    handler = AudioStreamHandler(
+        audio_device=SimpleNamespace(index=0, name="Fake Device"),
+        volume=10,
+        muted=False,
+        on_event=events.append,
+    )
+    client = _FakeClient()
+    handler.attach_client(client)
+    stream_start = SimpleNamespace(
+        payload=SimpleNamespace(player=SimpleNamespace(), visualizer=None)
+    )
+    fmt = _make_format()
+
+    handler._on_stream_start(stream_start)
+    worker = _FakeWorker.instances[0]
+    assert events == ["start"]
+    assert handler.stream_active is True
+
+    handler.release_audio()
+    handler._on_audio_chunk(123_456, b"dropped", fmt)
+
+    assert handler.audio_released is True
+    assert handler.stream_active is False
+    assert worker.stream_closed is True
+    assert worker.submitted == []
+    assert events == ["start", "stop"]
+
+    handler.acquire_audio()
+    handler._on_stream_start(stream_start)
+    handler._on_audio_chunk(234_567, b"played", fmt)
+
+    assert handler.audio_released is False
+    assert handler.stream_active is True
+    assert worker.submitted == [(234_567, b"played", fmt)]
+    assert events == ["start", "stop", "start"]

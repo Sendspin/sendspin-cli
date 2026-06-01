@@ -18,6 +18,8 @@ class _FakeAudioHandler:
         self.muted = muted
         self.calls: list[tuple[int, bool]] = []
         self.delay_changes: list[int] = []
+        self.audio_released = False
+        self.stream_active = False
 
     def set_volume(self, volume: int, *, muted: bool) -> None:
         self.calls.append((volume, muted))
@@ -26,6 +28,13 @@ class _FakeAudioHandler:
 
     def notify_delay_change(self, delta_us: int) -> None:
         self.delay_changes.append(delta_us)
+
+    def release_audio(self) -> None:
+        self.audio_released = True
+        self.stream_active = False
+
+    def acquire_audio(self) -> None:
+        self.audio_released = False
 
 
 class _FakeClient:
@@ -206,6 +215,23 @@ def test_control_set_delay_applies_static_delay_and_notifies_handler(tmp_path: P
     assert daemon._static_delay_ms == 150.0
     assert daemon._audio_handler.delay_changes == [50_000]
     assert daemon._settings.static_delay_ms == 150.0
+
+
+def test_control_release_and_acquire_audio_update_audio_status(tmp_path: Path) -> None:
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    daemon._audio_handler = _FakeAudioHandler(volume=25, muted=False)
+    daemon._audio_handler.stream_active = True
+
+    async def run() -> dict[str, object] | None:
+        await daemon._apply_control_command("release_audio", {"command": "release_audio"})
+        status = await daemon._apply_control_command("audio_status", {"command": "audio_status"})
+        await daemon._apply_control_command("acquire_audio", {"command": "acquire_audio"})
+        return status
+
+    status = asyncio.run(run())
+
+    assert status == {"audio": {"released": True, "stream_active": False}}
+    assert daemon._get_control_state()["audio"] == {"released": False, "stream_active": False}
 
 
 def test_control_state_merges_partial_metadata_updates(tmp_path: Path) -> None:

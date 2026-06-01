@@ -91,7 +91,11 @@ Response Example:
     "volume": 75,
     "muted": false
   },
-  "delay_ms": 50.0
+  "delay_ms": 50.0,
+  "audio": {
+    "released": false,
+    "stream_active": true
+  }
 }
 ```
 
@@ -107,6 +111,9 @@ Accepts a JSON payload to securely send playback and volume commands to the acti
 - `{"command": "previous"}`
 - `{"command": "set_volume", "volume": 50, "muted": false}` (0-100)
 - `{"command": "set_delay", "delay_ms": 50}` (0-5000)
+- `{"command": "release_audio"}` closes the local audio stream and drops incoming chunks so another process can use the device
+- `{"command": "acquire_audio"}` resumes local audio output on the configured device
+- `{"command": "audio_status"}` returns the current local audio output status
 
 #### Request Example:
 
@@ -115,6 +122,10 @@ curl -X POST http://127.0.0.1:59999/control \
      -H "Content-Type: application/json" \
      -d '{"command": "toggle_play_pause"}'
 ```
+
+For integrations that temporarily need exclusive access to the audio device,
+pause playback before releasing audio, then acquire audio before starting
+Sendspin playback again.
 
 ## Updating
 
