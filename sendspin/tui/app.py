@@ -22,6 +22,7 @@ from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
     ServerStatePayload,
+    StreamStartMessage,
 )
 from aiosendspin.models.player import (
     ClientHelloPlayerSupport,
@@ -32,6 +33,7 @@ from aiosendspin.models.visualizer import (
     BeatTiming,
     ClientHelloVisualizerSpectrum,
     ClientHelloVisualizerSupport,
+    StreamStartVisualizer,
     VisualizerFrame,
 )
 from aiosendspin.models.types import (
@@ -350,6 +352,9 @@ class SendspinApp:
                 on_schedule=self._handle_peak_schedule,
             )
             self._peak_handler.attach_client(self._client)
+            self._listener_unsubscribes.append(
+                self._client.add_stream_start_listener(self._handle_stream_start)
+            )
             if self._ui is not None:
                 self._ui.set_server_clock(self._server_now_us)
 
@@ -380,6 +385,7 @@ class SendspinApp:
             self._peak_handler = None
         if self._ui is not None:
             self._ui.set_server_clock(None)
+            self._ui.set_visualizer_types(frozenset())
 
         if self._mpris:
             self._mpris.stop()
@@ -883,6 +889,16 @@ class SendspinApp:
         """
         assert self._client is not None
         return self._client.compute_server_time(self._client.now_us())
+
+    def _handle_stream_start(self, message: StreamStartMessage) -> None:
+        """Record which visualizer types the server negotiated for this stream."""
+        if self._ui is None:
+            return
+        config = message.payload.visualizer
+        types = (
+            frozenset(config.types) if isinstance(config, StreamStartVisualizer) else frozenset()
+        )
+        self._ui.set_visualizer_types(types)
 
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""

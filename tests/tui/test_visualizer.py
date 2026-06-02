@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from aiosendspin.models.visualizer import BeatTiming
 
+from sendspin.tui.ui import SendspinUI
 from sendspin.tui.visualizer import (
     SPECTRUM_F_MAX,
     SPECTRUM_F_MIN,
@@ -19,6 +20,17 @@ from sendspin.tui.visualizer import (
     render_peak_strip,
     render_spectrum,
 )
+
+# MIDI 69 (A4) in q8.8 fixed point, well above the pitch-detection floor.
+_A4_MIDI_Q88 = 69 * 256
+
+
+def _ui_with_tonal_frame(types: frozenset[str]) -> SendspinUI:
+    """A visualizer UI holding both a pitch and an f_peak readout."""
+    ui = SendspinUI(0.0, visualizer_enabled=True)
+    ui.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 200, 1000)
+    ui.set_visualizer_types(types)
+    return ui
 
 
 # --- loudness_to_colors tests ---
@@ -464,3 +476,23 @@ def test_render_peak_strip_uses_palette_color() -> None:
     )
     styles = {str(span.style) for span in line.spans if line.plain[span.start : span.end] != " "}
     assert styles == {"#abcdef"}
+
+
+# --- tonal cursor row tests ---
+
+
+def test_pitch_arrow_hidden_when_not_negotiated() -> None:
+    """Pitch data present but not in negotiated types renders no pitch arrow."""
+    rows = _ui_with_tonal_frame(frozenset({"f_peak"}))._build_visualizer_rows(10)
+    plain = "".join(row.plain for row in rows)
+    assert "△" in plain
+    assert "▲" not in plain
+
+
+def test_pitch_arrow_on_separate_line_below_f_peak() -> None:
+    """With both negotiated, the f_peak arrow gets its own line above pitch's."""
+    rows = _ui_with_tonal_frame(frozenset({"f_peak", "pitch"}))._build_visualizer_rows(10)
+    f_peak_row = next(i for i, row in enumerate(rows) if "△" in row.plain)
+    pitch_row = next(i for i, row in enumerate(rows) if "▲" in row.plain)
+    assert f_peak_row < pitch_row
+    assert "▲" not in rows[f_peak_row].plain

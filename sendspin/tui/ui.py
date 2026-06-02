@@ -124,6 +124,8 @@ class UIState:
 
     # Visualizer
     visualizer_enabled: bool = False
+    # Visualizer types the server negotiated for the current stream.
+    visualizer_types: frozenset[str] = field(default_factory=frozenset)
     visualizer_state: VisualizerState = field(default_factory=VisualizerState)
     beat_state: BeatState = field(default_factory=BeatState)
     peak_state: PeakState = field(default_factory=PeakState)
@@ -824,20 +826,32 @@ class SendspinUI:
         # Frequency-domain cursors: arrows onto the spectrum's freq axis plus a
         # footer naming each value. pitch uses the on-color, f_peak white/black —
         # both guaranteed against the background, and distinct from each other.
-        cursor_markers, footer_parts, f_peak_col = self._build_freq_cursors(
+        f_peak_marker, pitch_marker, footer_parts, f_peak_col = self._build_freq_cursors(
             bar_width, on_color, text_color
         )
-        has_tonal = bool(footer_parts)
+        # Reserve a row per negotiated type so the layout stays put even before
+        # the first frame of that type lands.
+        vtypes = self._state.visualizer_types
 
         clock = self._state.server_now_us
         # Row budget, highest priority first: beats, peaks (above the spectrum),
-        # then the tonal cursor + footer (below it). The spectrum keeps >=1 row.
+        # then the f_peak arrow, pitch arrow, and footer (below it). On short
+        # terminals the lower tonal rows drop first and the spectrum keeps >=1 row.
         show_beats = clock is not None and height >= 2
         show_peaks = clock is not None and height >= 3
-        show_cursor = has_tonal and height >= 4
-        show_footer = has_tonal and height >= 5
-        reserved = sum((show_beats, show_peaks, show_cursor, show_footer))
-        spectrum_height = max(1, height - reserved)
+        top_reserved = show_beats + show_peaks
+        tonal: list[str] = []
+        if "f_peak" in vtypes:
+            tonal.append("f_peak")
+        if "pitch" in vtypes:
+            tonal.append("pitch")
+        if tonal:
+            tonal.append("footer")
+        visible_tonal = tonal[: max(0, height - top_reserved - 1)]
+        show_f_peak = "f_peak" in visible_tonal
+        show_pitch = "pitch" in visible_tonal
+        show_footer = "footer" in visible_tonal
+        spectrum_height = max(1, height - top_reserved - len(visible_tonal))
 
         rows: list[Text] = []
         if clock is not None and (show_beats or show_peaks):
@@ -899,10 +913,12 @@ class SendspinUI:
             )
         )
 
-        if show_cursor:
-            rows.append(
-                self._pad_bg(render_freq_cursor_row(bar_width, cursor_markers), bar_width, row_bg)
-            )
+        if show_f_peak:
+            markers = [f_peak_marker] if f_peak_marker is not None else []
+            rows.append(self._pad_bg(render_freq_cursor_row(bar_width, markers), bar_width, row_bg))
+        if show_pitch:
+            markers = [pitch_marker] if pitch_marker is not None else []
+            rows.append(self._pad_bg(render_freq_cursor_row(bar_width, markers), bar_width, row_bg))
         if show_footer:
             footer = Text()
             for i, (text, color) in enumerate(footer_parts):
@@ -926,23 +942,39 @@ class SendspinUI:
         width: int,
         pitch_color: str,
         f_peak_color: str,
-    ) -> tuple[list[tuple[int, str, str]], list[tuple[str, str]], int | None]:
+    ) -> tuple[
+        tuple[int, str, str] | None,
+        tuple[int, str, str] | None,
+        list[tuple[str, str]],
+        int | None,
+    ]:
         """Build frequency-cursor markers and footer labels for tonal readouts.
 
-        Returns ``(markers, footer_parts, f_peak_column)`` where markers are
-        ``(column, glyph, hex_color)``, footer_parts are ``(text, hex_color)``,
-        and f_peak_column is the dominant-frequency spectrum column (or None). The
-        footer text leads with each cursor's glyph so the readout is self-keying.
+        Returns ``(f_peak_marker, pitch_marker, footer_parts, f_peak_column)``
+        where each marker is ``(column, glyph, hex_color)`` or ``None``,
+        footer_parts are ``(text, hex_color)``, and f_peak_column is the
+        dominant-frequency spectrum column (or None). The footer text leads with
+        each cursor's glyph so the readout is self-keying.
         """
         state = self._state.visualizer_state
+        types = self._state.visualizer_types
         footer: list[tuple[str, str]] = []
         pitch_marker: tuple[int, str, str] | None = None
         f_peak_marker: tuple[int, str, str] | None = None
 
+        f_peak_col: int | None = None
+        f_peak_freq = state.f_peak_freq
+        if "f_peak" in types and f_peak_freq is not None:
+            f_peak_col = freq_to_display_column(f_peak_freq, width)
+            if f_peak_col is not None:
+                f_peak_marker = (f_peak_col, "△", f_peak_color)
+            footer.append((f"△ f_peak: {f_peak_freq} Hz", f_peak_color))
+
         note = state.pitch_note
         pitch_freq = state.pitch_freq
         if (
-            note is not None
+            "pitch" in types
+            and note is not None
             and pitch_freq is not None
             and state.pitch_confidence >= PITCH_CONFIDENCE_MIN
         ):
@@ -951,17 +983,7 @@ class SendspinUI:
                 pitch_marker = (col, "▲", pitch_color)
             footer.append((f"▲ pitch: {note}", pitch_color))
 
-        f_peak_col: int | None = None
-        f_peak_freq = state.f_peak_freq
-        if f_peak_freq is not None:
-            f_peak_col = freq_to_display_column(f_peak_freq, width)
-            if f_peak_col is not None:
-                f_peak_marker = (f_peak_col, "△", f_peak_color)
-            footer.append((f"△ f_peak: {f_peak_freq} Hz", f_peak_color))
-
-        # Pitch is drawn last so it wins when both land on the same column.
-        markers = [m for m in (f_peak_marker, pitch_marker) if m is not None]
-        return markers, footer, f_peak_col
+        return f_peak_marker, pitch_marker, footer, f_peak_col
 
     @staticmethod
     def _gutter_label(label: str, gutter: int, strip: Text, row_bg: str) -> Text:
@@ -1286,6 +1308,11 @@ class SendspinUI:
             )
             self.refresh()
 
+    def set_visualizer_types(self, types: frozenset[str]) -> None:
+        """Record the visualizer types the server negotiated for this stream."""
+        self._state.visualizer_types = types
+        self.refresh()
+
     def set_visualizer_enabled(self, enabled: bool) -> None:
         """Update whether the visualizer is enabled."""
         self._state.visualizer_enabled = enabled
@@ -1293,6 +1320,7 @@ class SendspinUI:
             self._state.visualizer_state.clear()
             self._state.beat_state.clear()
             self._state.peak_state.clear()
+            self._state.visualizer_types = frozenset()
         self.refresh()
 
     def set_server_clock(self, now_us: Callable[[], int] | None) -> None:
