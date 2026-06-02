@@ -145,7 +145,6 @@ class VisualizerState:
         self._last_step_monotonic = time.monotonic()
         # Latest tonal readouts (held, not smoothed): pitch and dominant freq.
         self._pitch_midi_q88: int | None = None
-        self._pitch_confidence: int = 0
         self._f_peak_freq: int | None = None
 
     def update(
@@ -153,7 +152,6 @@ class VisualizerState:
         spectrum: list[int] | None,
         loudness: int | None,
         pitch_midi_q88: int | None = None,
-        pitch_confidence: int | None = None,
         f_peak_freq: int | None = None,
     ) -> None:
         """Update with new frame data. Periodic values are uint16 (0-65535).
@@ -170,7 +168,6 @@ class VisualizerState:
         if loudness is not None:
             self._loudness_target = loudness / 65535.0
         self._pitch_midi_q88 = pitch_midi_q88
-        self._pitch_confidence = pitch_confidence or 0
         self._f_peak_freq = f_peak_freq
 
     def clear(self) -> None:
@@ -183,7 +180,6 @@ class VisualizerState:
         self._peak_hold_timers = []
         self._last_step_monotonic = time.monotonic()
         self._pitch_midi_q88 = None
-        self._pitch_confidence = 0
         self._f_peak_freq = None
 
     def _step(self) -> None:
@@ -255,11 +251,6 @@ class VisualizerState:
         if self._pitch_midi_q88 is None or self._pitch_midi_q88 <= 0:
             return None
         return midi_to_note_name(self._pitch_midi_q88)
-
-    @property
-    def pitch_confidence(self) -> int:
-        """Latest pitch confidence (0-255)."""
-        return self._pitch_confidence
 
     @property
     def pitch_freq(self) -> float | None:
@@ -343,7 +334,7 @@ class BeatState:
     @property
     def is_active(self) -> bool:
         """Whether there is current or recent beat activity."""
-        return bool(self._scheduled) or self._last_beat_monotonic is not None
+        return bool(self._scheduled) or self.pulse_intensity() > 0.0
 
     def tempo_bpm(self) -> int | None:
         """Estimate tempo from the median interval between known beats.

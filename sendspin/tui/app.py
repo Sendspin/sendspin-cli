@@ -529,6 +529,8 @@ class SendspinApp:
                 self._visualizer_handler.detach()
             if self._beat_handler:
                 self._beat_handler.detach()
+            if self._peak_handler:
+                self._peak_handler.detach()
             if self._ui:
                 self._ui.stop()
             if self._audio_handler:
@@ -561,9 +563,7 @@ class SendspinApp:
         self._ui.set_disconnected(message)
         if self._visualizer_handler:
             self._visualizer_handler.reset()
-        if self._beat_handler:
-            self._beat_handler.reset()
-        self._ui.clear_beats()
+        self._clear_visualizer_timelines()
         await self._audio_handler.handle_disconnect()
 
     async def _connect_cancellable(self, url: str) -> None:
@@ -758,6 +758,16 @@ class SendspinApp:
             ui.set_repeat_shuffle(state.repeat_mode, state.shuffle)
         ui.add_event(state.describe())
 
+    def _clear_visualizer_timelines(self) -> None:
+        """Drop the beat and peak strips, cancelling their pending schedules."""
+        if self._beat_handler:
+            self._beat_handler.reset()
+        if self._peak_handler:
+            self._peak_handler.reset()
+        if self._ui is not None:
+            self._ui.clear_beats()
+            self._ui.clear_peaks()
+
     def _handle_color_update(self, payload: ServerStatePayload) -> None:
         """Forward a color@v1 palette payload to the UI."""
         assert self._ui is not None
@@ -784,9 +794,13 @@ class SendspinApp:
         with ui.batch_update():
             ui.set_group_name(payload.group_name)
             if payload.playback_state:
+                changed = payload.playback_state != state.playback_state
                 state.playback_state = payload.playback_state
                 ui.set_playback_state(payload.playback_state)
                 ui.add_event(f"Playback state: {payload.playback_state.value}")
+                # No stream/clear fires on pause, so drop the frozen strips here.
+                if changed and payload.playback_state != PlaybackStateType.PLAYING:
+                    self._clear_visualizer_timelines()
 
     def _handle_server_state(self, payload: ServerStatePayload) -> None:
         """Handle server/state messages with controller state."""
@@ -907,7 +921,6 @@ class SendspinApp:
                 frame.spectrum,
                 frame.loudness,
                 frame.pitch_midi_q88,
-                frame.pitch_confidence,
                 frame.f_peak_freq,
             )
 

@@ -42,7 +42,6 @@ class VisualizerHandler:
         # playhead schedule instead of being dropped.
         self._latest_loudness: int | None = None
         self._latest_pitch_midi: int | None = None
-        self._latest_pitch_conf: int | None = None
         self._latest_f_peak_freq: int | None = None
 
     def attach_client(self, client: SendspinClient) -> None:
@@ -62,7 +61,6 @@ class VisualizerHandler:
         self._pending.clear()
         self._latest_loudness = None
         self._latest_pitch_midi = None
-        self._latest_pitch_conf = None
         self._latest_f_peak_freq = None
         self._on_frame(VisualizerFrame(timestamp_us=0))
 
@@ -93,7 +91,6 @@ class VisualizerHandler:
                 self._latest_loudness = frame.loudness
             if frame.pitch_midi_q88 is not None:
                 self._latest_pitch_midi = frame.pitch_midi_q88
-                self._latest_pitch_conf = frame.pitch_confidence
             if frame.f_peak_freq is not None:
                 self._latest_f_peak_freq = frame.f_peak_freq
             if frame.spectrum is None:
@@ -109,22 +106,15 @@ class VisualizerHandler:
         """Handle stream end for visualizer role."""
         if roles is not None and "visualizer" not in roles:
             return
-        self._pending.clear()
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        # Send an empty frame to trigger decay
-        self._on_frame(VisualizerFrame(timestamp_us=0))
+        # reset() also drops the last-seen tonal values so a stale readout from
+        # the previous stream can't survive into the next one.
+        self.reset()
 
     def _on_stream_clear(self, roles: list[str] | None) -> None:
         """Handle stream clear for visualizer role."""
         if roles is not None and "visualizer" not in roles:
             return
-        self._pending.clear()
-        if self._timer is not None:
-            self._timer.cancel()
-            self._timer = None
-        self._on_frame(VisualizerFrame(timestamp_us=0))
+        self.reset()
 
     def _schedule_next(self) -> None:
         """Schedule emission of the next due visualizer frame."""
@@ -156,7 +146,6 @@ class VisualizerHandler:
             if latest_due.loudness is None:
                 latest_due.loudness = self._latest_loudness
             latest_due.pitch_midi_q88 = self._latest_pitch_midi
-            latest_due.pitch_confidence = self._latest_pitch_conf
             latest_due.f_peak_freq = self._latest_f_peak_freq
             self._on_frame(latest_due)
 

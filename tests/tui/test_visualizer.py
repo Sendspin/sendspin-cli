@@ -28,7 +28,7 @@ _A4_MIDI_Q88 = 69 * 256
 def _ui_with_tonal_frame(types: frozenset[str]) -> SendspinUI:
     """A visualizer UI holding both a pitch and an f_peak readout."""
     ui = SendspinUI(0.0, visualizer_enabled=True)
-    ui.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 200, 1000)
+    ui.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 1000)
     ui.set_visualizer_types(types)
     return ui
 
@@ -224,6 +224,17 @@ def test_beat_state_pulse_decays_to_zero() -> None:
         # 1 second after — way past decay window
         mock_time.monotonic.return_value = time.monotonic() + 1.0
         assert state.pulse_intensity() == 0.0
+
+
+def test_beat_state_idle_after_pulse_decays() -> None:
+    """is_active returns to rest once the pulse decays, so the refresh loop idles."""
+    state = BeatState()
+    state.record_beat(BeatTiming(0))
+    assert state.is_active is True
+
+    with patch("sendspin.tui.visualizer.time") as mock_time:
+        mock_time.monotonic.return_value = time.monotonic() + 1.0
+        assert state.is_active is False
 
 
 def test_beat_state_set_schedule_marks_active() -> None:
@@ -499,18 +510,18 @@ def test_negotiated_pitch_row_keeps_layout_stable() -> None:
     """A negotiated pitch reserves its row, so a lost readout doesn't shift rows."""
     types = frozenset({"f_peak", "pitch"})
 
-    confident = SendspinUI(0.0, visualizer_enabled=True)
-    confident.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 200, 1000)
-    confident.set_visualizer_types(types)
-    rows_confident = confident._build_visualizer_rows(10)
+    with_pitch = SendspinUI(0.0, visualizer_enabled=True)
+    with_pitch.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 1000)
+    with_pitch.set_visualizer_types(types)
+    rows_with_pitch = with_pitch._build_visualizer_rows(10)
 
-    silent = SendspinUI(0.0, visualizer_enabled=True)
-    silent.set_visualizer_frame([30000] * 32, 40000, 0, 0, 1000)  # no confident pitch
-    silent.set_visualizer_types(types)
-    rows_silent = silent._build_visualizer_rows(10)
+    no_pitch = SendspinUI(0.0, visualizer_enabled=True)
+    no_pitch.set_visualizer_frame([30000] * 32, 40000, 0, 1000)  # no pitch readout
+    no_pitch.set_visualizer_types(types)
+    rows_no_pitch = no_pitch._build_visualizer_rows(10)
 
-    f_peak_confident = next(i for i, r in enumerate(rows_confident) if "△" in r.plain)
-    f_peak_silent = next(i for i, r in enumerate(rows_silent) if "△" in r.plain)
+    f_peak_confident = next(i for i, r in enumerate(rows_with_pitch) if "△" in r.plain)
+    f_peak_silent = next(i for i, r in enumerate(rows_no_pitch) if "△" in r.plain)
     assert f_peak_confident == f_peak_silent
 
 

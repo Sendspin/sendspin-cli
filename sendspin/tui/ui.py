@@ -1300,14 +1300,11 @@ class SendspinUI:
         spectrum: list[int] | None,
         loudness: int | None,
         pitch_midi_q88: int | None = None,
-        pitch_confidence: int | None = None,
         f_peak_freq: int | None = None,
     ) -> None:
         """Update visualizer state with new frame data."""
         if self._state.visualizer_enabled:
-            self._state.visualizer_state.update(
-                spectrum, loudness, pitch_midi_q88, pitch_confidence, f_peak_freq
-            )
+            self._state.visualizer_state.update(spectrum, loudness, pitch_midi_q88, f_peak_freq)
             self.refresh()
 
     def set_visualizer_types(self, types: frozenset[str]) -> None:
@@ -1364,6 +1361,11 @@ class SendspinUI:
     def clear_beats(self) -> None:
         """Clear all beat state immediately."""
         self._state.beat_state.clear()
+        self.refresh()
+
+    def clear_peaks(self) -> None:
+        """Clear all peak state immediately."""
+        self._state.peak_state.clear()
         self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:
