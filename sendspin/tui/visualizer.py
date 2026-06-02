@@ -21,9 +21,6 @@ SPECTRUM_F_MAX = 20000
 
 _NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
-# Below this confidence (0-255) the pitch readout is hidden as unreliable.
-PITCH_CONFIDENCE_MIN = 64
-
 
 @dataclass(frozen=True, slots=True)
 class PeakEvent:
@@ -281,12 +278,8 @@ class VisualizerState:
 
     @property
     def has_pitch(self) -> bool:
-        """Whether a confident pitch readout is available to display."""
-        return (
-            self.pitch_note is not None
-            and self.pitch_freq is not None
-            and self.pitch_confidence >= PITCH_CONFIDENCE_MIN
-        )
+        """Whether a pitch readout is available to display."""
+        return self.pitch_note is not None and self.pitch_freq is not None
 
 
 class BeatState:

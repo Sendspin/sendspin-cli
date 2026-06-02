@@ -833,20 +833,22 @@ class SendspinUI:
 
         # Row budget, highest keep-priority first: peaks, beats (above the
         # spectrum), then the f_peak arrow, pitch arrow, and footer (below it).
-        # Strips and f_peak need their type negotiated; pitch shows whenever a
-        # confident readout arrives. On short terminals the lowest-priority rows
-        # drop first and the spectrum keeps >=1 row.
+        # Strips and f_peak need their type negotiated. A negotiated pitch keeps
+        # its row reserved so the arrow appearing/vanishing with confidence
+        # doesn't shift the layout; an unnegotiated pitch still shows on data.
+        # On short terminals the lowest-priority rows drop first, spectrum >=1.
+        has_pitch = self._state.visualizer_state.has_pitch
+        show_pitch_row = "pitch" in vtypes or has_pitch
         candidates: list[str] = []
         if clock is not None and "peak" in vtypes:
             candidates.append("peak")
         if clock is not None and "beat" in vtypes:
             candidates.append("beat")
-        has_pitch = self._state.visualizer_state.has_pitch
         if "f_peak" in vtypes:
             candidates.append("f_peak")
-        if has_pitch:
+        if show_pitch_row:
             candidates.append("pitch")
-        if "f_peak" in vtypes or has_pitch:
+        if "f_peak" in vtypes or show_pitch_row:
             candidates.append("footer")
         visible = candidates[: max(0, height - 1)]
         show_peaks = "peak" in visible

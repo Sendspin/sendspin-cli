@@ -327,7 +327,7 @@ The TUI includes a real-time audio visualizer driven by the `visualizer@v1` role
 - **Spectrum bars** — frequency magnitude across the range, tinted by overall loudness (and by the album-artwork palette when the server provides one).
 - **Beats timeline** — a `beats (NNN BPM):` strip with the estimated tempo; downbeats render differently from regular beats.
 - **Peaks timeline** — a `peaks:` strip of energy onsets (transients like drum hits), independent of the beat grid, with glyph height scaled by onset strength.
-- **Pitch** — the perceived musical note (e.g. `A4`) with an arrow pointing at its position on the spectrum, shown only when detection confidence is high.
+- **Pitch** — the perceived musical note (e.g. `A4`) with an arrow pointing at its position on the spectrum, shown whenever a pitch is detected.
 - **Dominant frequency** — an `f_peak:` readout with an arrow marking the loudest frequency on the spectrum.
 
 Lower rows are dropped first on short terminals, keeping the spectrum visible.

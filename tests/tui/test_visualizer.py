@@ -495,6 +495,25 @@ def test_pitch_arrow_shown_when_not_negotiated() -> None:
     assert "▲" in plain
 
 
+def test_negotiated_pitch_row_keeps_layout_stable() -> None:
+    """A negotiated pitch reserves its row, so a lost readout doesn't shift rows."""
+    types = frozenset({"f_peak", "pitch"})
+
+    confident = SendspinUI(0.0, visualizer_enabled=True)
+    confident.set_visualizer_frame([30000] * 32, 40000, _A4_MIDI_Q88, 200, 1000)
+    confident.set_visualizer_types(types)
+    rows_confident = confident._build_visualizer_rows(10)
+
+    silent = SendspinUI(0.0, visualizer_enabled=True)
+    silent.set_visualizer_frame([30000] * 32, 40000, 0, 0, 1000)  # no confident pitch
+    silent.set_visualizer_types(types)
+    rows_silent = silent._build_visualizer_rows(10)
+
+    f_peak_confident = next(i for i, r in enumerate(rows_confident) if "△" in r.plain)
+    f_peak_silent = next(i for i, r in enumerate(rows_silent) if "△" in r.plain)
+    assert f_peak_confident == f_peak_silent
+
+
 def test_pitch_arrow_on_separate_line_below_f_peak() -> None:
     """With both negotiated, the f_peak arrow gets its own line above pitch's."""
     rows = _ui_with_tonal_frame(frozenset({"f_peak", "pitch"}))._build_visualizer_rows(10)
