@@ -395,6 +395,18 @@ def test_render_peak_strip_marker_placement() -> None:
     assert line.plain[5] != " "
 
 
+def test_render_peak_strip_marks_playhead_at_center() -> None:
+    """The peak strip draws the now-cursor at center so 'now' is always marked."""
+    line = render_peak_strip(
+        width=21,
+        now_us=0,
+        recent=[],
+        upcoming=[],
+        loudness=0.5,
+    )
+    assert line.plain[10] == "│"
+
+
 def test_render_peak_strip_strength_scales_glyph_height() -> None:
     """A stronger onset draws a taller block glyph than a weaker one."""
     ramp = "▁▂▃▄▅▆▇█"

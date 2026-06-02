@@ -500,15 +500,17 @@ def render_peak_strip(
     upcoming: list[PeakEvent],
     loudness: float,
     color: str | None = None,
+    playhead_color: str | None = None,
 ) -> Text:
     """Render a single-row energy-onset (peak) timeline strip.
 
     Shares ``render_beat_strip``'s time geometry so it lines up directly beneath
-    the beat strip. Each peak's glyph height scales with its 0-255 strength. No
-    playhead glyph: the beat strip above carries it.
+    the beat strip, with the playhead at center so "now" is marked even when no
+    beat strip is shown. Each peak's glyph height scales with its 0-255 strength.
 
     When ``color`` is given (a contrast-guaranteed palette color) it paints every
-    onset; otherwise the colors follow the loudness tiers.
+    onset; otherwise the colors follow the loudness tiers. ``playhead_color``
+    colors the center cursor to match the beat strip's playhead.
     """
     if width <= 0:
         return Text("")
@@ -547,6 +549,9 @@ def render_peak_strip(
         place(peak.timestamp_us, peak.strength, past_color)
     for peak in upcoming:
         place(peak.timestamp_us, peak.strength, upcoming_color)
+
+    cells[center] = "│"
+    styles[center] = playhead_color or color
 
     line = Text()
     for ch, style in zip(cells, styles, strict=True):

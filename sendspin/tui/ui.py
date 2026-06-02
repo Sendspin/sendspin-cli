@@ -879,6 +879,7 @@ class SendspinUI:
                             upcoming=self._state.peak_state.upcoming(),
                             loudness=loudness,
                             color=on_color if palette_on else None,
+                            playhead_color=text_color if palette_on else None,
                         ),
                         row_bg,
                     )
