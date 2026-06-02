@@ -481,12 +481,18 @@ def test_render_peak_strip_uses_palette_color() -> None:
 # --- tonal cursor row tests ---
 
 
-def test_pitch_arrow_hidden_when_not_negotiated() -> None:
-    """Pitch data present but not in negotiated types renders no pitch arrow."""
+def test_f_peak_arrow_hidden_when_not_negotiated() -> None:
+    """f_peak is type-gated: its data without the negotiated type renders nothing."""
+    rows = _ui_with_tonal_frame(frozenset({"pitch"}))._build_visualizer_rows(10)
+    plain = "".join(row.plain for row in rows)
+    assert "△" not in plain
+
+
+def test_pitch_arrow_shown_when_not_negotiated() -> None:
+    """Pitch is data-gated, not type-gated: a confident readout always renders."""
     rows = _ui_with_tonal_frame(frozenset({"f_peak"}))._build_visualizer_rows(10)
     plain = "".join(row.plain for row in rows)
-    assert "△" in plain
-    assert "▲" not in plain
+    assert "▲" in plain
 
 
 def test_pitch_arrow_on_separate_line_below_f_peak() -> None:

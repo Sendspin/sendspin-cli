@@ -23,7 +23,6 @@ from rich.text import Text
 
 from sendspin.discovery import DiscoveredServer
 from sendspin.tui.visualizer import (
-    PITCH_CONFIDENCE_MIN,
     BeatState,
     PeakEvent,
     PeakState,
@@ -829,25 +828,25 @@ class SendspinUI:
         f_peak_marker, pitch_marker, footer_parts, f_peak_col = self._build_freq_cursors(
             bar_width, on_color, text_color
         )
-        # Reserve a row per negotiated type so the layout stays put even before
-        # the first frame of that type lands.
         vtypes = self._state.visualizer_types
         clock = self._state.server_now_us
 
         # Row budget, highest keep-priority first: peaks, beats (above the
         # spectrum), then the f_peak arrow, pitch arrow, and footer (below it).
-        # Each row needs its type in the negotiated set; on short terminals the
-        # lowest-priority rows drop first and the spectrum keeps >=1 row.
+        # Strips and f_peak need their type negotiated; pitch shows whenever a
+        # confident readout arrives. On short terminals the lowest-priority rows
+        # drop first and the spectrum keeps >=1 row.
         candidates: list[str] = []
         if clock is not None and "peak" in vtypes:
             candidates.append("peak")
         if clock is not None and "beat" in vtypes:
             candidates.append("beat")
+        has_pitch = self._state.visualizer_state.has_pitch
         if "f_peak" in vtypes:
             candidates.append("f_peak")
-        if "pitch" in vtypes:
+        if has_pitch:
             candidates.append("pitch")
-        if "f_peak" in vtypes or "pitch" in vtypes:
+        if "f_peak" in vtypes or has_pitch:
             candidates.append("footer")
         visible = candidates[: max(0, height - 1)]
         show_peaks = "peak" in visible
@@ -976,12 +975,8 @@ class SendspinUI:
 
         note = state.pitch_note
         pitch_freq = state.pitch_freq
-        if (
-            "pitch" in types
-            and note is not None
-            and pitch_freq is not None
-            and state.pitch_confidence >= PITCH_CONFIDENCE_MIN
-        ):
+        if state.has_pitch:
+            assert pitch_freq is not None
             col = freq_to_display_column(pitch_freq, width)
             if col is not None:
                 pitch_marker = (col, "▲", pitch_color)

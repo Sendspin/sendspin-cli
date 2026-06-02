@@ -279,6 +279,15 @@ class VisualizerState:
             return None
         return self._f_peak_freq
 
+    @property
+    def has_pitch(self) -> bool:
+        """Whether a confident pitch readout is available to display."""
+        return (
+            self.pitch_note is not None
+            and self.pitch_freq is not None
+            and self.pitch_confidence >= PITCH_CONFIDENCE_MIN
+        )
+
 
 class BeatState:
     """Stores beat events and produces a decaying pulse intensity.
