@@ -832,26 +832,30 @@ class SendspinUI:
         # Reserve a row per negotiated type so the layout stays put even before
         # the first frame of that type lands.
         vtypes = self._state.visualizer_types
-
         clock = self._state.server_now_us
-        # Row budget, highest priority first: peaks, beats (above the spectrum),
-        # then the f_peak arrow, pitch arrow, and footer (below it). On short
-        # terminals the lower tonal rows drop first and the spectrum keeps >=1 row.
-        show_peaks = clock is not None and height >= 2
-        show_beats = clock is not None and height >= 3
-        top_reserved = show_beats + show_peaks
-        tonal: list[str] = []
+
+        # Row budget, highest keep-priority first: peaks, beats (above the
+        # spectrum), then the f_peak arrow, pitch arrow, and footer (below it).
+        # Each row needs its type in the negotiated set; on short terminals the
+        # lowest-priority rows drop first and the spectrum keeps >=1 row.
+        candidates: list[str] = []
+        if clock is not None and "peak" in vtypes:
+            candidates.append("peak")
+        if clock is not None and "beat" in vtypes:
+            candidates.append("beat")
         if "f_peak" in vtypes:
-            tonal.append("f_peak")
+            candidates.append("f_peak")
         if "pitch" in vtypes:
-            tonal.append("pitch")
-        if tonal:
-            tonal.append("footer")
-        visible_tonal = tonal[: max(0, height - top_reserved - 1)]
-        show_f_peak = "f_peak" in visible_tonal
-        show_pitch = "pitch" in visible_tonal
-        show_footer = "footer" in visible_tonal
-        spectrum_height = max(1, height - top_reserved - len(visible_tonal))
+            candidates.append("pitch")
+        if "f_peak" in vtypes or "pitch" in vtypes:
+            candidates.append("footer")
+        visible = candidates[: max(0, height - 1)]
+        show_peaks = "peak" in visible
+        show_beats = "beat" in visible
+        show_f_peak = "f_peak" in visible
+        show_pitch = "pitch" in visible
+        show_footer = "footer" in visible
+        spectrum_height = max(1, height - len(visible))
 
         rows: list[Text] = []
         if clock is not None and (show_beats or show_peaks):
