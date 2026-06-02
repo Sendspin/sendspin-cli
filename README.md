@@ -356,6 +356,18 @@ The daemon runs in the background and logs status messages to stdout. It accepts
 sendspin daemon --name "Kitchen" --audio-device 2
 ```
 
+You can start the daemon without immediately acquiring the audio device (useful when
+the device is already in use by another process or container). When started this way
+Sendspin will not hold the audio device and can be instructed to acquire it later via
+the control API.
+
+```bash
+sendspin daemon --release-audio-on-start --control-api true
+```
+
+Use the control API `{"command": "acquire_audio"}` to resume local audio output
+when the device becomes available.
+
 In daemon mode without `--url`, the client listens for incoming server connections and advertises itself via mDNS. The `--name` option (or `name` setting) is used as the friendly name in the mDNS advertisement, making it easy for servers to identify this client on the network.
 
 Use `--manufacturer` and `--product-name` to override the device identity reported to the server in the client hello. This is useful when running the daemon in a container or on a custom device where the auto-detected OS name is not meaningful:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -369,3 +370,31 @@ def test_handle_metadata_updates_control_state(tmp_path: Path) -> None:
     assert state["delay_ms"] == 0.0
     assert state["playback"]["speed"] == 1000
     assert state["playback"]["position"] == pytest.approx(12.5, abs=1e-3)
+
+
+def test_daemon_start_with_release_audio_on_start_does_not_crash(tmp_path: Path) -> None:
+    """Starting the daemon with --release-audio-on-start should not raise.
+
+    Run the daemon until it initializes the audio handler and verify the
+    audio device was released. Cancel the run task afterward.
+    """
+    daemon = _make_daemon(tmp_path, settings_volume=25, settings_muted=False)
+    # emulate CLI flag
+    daemon._args.release_audio_on_start = True
+    # run the daemon in an asyncio task and wait for initialization
+
+    async def run_and_check() -> None:
+        task = asyncio.create_task(daemon.run())
+        try:
+            for _ in range(100):
+                if daemon._audio_handler is not None and daemon._audio_handler.audio_released:
+                    break
+                await asyncio.sleep(0.01)
+            else:
+                pytest.fail("Daemon did not release audio on start within timeout")
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    asyncio.run(run_and_check())
