@@ -590,6 +590,10 @@ class AudioStreamHandler:
 
         if self._audio_released:
             self._clear_audio_worker()
+            if not self._stream_active:
+                self._stream_active = True
+                if self._on_event:
+                    self._on_event("start")
             return
 
         if self._audio_worker is None or not self._audio_worker.is_running():
