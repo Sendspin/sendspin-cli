@@ -973,7 +973,8 @@ class SendspinUI:
             f_peak_col = freq_to_display_column(f_peak_freq, width)
             if f_peak_col is not None:
                 f_peak_marker = (f_peak_col, "△", f_peak_color)
-            footer.append((f"△ f_peak: {f_peak_freq} Hz", f_peak_color))
+            # Pad to 5 digits (max 20000 Hz) so the pitch label after it stays put.
+            footer.append((f"△ f_peak: {f_peak_freq:>5} Hz", f_peak_color))
 
         note = state.pitch_note
         pitch_freq = state.pitch_freq
