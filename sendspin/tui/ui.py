@@ -834,11 +834,11 @@ class SendspinUI:
         vtypes = self._state.visualizer_types
 
         clock = self._state.server_now_us
-        # Row budget, highest priority first: beats, peaks (above the spectrum),
+        # Row budget, highest priority first: peaks, beats (above the spectrum),
         # then the f_peak arrow, pitch arrow, and footer (below it). On short
         # terminals the lower tonal rows drop first and the spectrum keeps >=1 row.
-        show_beats = clock is not None and height >= 2
-        show_peaks = clock is not None and height >= 3
+        show_peaks = clock is not None and height >= 2
+        show_beats = clock is not None and height >= 3
         top_reserved = show_beats + show_peaks
         tonal: list[str] = []
         if "f_peak" in vtypes:
@@ -862,6 +862,22 @@ class SendspinUI:
             # Drop labels on narrow terminals to keep the strips usable.
             gutter = max(len(beats_label), len(peaks_label)) + 1 if bar_width > 28 else 0
             strip_width = bar_width - gutter
+            if show_peaks:
+                rows.append(
+                    self._gutter_label(
+                        peaks_label,
+                        gutter,
+                        render_peak_strip(
+                            width=strip_width,
+                            now_us=now_us,
+                            recent=self._state.peak_state.recent(),
+                            upcoming=self._state.peak_state.upcoming(),
+                            loudness=loudness,
+                            color=on_color if palette_on else None,
+                        ),
+                        row_bg,
+                    )
+                )
             if show_beats:
                 rows.append(
                     self._gutter_label(
@@ -876,22 +892,6 @@ class SendspinUI:
                             pulse=beat_pulse,
                             marker_color=on_color if palette_on else None,
                             playhead_color=text_color if palette_on else None,
-                        ),
-                        row_bg,
-                    )
-                )
-            if show_peaks:
-                rows.append(
-                    self._gutter_label(
-                        peaks_label,
-                        gutter,
-                        render_peak_strip(
-                            width=strip_width,
-                            now_us=now_us,
-                            recent=self._state.peak_state.recent(),
-                            upcoming=self._state.peak_state.upcoming(),
-                            loudness=loudness,
-                            color=on_color if palette_on else None,
                         ),
                         row_bg,
                     )
