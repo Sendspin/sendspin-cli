@@ -493,6 +493,13 @@ class AudioStreamHandler:
 
     def _start_audio_worker(self, client: SendspinClient) -> None:
         """Start sync worker once during attach and fail fast if unavailable."""
+        # If audio output was intentionally released (never acquired), do not
+        # start the audio worker until `acquire_audio()` is called.
+        if self._audio_released:
+            logger.debug("Audio output is released; skipping audio worker start")
+            self._chunks_dropping = True
+            return
+
         if self._audio_worker is None:
             self._audio_worker = _AudioSyncWorker(
                 audio_device=self._audio_device,
@@ -583,6 +590,10 @@ class AudioStreamHandler:
 
         if self._audio_released:
             self._clear_audio_worker()
+            if not self._stream_active:
+                self._stream_active = True
+                if self._on_event:
+                    self._on_event("start")
             return
 
         if self._audio_worker is None or not self._audio_worker.is_running():

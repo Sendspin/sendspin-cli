@@ -507,6 +507,15 @@ def _build_parser() -> argparse.ArgumentParser:
             "Useful when the system has multiple interfaces (e.g., LAN and WAN)."
         ),
     )
+    daemon_parser.add_argument(
+        "--release-audio-on-start",
+        action="store_true",
+        help=(
+            "Start the daemon with the audio device released so the device "
+            "is not locked at startup. Use the control API to `acquire_audio` "
+            "later when the device is available."
+        ),
+    )
 
     # audio-devices subcommand
     audio_devices_parser = subparsers.add_parser(
@@ -750,6 +759,7 @@ async def _run_daemon_mode(
         control_api=args.control_api,
         control_host=args.control_host,
         control_port=args.control_port,
+        release_audio_on_start=getattr(args, "release_audio_on_start", False),
     )
 
     daemon = SendspinDaemon(daemon_args)

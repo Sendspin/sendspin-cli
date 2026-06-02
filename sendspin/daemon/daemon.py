@@ -60,6 +60,7 @@ class DaemonArgs:
     control_api: bool = False
     control_host: str = "127.0.0.1"
     control_port: int = 59999
+    release_audio_on_start: bool = False
 
 
 class SendspinDaemon:
@@ -165,6 +166,11 @@ class SendspinDaemon:
         )
         await self._audio_handler.read_initial_volume()
         await self._audio_handler.start_volume_monitor()
+        # Optionally start with the audio device released so other processes
+        # can hold the device at container startup without causing errors.
+        if getattr(self._args, "release_audio_on_start", False):
+            logger.info("Starting with audio device released (daemon flag)")
+            self._audio_handler.release_audio()
         if self._args.control_api:
             await self._start_control_api()
 
