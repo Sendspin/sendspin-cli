@@ -20,6 +20,8 @@ def _restore_aiosendspin_asynczeroconf():
     _aiosendspin_server_mod.AsyncZeroconf = original
     if original_saved is None:
         _aiosendspin_server_mod.__dict__.pop("_original_AsyncZeroconf", None)
+    else:
+        _aiosendspin_server_mod._original_AsyncZeroconf = original_saved  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -50,15 +52,18 @@ def test_patch_replaces_asynczeroconf_in_aiosendspin() -> None:
 
 
 def test_patch_is_idempotent() -> None:
-    """Calling the patch twice should not double-wrap AsyncZeroconf."""
-    _make_offline_resilient_zeroconf()
-    factory_after_first = _aiosendspin_server_mod.AsyncZeroconf
+    """Calling the patch twice should not cause double-wrapping or break the factory."""
+    offline_error = OSError(errno.ENODEV, "No such device")
 
-    _make_offline_resilient_zeroconf()
-    factory_after_second = _aiosendspin_server_mod.AsyncZeroconf
+    with patch("zeroconf.asyncio.AsyncZeroconf", side_effect=offline_error):
+        # Apply the patch twice
+        _make_offline_resilient_zeroconf()
+        _make_offline_resilient_zeroconf()
 
-    # Both calls should install a factory (not the raw AsyncZeroconf class).
-    assert factory_after_first is factory_after_second or callable(factory_after_second)
+        # The factory should still return _NullZeroconf after being applied twice
+        result = _aiosendspin_server_mod.AsyncZeroconf()
+
+    assert isinstance(result, _NullZeroconf)
 
 
 def test_factory_returns_null_on_enodev() -> None:

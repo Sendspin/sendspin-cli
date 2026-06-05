@@ -62,7 +62,7 @@ def _make_offline_resilient_zeroconf() -> None:
     """Patch AsyncZeroconf in aiosendspin to handle offline ENODEV errors.
 
     When no multicast-capable network interface exists, AsyncZeroconf raises an
-    OSError during initialisation.  This patch catches those errors and returns
+    OSError during initialization.  This patch catches those errors and returns
     a no-op _NullZeroconf instead, so the HTTP server can still start and serve
     clients that connect by explicit IP/port.
     """
