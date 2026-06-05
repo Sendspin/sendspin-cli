@@ -100,6 +100,8 @@ class ServeWorker:
 
     async def _start_server(self) -> None:
         """Start the SendspinPlayerServer on this worker's port."""
+        from sendspin.serve import _make_offline_resilient_zeroconf
+
         loop = asyncio.get_running_loop()
         server_id = f"sendspin-worker-{self.worker_id}-{uuid.uuid4().hex[:8]}"
         self._server = SendspinPlayerServer(
@@ -109,6 +111,7 @@ class ServeWorker:
             total_listeners=self._total_listeners,
         )
         self._server.add_event_listener(self._on_server_event)
+        _make_offline_resilient_zeroconf()
         await self._server.start_server(
             port=self.port,
             advertise_addresses=[],

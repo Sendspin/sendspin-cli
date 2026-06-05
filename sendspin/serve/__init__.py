@@ -35,6 +35,62 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# OSError errno values that indicate no network interfaces are available.
+_OFFLINE_ERRNOS = frozenset(
+    {
+        errno.ENODEV,  # No such device (Linux: no multicast-capable NIC)
+        errno.ENETDOWN,  # Network is down
+        errno.EADDRNOTAVAIL,  # Cannot assign requested address
+    }
+)
+
+
+class _NullZeroconf:
+    """No-op Zeroconf stub used when mDNS is unavailable (e.g. offline)."""
+
+    async def async_register_service(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def async_unregister_service(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    async def async_close(self) -> None:
+        pass
+
+
+def _make_offline_resilient_zeroconf() -> None:
+    """Patch AsyncZeroconf in aiosendspin to handle offline ENODEV errors.
+
+    When no multicast-capable network interface exists, AsyncZeroconf raises an
+    OSError during initialisation.  This patch catches those errors and returns
+    a no-op _NullZeroconf instead, so the HTTP server can still start and serve
+    clients that connect by explicit IP/port.
+    """
+    import aiosendspin.server.server as _aiosendspin_server_mod
+    from zeroconf.asyncio import AsyncZeroconf as _AsyncZeroconf
+
+    original = getattr(_aiosendspin_server_mod, "_original_AsyncZeroconf", None)
+    if original is None:
+        # First call: save the original so we can restore or avoid double-wrapping.
+        _aiosendspin_server_mod._original_AsyncZeroconf = _AsyncZeroconf  # type: ignore[attr-defined]
+
+    def _resilient_zeroconf_factory(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return _AsyncZeroconf(*args, **kwargs)
+        except OSError as exc:
+            if exc.errno in _OFFLINE_ERRNOS:
+                logger.warning(
+                    "mDNS/Zeroconf could not start (%s). "
+                    "Server will run without mDNS advertising — "
+                    "connect clients by IP address directly.",
+                    exc,
+                )
+                return _NullZeroconf()
+            raise
+
+    _aiosendspin_server_mod.AsyncZeroconf = _resilient_zeroconf_factory  # type: ignore[attr-defined,assignment]
+
+
 CAST_INSTALL_HINT = "Install the optional cast extra with `pip install 'sendspin[cast]'`."
 
 
@@ -192,6 +248,7 @@ async def run_server(config: ServeConfig) -> int:
     else:
         raise OSError(f"Could not find available port after {max_attempts} attempts")
 
+    _make_offline_resilient_zeroconf()
     await server.start_server(port=port, discover_clients=False)
 
     local_ip = get_local_ip()
