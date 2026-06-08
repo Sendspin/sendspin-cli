@@ -81,7 +81,7 @@ def test_try_alsa_device_accepts_hw_card_format_when_portaudio_reports_no_match(
             sounddevice,
             "check_output_settings",
             side_effect=sounddevice.PortAudioError(
-                "No output device matching 'hw:CARD=sndrpihifiberry,DEV=0'",
+                f"{_mod._PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING} 'hw:CARD=sndrpihifiberry,DEV=0'",
                 -1,
                 "",
             ),

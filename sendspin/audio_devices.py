@@ -13,6 +13,8 @@ from aiosendspin.models.types import AudioCodec
 
 logger = logging.getLogger(__name__)
 
+_PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING = "No output device matching"
+
 SOUNDDEVICE_DTYPE_MAP: dict[int, str] = {
     16: "int16",
     24: "int24",
@@ -325,10 +327,12 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
     try:
         sounddevice.check_output_settings(device=name)
     except sounddevice.PortAudioError as err:
-        # PortAudio doesn't recognize this device name (e.g. hw:CARD=...,DEV=...).
+        # sounddevice exposes this PortAudio lookup failure only in the
+        # error message, without a stable code to distinguish it from
+        # actual device-open failures.
         # Validate it exists in ALSA before accepting it with safe defaults.
         err_msg = str(err.args[0]) if err.args else ""
-        if "No output device matching" not in err_msg:
+        if _PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING not in err_msg:
             return None
         if not _alsa_device_exists(name):
             return None
