@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from typing import Any, Self
 
+from PIL.Image import Image as PILImage
 from aiosendspin.models.color import SessionUpdateColor
 from aiosendspin.models.types import PlaybackStateType, RepeatMode, UndefinedField
 from aiosendspin.models.visualizer import BeatTiming
@@ -141,6 +142,13 @@ class UIState:
     # Gates themed rendering once the five spec-functional fields are present.
     palette_available: bool = False
     color_mode: ColorMode = ColorMode.DARK
+
+    # Album artwork: None when unsupported or not yet received.
+    artwork_image: PILImage | None = None
+    # Bumped on every artwork update, used to key the renderable cache and
+    # the now_playing panel cache. id(artwork_image) is not safe because
+    # CPython reuses ids after garbage collection.
+    artwork_generation: int = 0
 
     # Shortcut highlight
     highlighted_shortcut: str | None = None
