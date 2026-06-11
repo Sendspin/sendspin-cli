@@ -22,7 +22,20 @@ jobs:
         run: uv python install 3.12
       - name: Install dependencies
         run: uv sync --extra test
-      - name: Lint/test with pre-commit
+      - name: Lint with pre-commit
         run: SKIP=no-commit-to-branch uv run pre-commit run --all-files
+
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@v6.0.2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7.3.1
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --extra test
       - name: Test with pytest
         run: uv run pytest
