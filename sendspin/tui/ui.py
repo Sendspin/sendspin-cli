@@ -381,6 +381,7 @@ class SendspinUI:
             self._state.artwork_image,
             self._state.artwork_generation,
             height_rows=4,
+            width_cells=8,
         )
         narrow = self._console.width - 1 < 80
         if artwork is not None and not narrow:
@@ -1078,6 +1079,7 @@ class SendspinUI:
                 self._state.artist,
                 self._state.album,
                 self._state.artwork_generation,
+                narrow,
                 self._is_highlighted("prev"),
                 self._is_highlighted("space"),
                 self._is_highlighted("next"),
