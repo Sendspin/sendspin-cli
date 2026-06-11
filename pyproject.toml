@@ -18,11 +18,13 @@ dependencies = [
   "aiosendspin-mpris~=2.1.1",
   "av>=15.0.0",
   "numpy>=1.26.0",
+  "pillow>=10.0.0",
   "pulsectl-asyncio>=1.2.2; platform_system == 'Linux'",
   "qrcode>=8.0",
   "readchar>=4.0.0",
   "rich>=13.0.0",
   "sounddevice>=0.4.6",
+  "textual-image>=0.13.0",
 ]
 
 description = "Synchronized audio player for Sendspin servers"
