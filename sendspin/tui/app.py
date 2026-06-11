@@ -299,8 +299,8 @@ class SendspinApp:
                 ArtworkChannel(
                     source=ArtworkSource.ALBUM,
                     format=PictureFormat.PNG,
-                    media_width=512,
-                    media_height=512,
+                    media_width=128,
+                    media_height=128,
                 ),
             ],
         )
