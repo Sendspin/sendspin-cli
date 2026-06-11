@@ -224,7 +224,11 @@ class SendspinUI:
         """Check if the visualizer needs periodic refreshes for interpolation."""
         if not self._state.visualizer_enabled:
             return False
-        return self._state.visualizer_state.is_active or self._state.beat_state.is_active
+        return (
+            self._state.visualizer_state.is_active
+            or self._state.beat_state.is_active
+            or self._state.peak_state.is_active
+        )
 
     def _next_refresh_interval(self) -> float | None:
         """Return the next periodic refresh interval, if any."""
