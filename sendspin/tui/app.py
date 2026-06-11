@@ -13,11 +13,12 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
+
     from sendspin.volume_controller import VolumeController
 
 from aiohttp import ClientError
 from aiosendspin.client import SendspinClient
-from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
+from aiosendspin.models.artwork import ArtworkChannel, ClientHelloArtworkSupport
 from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
@@ -30,6 +31,16 @@ from aiosendspin.models.player import (
     PlayerCommandPayload,
     SupportedAudioFormat,
 )
+from aiosendspin.models.types import (
+    ArtworkSource,
+    MediaCommand,
+    PictureFormat,
+    PlaybackStateType,
+    PlayerCommand,
+    RepeatMode,
+    Roles,
+    UndefinedField,
+)
 from aiosendspin.models.visualizer import (
     BeatTiming,
     ClientHelloVisualizerSpectrum,
@@ -37,20 +48,16 @@ from aiosendspin.models.visualizer import (
     StreamStartVisualizer,
     VisualizerFrame,
 )
-from aiosendspin.models.types import (
-    MediaCommand,
-    PlaybackStateType,
-    PlayerCommand,
-    RepeatMode,
-    Roles,
-    UndefinedField,
-)
+from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
+from PIL.Image import Image as PILImage
 
-from sendspin.audio_devices import AudioDevice, detect_supported_audio_formats
+from sendspin.artwork_connector import ArtworkHandler
 from sendspin.audio_connector import AudioStreamHandler
-from sendspin.discovery import ServiceDiscovery, DiscoveredServer
+from sendspin.audio_devices import AudioDevice, detect_supported_audio_formats
+from sendspin.discovery import DiscoveredServer, ServiceDiscovery
 from sendspin.hooks import run_hook
 from sendspin.settings import ClientSettings
+from sendspin.tui.artwork import detect_support as detect_artwork_support
 from sendspin.tui.keyboard import keyboard_loop
 from sendspin.tui.ui import ColorMode, SendspinUI
 from sendspin.tui.visualizer import (
@@ -264,8 +271,14 @@ class SendspinApp:
         self._visualizer_handler: VisualizerHandler | None = None
         self._beat_handler: BeatHandler | None = None
         self._peak_handler: PeakHandler | None = None
+        self._artwork_handler: ArtworkHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
+        # Probe terminal graphics support BEFORE Rich Live takes the screen.
+        # textual-image writes escape queries to the tty and reads responses
+        # back from stdin. Doing this after Live starts or after the keyboard
+        # loop reads stdin will hang or corrupt the response.
+        self._supports_artwork: bool = detect_artwork_support()
         # Currently-applied static delay in milliseconds, mirroring
         # `SendspinClient.static_delay_ms`. Tracked separately from settings
         # because CLI overrides aren't persisted to settings, so
@@ -277,6 +290,20 @@ class SendspinApp:
         self._connect_task: asyncio.Task[None] | None = None
         self._mpris: SendspinMpris | None = None
         self._listener_unsubscribes: list[Callable[[], None]] = []
+
+    @staticmethod
+    def _build_artwork_support() -> ClientHelloArtworkSupport:
+        """Build artwork support payload for client/hello (artwork@v1)."""
+        return ClientHelloArtworkSupport(
+            channels=[
+                ArtworkChannel(
+                    source=ArtworkSource.ALBUM,
+                    format=PictureFormat.PNG,
+                    media_width=512,
+                    media_height=512,
+                ),
+            ],
+        )
 
     @staticmethod
     def _build_visualizer_support() -> ClientHelloVisualizerSupport:
@@ -302,6 +329,11 @@ class SendspinApp:
             visualizer_support = self._build_visualizer_support()
             roles.append(Roles.VISUALIZER)
 
+        artwork_support: ClientHelloArtworkSupport | None = None
+        if self._supports_artwork:
+            artwork_support = self._build_artwork_support()
+            roles.append(Roles.ARTWORK)
+
         assert self._audio_handler is not None
 
         return SendspinClient(
@@ -318,6 +350,7 @@ class SendspinApp:
                 supported_commands=[PlayerCommand.VOLUME, PlayerCommand.MUTE],
             ),
             visualizer_support=visualizer_support,
+            artwork_support=artwork_support,
             static_delay_ms=self._applied_delay_ms,
             state_supported_commands=[PlayerCommand.SET_STATIC_DELAY],
             initial_volume=self._audio_handler.volume,
@@ -363,6 +396,12 @@ class SendspinApp:
             if self._ui is not None:
                 self._ui.set_server_clock(self._server_now_us)
 
+        if self._supports_artwork:
+            self._artwork_handler = ArtworkHandler(
+                on_image=self._handle_artwork_update,
+            )
+            self._artwork_handler.attach_client(self._client)
+
         if MPRIS_AVAILABLE and self._args.use_mpris:
             self._mpris = SendspinMpris(self._client)
             self._mpris.start()
@@ -391,6 +430,15 @@ class SendspinApp:
         if self._ui is not None:
             self._ui.set_server_clock(None)
             self._ui.set_visualizer_types(frozenset())
+
+        if self._artwork_handler is not None:
+            self._artwork_handler.detach()
+            self._artwork_handler = None
+        # detach() is silent (no callback), so clear UI state ourselves so the
+        # column collapses before the next connection's artwork arrives.
+        if self._ui is not None:
+            self._ui.state.artwork_image = None
+            self._ui.state.artwork_generation += 1
 
         if self._mpris:
             self._mpris.stop()
@@ -932,6 +980,14 @@ class SendspinApp:
             frozenset(config.types) if isinstance(config, StreamStartVisualizer) else frozenset()
         )
         self._ui.set_visualizer_types(types)
+
+    def _handle_artwork_update(self, image: PILImage | None) -> None:
+        """Receive a decoded artwork image (or None to clear) from the handler."""
+        if self._ui is None:
+            return
+        self._ui.state.artwork_image = image
+        self._ui.state.artwork_generation += 1
+        self._ui.refresh()
 
     def _handle_visualizer_frame(self, frame: VisualizerFrame) -> None:
         """Handle a visualizer frame from the connector."""
