@@ -473,7 +473,7 @@ def render_beat_strip(
         place(beat.timestamp_us, glyph, upcoming_color, downbeat=beat.is_downbeat)
 
     # Playhead overlays whatever was at center. Grows on beat pulse:
-    # idle = thin ┃, mid pulse = heavy ┃, peak pulse = full block █.
+    # idle = thin │, mid pulse = heavy ┃, peak pulse = full block █.
     playhead_color = ph_color
     if pulse >= 0.6:
         playhead_glyph = "█"

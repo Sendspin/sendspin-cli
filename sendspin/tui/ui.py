@@ -788,8 +788,9 @@ class SendspinUI:
     def _build_visualizer_rows(self, height: int) -> list[Text]:
         """Build the visualizer as raw Text rows, totaling `height`.
 
-        Reserves the top row for the beat timeline strip when there's room;
-        the remaining rows are the spectrum.
+        Stacks the peak and beat strips above the spectrum and the f_peak
+        arrow, pitch arrow, and footer below it, dropping lowest-priority
+        rows first on short terminals. The spectrum fills the rest.
         """
         state = self._state.visualizer_state
         state.step()
