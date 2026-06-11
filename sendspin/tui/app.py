@@ -21,6 +21,7 @@ from aiosendspin_mpris import MPRIS_AVAILABLE, SendspinMpris
 from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
+    ServerHelloPayload,
     ServerStatePayload,
     StreamStartMessage,
 )
@@ -334,8 +335,12 @@ class SendspinApp:
             self._client.add_controller_state_listener(self._handle_server_state),
             self._client.add_server_command_listener(self._handle_server_command),
             self._client.add_color_listener(self._handle_color_update),
+            self._client.add_server_hello_listener(self._handle_server_hello),
         ]
         self._audio_handler.attach_client(self._client)
+
+        if self._ui is not None:
+            self._ui.set_visualizer_enabled(self._visualizer_enabled)
 
         if self._visualizer_enabled:
             self._visualizer_handler = VisualizerHandler(
@@ -903,6 +908,20 @@ class SendspinApp:
         """
         assert self._client is not None
         return self._client.compute_server_time(self._client.now_us())
+
+    def _handle_server_hello(self, payload: ServerHelloPayload) -> None:
+        """Hide the visualizer panel when the server didn't activate visualizer@v1."""
+        if not self._visualizer_enabled:
+            return
+        if Roles.VISUALIZER.value in payload.active_roles:
+            return
+        logger.warning(
+            "Server did not activate %s (active_roles=%s); hiding the visualizer panel.",
+            Roles.VISUALIZER.value,
+            payload.active_roles,
+        )
+        if self._ui is not None:
+            self._ui.set_visualizer_enabled(False)
 
     def _handle_stream_start(self, message: StreamStartMessage) -> None:
         """Record which visualizer types the server negotiated for this stream."""
