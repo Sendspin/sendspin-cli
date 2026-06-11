@@ -23,6 +23,7 @@ from rich.table import Table
 from rich.text import Text
 
 from sendspin.discovery import DiscoveredServer
+from sendspin.tui.artwork import render_artwork
 from sendspin.tui.visualizer import (
     BeatState,
     PeakEvent,
@@ -358,13 +359,12 @@ class SendspinUI:
             info.add_row("", Text("No metadata available", style=self._themed("dim")))
             info.add_row("")
 
-        # Vertical container for info + shortcuts (5 lines total)
-        content = Table.grid()
-        content.add_column()
-        content.add_row(info)
-        content.add_row("")  # Line 4: spacing
+        # Metadata + shortcuts column (what the panel showed before this change)
+        metadata_col = Table.grid()
+        metadata_col.add_column()
+        metadata_col.add_row(info)
+        metadata_col.add_row("")  # spacing
 
-        # Line 5: playback shortcuts (always show when active)
         space_label = "pause" if self._state.playback_state == PlaybackStateType.PLAYING else "play"
         shortcuts = Text()
         shortcuts.append("←", style=self._shortcut_style("prev"))
@@ -373,7 +373,24 @@ class SendspinUI:
         shortcuts.append(f" {space_label}  ", style=self._themed("dim"))
         shortcuts.append("→", style=self._shortcut_style("next"))
         shortcuts.append(" next", style=self._themed("dim"))
-        content.add_row(shortcuts)
+        metadata_col.add_row(shortcuts)
+
+        # Wrap with an artwork column on the left when artwork is available
+        # and the layout is wide enough.
+        artwork = render_artwork(
+            self._state.artwork_image,
+            self._state.artwork_generation,
+            height_rows=4,
+        )
+        narrow = self._console.width - 1 < 80
+        if artwork is not None and not narrow:
+            outer = Table.grid(padding=(0, 2))
+            outer.add_column()
+            outer.add_column()
+            outer.add_row(artwork, metadata_col)
+            content = outer
+        else:
+            content = metadata_col
 
         return self._make_panel(content, title="Now Playing", default_border="blue", expand=expand)
 
@@ -1060,6 +1077,7 @@ class SendspinUI:
                 self._state.title,
                 self._state.artist,
                 self._state.album,
+                self._state.artwork_generation,
                 self._is_highlighted("prev"),
                 self._is_highlighted("space"),
                 self._is_highlighted("next"),
