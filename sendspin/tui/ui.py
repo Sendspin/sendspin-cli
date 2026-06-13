@@ -14,6 +14,7 @@ from typing import Any, Self
 
 from aiosendspin.models.color import SessionUpdateColor
 from aiosendspin.models.types import PlaybackStateType, RepeatMode, UndefinedField
+from aiosendspin.models.visualizer import BeatTiming
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.live import Live
 from rich.panel import Panel
@@ -22,7 +23,14 @@ from rich.text import Text
 
 from sendspin.discovery import DiscoveredServer
 from sendspin.tui.visualizer import (
+    BeatState,
+    PeakEvent,
+    PeakState,
     VisualizerState,
+    freq_to_display_column,
+    render_beat_strip,
+    render_freq_cursor_row,
+    render_peak_strip,
     render_spectrum,
 )
 from sendspin.utils import create_task
@@ -115,7 +123,13 @@ class UIState:
 
     # Visualizer
     visualizer_enabled: bool = False
+    # Visualizer types the server negotiated for the current stream.
+    visualizer_types: frozenset[str] = field(default_factory=frozenset)
     visualizer_state: VisualizerState = field(default_factory=VisualizerState)
+    beat_state: BeatState = field(default_factory=BeatState)
+    peak_state: PeakState = field(default_factory=PeakState)
+    # Synced server clock provider used for the beat and peak timeline strips.
+    server_now_us: Callable[[], int] | None = None
 
     # Artwork palette pushed by the server via color@v1.
     palette_primary: tuple[int, int, int] | None = None
@@ -208,7 +222,13 @@ class SendspinUI:
 
     def _needs_visualizer_refresh(self) -> bool:
         """Check if the visualizer needs periodic refreshes for interpolation."""
-        return self._state.visualizer_enabled and self._state.visualizer_state.is_active
+        if not self._state.visualizer_enabled:
+            return False
+        return (
+            self._state.visualizer_state.is_active
+            or self._state.beat_state.is_active
+            or self._state.peak_state.is_active
+        )
 
     def _next_refresh_interval(self) -> float | None:
         """Return the next periodic refresh interval, if any."""
@@ -766,44 +786,225 @@ class SendspinUI:
         return self._make_panel(content, title="Server", default_border="yellow", expand=expand)
 
     def _build_visualizer_rows(self, height: int) -> list[Text]:
-        """Build the spectrum visualizer as raw Text rows."""
+        """Build the visualizer as raw Text rows, totaling `height`.
+
+        Stacks the peak and beat strips above the spectrum and the f_peak
+        arrow, pitch arrow, and footer below it, dropping lowest-priority
+        rows first on short terminals. The spectrum fills the rest.
+        """
         state = self._state.visualizer_state
         state.step()
         magnitudes = state.get_spectrum()
         loudness = state.loudness
         peaks = state.get_peaks()
+        beat_pulse = self._state.beat_state.pulse_intensity()
 
-        # Low end uses opposite-mode bg to pop, high end uses on-color for contrast.
-        if not self._palette_active():
+        # Two guaranteed-contrast colors per the color spec: the on-color
+        # (on_dark/on_light, >=4.5:1 vs its background) and white/black text
+        # (guaranteed vs background_dark/background_light). primary/accent carry
+        # NO contrast guarantee, so they are never used against the painted bg.
+        palette_on = self._palette_active()
+        if not palette_on:
             palette_low = None
             palette_high = None
-            freq_peak = "#ffffff"
+            on_color = "#ffffff"
+            text_color = "#ffffff"
+        elif self._state.color_mode == ColorMode.DARK:
+            palette_low = self._state.palette_background_light
+            palette_high = self._state.palette_on_dark
+            text_color = "#ffffff"
+            assert palette_high is not None
+            on_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
         else:
-            # Marker uses accent (distinct secondary), or primary as fallback.
-            # Primary is required so it's always present; both stay clear of the
-            # bar-tip gradient (palette_high = on_dark/on_light).
-            marker = self._state.palette_accent or self._state.palette_primary
-            assert marker is not None
-            freq_peak = f"#{marker[0]:02x}{marker[1]:02x}{marker[2]:02x}"
-            if self._state.color_mode == ColorMode.DARK:
-                palette_low = self._state.palette_background_light
-                palette_high = self._state.palette_on_dark
-            else:
-                palette_low = self._state.palette_background_dark
-                palette_high = self._state.palette_on_light
+            palette_low = self._state.palette_background_dark
+            palette_high = self._state.palette_on_light
+            text_color = "#000000"
+            assert palette_high is not None
+            on_color = f"#{palette_high[0]:02x}{palette_high[1]:02x}{palette_high[2]:02x}"
 
         bar_width = max(10, self._console.width - 1)
-        return render_spectrum(
-            magnitudes,
-            bar_width,
-            height,
-            loudness,
-            peaks,
-            palette_low=palette_low,
-            palette_high=palette_high,
-            bg_color=self._palette_bg_hex(),
-            freq_peak_color=freq_peak,
+        bg_color = self._palette_bg_hex()
+        # Same background the spectrum paints, so the strips/cursor/footer match.
+        row_bg = f"on {bg_color}" if bg_color else ""
+
+        # Frequency-domain cursors: arrows onto the spectrum's freq axis plus a
+        # footer naming each value. pitch uses the on-color, f_peak white/black —
+        # both guaranteed against the background, and distinct from each other.
+        f_peak_marker, pitch_marker, footer_parts, f_peak_col = self._build_freq_cursors(
+            bar_width, on_color, text_color
         )
+        vtypes = self._state.visualizer_types
+        clock = self._state.server_now_us
+
+        # Row budget, highest keep-priority first: peaks, beats (above the
+        # spectrum), then the f_peak arrow, pitch arrow, and footer (below it).
+        # Strips and f_peak need their type negotiated. A negotiated pitch keeps
+        # its row reserved so the arrow appearing/vanishing with confidence
+        # doesn't shift the layout; an unnegotiated pitch still shows on data.
+        # On short terminals the lowest-priority rows drop first, spectrum >=1.
+        has_pitch = self._state.visualizer_state.has_pitch
+        show_pitch_row = "pitch" in vtypes or has_pitch
+        candidates: list[str] = []
+        if clock is not None and "peak" in vtypes:
+            candidates.append("peak")
+        if clock is not None and "beat" in vtypes:
+            candidates.append("beat")
+        if "f_peak" in vtypes:
+            candidates.append("f_peak")
+        if show_pitch_row:
+            candidates.append("pitch")
+        if "f_peak" in vtypes or show_pitch_row:
+            candidates.append("footer")
+        visible = candidates[: max(0, height - 1)]
+        show_peaks = "peak" in visible
+        show_beats = "beat" in visible
+        show_f_peak = "f_peak" in visible
+        show_pitch = "pitch" in visible
+        show_footer = "footer" in visible
+        spectrum_height = max(1, height - len(visible))
+
+        rows: list[Text] = []
+        if clock is not None and (show_beats or show_peaks):
+            now_us = clock()
+            bpm = self._state.beat_state.tempo_bpm()
+            beats_label = f"beats ({bpm} BPM):" if bpm is not None else "beats:"
+            peaks_label = "peaks:"
+            # Drop labels on narrow terminals to keep the strips usable.
+            gutter = max(len(beats_label), len(peaks_label)) + 1 if bar_width > 28 else 0
+            strip_width = bar_width - gutter
+            if show_peaks:
+                rows.append(
+                    self._gutter_label(
+                        peaks_label,
+                        gutter,
+                        render_peak_strip(
+                            width=strip_width,
+                            now_us=now_us,
+                            recent=self._state.peak_state.recent(),
+                            upcoming=self._state.peak_state.upcoming(),
+                            loudness=loudness,
+                            color=on_color if palette_on else None,
+                            playhead_color=text_color if palette_on else None,
+                        ),
+                        row_bg,
+                    )
+                )
+            if show_beats:
+                rows.append(
+                    self._gutter_label(
+                        beats_label,
+                        gutter,
+                        render_beat_strip(
+                            width=strip_width,
+                            now_us=now_us,
+                            recent=self._state.beat_state.recent(),
+                            upcoming=self._state.beat_state.upcoming(),
+                            loudness=loudness,
+                            pulse=beat_pulse,
+                            marker_color=on_color if palette_on else None,
+                            playhead_color=text_color if palette_on else None,
+                        ),
+                        row_bg,
+                    )
+                )
+
+        rows.extend(
+            render_spectrum(
+                magnitudes,
+                bar_width,
+                spectrum_height,
+                loudness,
+                peaks,
+                beat_pulse=beat_pulse,
+                palette_low=palette_low,
+                palette_high=palette_high,
+                bg_color=bg_color,
+                freq_peak_color=text_color,
+                freq_peak_column=f_peak_col,
+            )
+        )
+
+        if show_f_peak:
+            markers = [f_peak_marker] if f_peak_marker is not None else []
+            rows.append(self._pad_bg(render_freq_cursor_row(bar_width, markers), bar_width, row_bg))
+        if show_pitch:
+            markers = [pitch_marker] if pitch_marker is not None else []
+            rows.append(self._pad_bg(render_freq_cursor_row(bar_width, markers), bar_width, row_bg))
+        if show_footer:
+            footer = Text()
+            for i, (text, color) in enumerate(footer_parts):
+                if i:
+                    footer.append("   ")
+                footer.append(text, style=color)
+            rows.append(self._pad_bg(footer, bar_width, row_bg))
+        return rows
+
+    @staticmethod
+    def _pad_bg(row: Text, width: int, row_bg: str) -> Text:
+        """Pad a row to full width and paint the palette background behind it."""
+        if row.cell_len < width:
+            row.append(" " * (width - row.cell_len))
+        if row_bg:
+            row.style = row_bg
+        return row
+
+    def _build_freq_cursors(
+        self,
+        width: int,
+        pitch_color: str,
+        f_peak_color: str,
+    ) -> tuple[
+        tuple[int, str, str] | None,
+        tuple[int, str, str] | None,
+        list[tuple[str, str]],
+        int | None,
+    ]:
+        """Build frequency-cursor markers and footer labels for tonal readouts.
+
+        Returns ``(f_peak_marker, pitch_marker, footer_parts, f_peak_column)``
+        where each marker is ``(column, glyph, hex_color)`` or ``None``,
+        footer_parts are ``(text, hex_color)``, and f_peak_column is the
+        dominant-frequency spectrum column (or None). The footer text leads with
+        each cursor's glyph so the readout is self-keying.
+        """
+        state = self._state.visualizer_state
+        types = self._state.visualizer_types
+        footer: list[tuple[str, str]] = []
+        pitch_marker: tuple[int, str, str] | None = None
+        f_peak_marker: tuple[int, str, str] | None = None
+
+        f_peak_col: int | None = None
+        f_peak_freq = state.f_peak_freq
+        if "f_peak" in types and f_peak_freq is not None:
+            f_peak_col = freq_to_display_column(f_peak_freq, width)
+            if f_peak_col is not None:
+                f_peak_marker = (f_peak_col, "△", f_peak_color)
+            # Pad to 5 digits (max 20000 Hz) so the pitch label after it stays put.
+            footer.append((f"△ f_peak: {f_peak_freq:>5} Hz", f_peak_color))
+
+        note = state.pitch_note
+        pitch_freq = state.pitch_freq
+        if state.has_pitch:
+            assert pitch_freq is not None
+            col = freq_to_display_column(pitch_freq, width)
+            if col is not None:
+                pitch_marker = (col, "▲", pitch_color)
+            footer.append((f"▲ pitch: {note}", pitch_color))
+
+        return f_peak_marker, pitch_marker, footer, f_peak_col
+
+    @staticmethod
+    def _gutter_label(label: str, gutter: int, strip: Text, row_bg: str) -> Text:
+        """Prefix a timeline strip with a left-gutter label and paint the row bg.
+
+        The label is a dim span so the background (set as the row's base style)
+        shows behind both the label and the strip without dimming the strip.
+        """
+        row = Text(style=row_bg)
+        if gutter > 0:
+            row.append(label.ljust(gutter), style=f"dim {row_bg}".strip())
+        row.append_text(strip)
+        return row
 
     def _measure_layout_height(self, layout: Table) -> int:
         """Measure the rendered height of a layout table."""
@@ -1100,17 +1301,77 @@ class SendspinUI:
         self._state.shuffle = shuffle
         self.refresh()
 
-    def set_visualizer_frame(self, spectrum: list[int] | None, loudness: int | None) -> None:
+    def set_visualizer_frame(
+        self,
+        spectrum: list[int] | None,
+        loudness: int | None,
+        pitch_midi_q88: int | None = None,
+        f_peak_freq: int | None = None,
+    ) -> None:
         """Update visualizer state with new frame data."""
         if self._state.visualizer_enabled:
-            self._state.visualizer_state.update(spectrum, loudness)
+            self._state.visualizer_state.update(spectrum, loudness, pitch_midi_q88, f_peak_freq)
             self.refresh()
+
+    def set_visualizer_types(self, types: frozenset[str]) -> None:
+        """Record the visualizer types the server negotiated for this stream."""
+        self._state.visualizer_types = types
+        self.refresh()
 
     def set_visualizer_enabled(self, enabled: bool) -> None:
         """Update whether the visualizer is enabled."""
         self._state.visualizer_enabled = enabled
         if not enabled:
             self._state.visualizer_state.clear()
+            self._state.beat_state.clear()
+            self._state.peak_state.clear()
+            self._state.visualizer_types = frozenset()
+        self.refresh()
+
+    def set_server_clock(self, now_us: Callable[[], int] | None) -> None:
+        """Inject the synced-clock callable used by the beat and peak strips."""
+        self._state.server_now_us = now_us
+        # Rebuild event state with the new clock for proper recent-event windowing.
+        self._state.beat_state = BeatState(now_us=now_us)
+        self._state.peak_state = PeakState(now_us=now_us)
+        self.refresh()
+
+    def record_beat(self, beat: BeatTiming) -> None:
+        """Record a beat that has just landed on the client."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.beat_state.record_beat(beat)
+        self.refresh()
+
+    def set_beat_schedule(self, scheduled: list[BeatTiming]) -> None:
+        """Update the upcoming beats used by the timeline strip."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.beat_state.set_schedule(scheduled)
+        self.refresh()
+
+    def record_peak(self, peak: PeakEvent) -> None:
+        """Record an energy-onset peak that has just landed on the client."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.peak_state.record_peak(peak)
+        self.refresh()
+
+    def set_peak_schedule(self, scheduled: list[PeakEvent]) -> None:
+        """Update the upcoming peaks used by the peak strip."""
+        if not self._state.visualizer_enabled:
+            return
+        self._state.peak_state.set_schedule(scheduled)
+        self.refresh()
+
+    def clear_beats(self) -> None:
+        """Clear all beat state immediately."""
+        self._state.beat_state.clear()
+        self.refresh()
+
+    def clear_peaks(self) -> None:
+        """Clear all peak state immediately."""
+        self._state.peak_state.clear()
         self.refresh()
 
     def show_server_selector(self, servers: list[DiscoveredServer]) -> None:
