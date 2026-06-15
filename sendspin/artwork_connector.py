@@ -28,12 +28,10 @@ class ArtworkHandler:
         on_image: Callable[[Image.Image | None], None],
     ) -> None:
         self._on_image = on_image
-        self._client: SendspinClient | None = None
         self._unsubscribes: list[Callable[[], None]] = []
 
     def attach_client(self, client: SendspinClient) -> None:
         """Register artwork, stream_end, and stream_clear listeners."""
-        self._client = client
         self._unsubscribes = [
             client.add_artwork_listener(self._on_artwork_frame),
             client.add_stream_end_listener(self._on_stream_end),
@@ -45,7 +43,6 @@ class ArtworkHandler:
         for unsub in self._unsubscribes:
             unsub()
         self._unsubscribes = []
-        self._client = None
 
     def _on_artwork_frame(self, channel: int, payload: bytes) -> None:
         if channel != 0:

@@ -274,10 +274,7 @@ class SendspinApp:
         self._artwork_handler: ArtworkHandler | None = None
         self._settings = args.settings
         self._visualizer_enabled: bool = args.settings.visualizer
-        # Probe terminal graphics support BEFORE Rich Live takes the screen.
-        # textual-image writes escape queries to the tty and reads responses
-        # back from stdin. Doing this after Live starts or after the keyboard
-        # loop reads stdin will hang or corrupt the response.
+        # Probe terminal graphics support before Rich Live takes the tty.
         self._supports_artwork: bool = detect_artwork_support()
         # Currently-applied static delay in milliseconds, mirroring
         # `SendspinClient.static_delay_ms`. Tracked separately from settings
@@ -434,8 +431,6 @@ class SendspinApp:
         if self._artwork_handler is not None:
             self._artwork_handler.detach()
             self._artwork_handler = None
-        # detach() is silent (no callback), so clear UI state ourselves so the
-        # column collapses before the next connection's artwork arrives.
         if self._ui is not None:
             self._ui.state.artwork_image = None
             self._ui.state.artwork_generation += 1

@@ -44,20 +44,10 @@ def render_artwork(
     return renderable
 
 
-def _probe_graphics_protocol() -> str | None:
-    """Probe for a real terminal graphics protocol.
-
-    Returns "kitty" (TGP), "sixel", or None for halfcell/unicode fallbacks.
-    textual-image runs its terminal probe at module import; this function only
-    inspects the resolved Image class.
-    """
-    if TIImage is SixelImage:
-        return "sixel"
-    if TIImage is TGPImage:
-        return "kitty"
-    return None
-
-
 def detect_support() -> bool:
-    """True when a graphics protocol (Kitty or Sixel) is available."""
-    return _probe_graphics_protocol() is not None
+    """True when a real terminal graphics protocol (Kitty or Sixel) is available.
+
+    textual-image runs its terminal probe at module import. This function just
+    inspects the resolved Image class. Halfcell and Unicode fallbacks return False.
+    """
+    return TIImage is SixelImage or TIImage is TGPImage

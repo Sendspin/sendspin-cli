@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
-
 from PIL import Image as PILImage
 
 from sendspin.tui import artwork
@@ -48,15 +46,3 @@ def test_render_artwork_rebuilds_on_new_width() -> None:
     first = artwork.render_artwork(img, generation=1, height_rows=4, width_cells=8)
     second = artwork.render_artwork(img, generation=1, height_rows=4, width_cells=10)
     assert first is not second
-
-
-def test_detect_support_false_when_no_graphics_protocol() -> None:
-    with patch.object(artwork, "_probe_graphics_protocol", return_value=None):
-        assert artwork.detect_support() is False
-
-
-def test_detect_support_true_when_kitty_or_sixel() -> None:
-    with patch.object(artwork, "_probe_graphics_protocol", return_value="kitty"):
-        assert artwork.detect_support() is True
-    with patch.object(artwork, "_probe_graphics_protocol", return_value="sixel"):
-        assert artwork.detect_support() is True

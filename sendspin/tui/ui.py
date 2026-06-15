@@ -147,8 +147,7 @@ class UIState:
     # Album artwork: None when unsupported or not yet received.
     artwork_image: PILImage | None = None
     # Bumped on every artwork update, used to key the renderable cache and
-    # the now_playing panel cache. id(artwork_image) is not safe because
-    # CPython reuses ids after garbage collection.
+    # the now_playing panel cache.
     artwork_generation: int = 0
 
     # Shortcut highlight
