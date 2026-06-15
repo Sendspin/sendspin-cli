@@ -379,8 +379,8 @@ class SendspinUI:
         artwork = render_artwork(
             self._state.artwork_image,
             self._state.artwork_generation,
-            height_rows=4,
-            width_cells=8,
+            height_rows=5,
+            width_cells=10,
         )
         narrow = self._console.width - 1 < 80
         if artwork is not None and not narrow:
