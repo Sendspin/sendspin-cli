@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from textual_image.renderable import Image as TIImage
@@ -11,8 +10,6 @@ from textual_image.renderable import SixelImage, TGPImage
 if TYPE_CHECKING:
     from PIL.Image import Image as PILImage
     from rich.console import RenderableType
-
-logger = logging.getLogger(__name__)
 
 _cache: tuple[tuple[int, int, int], "RenderableType"] | None = None
 
