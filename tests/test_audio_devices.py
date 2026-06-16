@@ -68,6 +68,39 @@ def test_try_alsa_device_accepts_hw_card_format_known_to_alsa():
     assert result.sample_rate == 48000.0
 
 
+def test_try_alsa_device_accepts_hw_card_format_when_portaudio_reports_no_match():
+    """hw:CARD=...,DEV=... should work when ALSA lists it but PortAudio can't match it."""
+    alsa_list = [
+        (
+            "hw:CARD=sndrpihifiberry,DEV=0",
+            "snd_rpi_hifiberry_dacplus, HiFiBerry DAC+ HiFi",
+        ),
+    ]
+    with (
+        patch.object(
+            sounddevice,
+            "check_output_settings",
+            side_effect=sounddevice.PortAudioError(
+                f"{_mod._PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING} 'hw:CARD=sndrpihifiberry,DEV=0'",
+                -1,
+                "",
+            ),
+        ),
+        patch.object(
+            sounddevice,
+            "query_devices",
+            side_effect=ValueError("not found"),
+        ),
+        patch.object(_mod, "list_alsa_devices", return_value=alsa_list),
+    ):
+        result = _try_alsa_device("hw:CARD=sndrpihifiberry,DEV=0")
+
+    assert result is not None
+    assert result.alsa_device_name == "hw:CARD=sndrpihifiberry,DEV=0"
+    assert result.output_channels == 2
+    assert result.sample_rate == 48000.0
+
+
 def test_try_alsa_device_returns_none_for_unknown_hw_card():
     """hw:CARD=...,DEV=... not in ALSA list should return None."""
     with (

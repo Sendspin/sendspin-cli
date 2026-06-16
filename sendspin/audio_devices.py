@@ -13,6 +13,8 @@ from aiosendspin.models.types import AudioCodec
 
 logger = logging.getLogger(__name__)
 
+_PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING = "No output device matching"
+
 SOUNDDEVICE_DTYPE_MAP: dict[int, str] = {
     16: "int16",
     24: "int24",
@@ -268,6 +270,11 @@ def list_alsa_devices() -> list[tuple[str, str]]:
     return devices
 
 
+def _alsa_device_exists(name: str) -> bool:
+    """Return True if ALSA lists *name* as a PCM device."""
+    return any(dev_name == name for dev_name, _ in list_alsa_devices())
+
+
 def resolve_audio_device(device_arg: str | None) -> AudioDevice:
     """Resolve audio device from a CLI argument.
 
@@ -319,13 +326,20 @@ def _try_alsa_device(name: str) -> AudioDevice | None:
     """
     try:
         sounddevice.check_output_settings(device=name)
-    except sounddevice.PortAudioError:
-        return None
+    except sounddevice.PortAudioError as err:
+        # sounddevice exposes this PortAudio lookup failure only in the
+        # error message, without a stable code to distinguish it from
+        # actual device-open failures.
+        # Validate it exists in ALSA before accepting it with safe defaults.
+        err_msg = str(err.args[0]) if err.args else ""
+        if _PORTAUDIO_NO_OUTPUT_DEVICE_MATCHING not in err_msg:
+            return None
+        if not _alsa_device_exists(name):
+            return None
     except ValueError:
         # PortAudio doesn't recognize this device name (e.g. hw:CARD=...,DEV=...).
         # Validate it exists in ALSA before accepting it with safe defaults.
-        alsa_names = {dev_name for dev_name, _ in list_alsa_devices()}
-        if name not in alsa_names:
+        if not _alsa_device_exists(name):
             return None
 
     # Try to query device info from PortAudio
