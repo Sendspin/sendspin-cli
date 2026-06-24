@@ -176,7 +176,7 @@ def _add_player_runtime_options(target: ArgumentTarget, *, suppress_defaults: bo
         type=int,
         default=default,
         metavar="{0-100}",
-        help="Initial player output volume percentage (0-100).",
+        help="Initial player output volume percentage (0-100)",
     )
     target.add_argument(
         "--audio-device",
@@ -415,7 +415,7 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="{0-100}",
-        help="Initial player output volume percentage (0-100). Overrides the saved volume on startup",
+        help="Initial player output volume percentage (0-100)",
     )
     daemon_parser.add_argument(
         "--audio-device",
