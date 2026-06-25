@@ -521,22 +521,17 @@ docker build -t ghcr.io/shardshunt/sendspin-cli-for-sendspin-kodi:latest .
 ```
 
 ### Local Multi-Platform Build (Cross-Compiling for ARM & 32-bit x86)
-To support running the container on ARM-based devices like the Odroid N2 (ARMv8 / `linux/arm64`) or Raspberry Pi (ARMv7 / `linux/arm/v7`), and older 32-bit Intel/AMD PCs (`linux/386`), you can build a multi-platform image using Docker Buildx. Physical target hardware is not required to perform this build.
+To support running the container on ARM-based devices like the Odroid N2 (ARMv8 / `linux/arm64`) or Raspberry Pi (ARMv7 / `linux/arm/v7`), and older 32-bit Intel/AMD PCs (`linux/386`), a helper script [scripts/build-docker.sh](file:///var/home/shards/Shards-Sync/Work/Codes/kodi-sendspin/sendspin-cli-for-sendspin-kodi/scripts/build-docker.sh) is provided to register emulator support, initialize a dedicated `sendspin-builder` Buildx builder, and run the multi-architecture compile. Physical target hardware is not required to perform this build.
 
-1. **Register emulation support** in your host kernel (uses QEMU):
-   ```bash
-   sudo docker run --privileged --rm tonistiigi/binfmt --install all
-   ```
+**Run local test compilation (dry-run):**
+```bash
+./scripts/build-docker.sh 2026.6.1
+```
 
-2. **Create and select a new Buildx builder** (the default `docker` driver builder cannot push multi-architecture manifests):
-   ```bash
-   docker buildx create --name multiarch --use
-   ```
-
-3. **Build and push the multi-platform image**:
-   ```bash
-   docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386 -t ghcr.io/shardshunt/sendspin-cli-for-sendspin-kodi:latest --push .
-   ```
+**Build and push to the GHCR registry:**
+```bash
+./scripts/build-docker.sh 2026.6.1 --push
+```
 
 ### Automated Builds via GitHub Actions
 Whenever a new release tag is published, the GitHub Actions workflow in [.github/workflows/release.yml](file:///var/home/shards/Shards-Sync/Work/Codes/kodi-sendspin/sendspin-cli-for-sendspin-kodi/.github/workflows/release.yml) automatically triggers a multi-platform build and pushes the built image to GitHub Container Registry (GHCR).
