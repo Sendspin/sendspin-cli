@@ -13,14 +13,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavfilter-dev \
     libavutil-dev \
     libswresample-dev \
+    libswscale-dev \
     libpulse-dev \
     libsndfile1-dev \
     portaudio19-dev \
+    libjpeg-dev \
+    zlib1g-dev \
   && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
 
 RUN python -m pip install --upgrade pip setuptools wheel
+RUN CFLAGS="-include /app/ffmpeg_compat.h" python -m pip install --no-cache-dir "av>=15.0.0"
 RUN python -m pip install --no-cache-dir .
 
 ENTRYPOINT ["sendspin"]

@@ -500,3 +500,43 @@ sendspin serve --demo --workers 4
 This spawns 4 worker processes on consecutive ports starting from `--port` (default 8927), so ports 8927-8930. Place a reverse proxy (e.g., nginx, Caddy) in front with load balancing across these ports.
 
 Note: `--client` is not supported with `--workers`.
+
+## Docker Image
+
+A Dockerfile is provided to containerize the `sendspin` client, making it easy to run on headless systems or media operating systems like LibreELEC.
+
+The Docker image builds `sendspin` inside a Python environment and bundles system dependencies like `ffmpeg`, `libpulse`, `libportaudio`, and compilation tools required for audio extensions.
+
+### FFmpeg Version & PyAV Compatibility
+PyAV (`av>=15.0.0`) requires FFmpeg 6.0/7.0+ for its C-extensions, while standard Debian Bookworm (the base for `python:3.12-slim`) provides FFmpeg 5.1.x. This mismatch causes compilation errors for PyAV on architectures like `linux/arm/v7` and `linux/386` where pre-compiled PyPI wheels are not available and compilation from source is required.
+
+To solve this:
+1. A compatibility header [ffmpeg_compat.h](file:///var/home/shards/Shards-Sync/Work/Codes/kodi-sendspin/sendspin-cli-for-sendspin-kodi/ffmpeg_compat.h) is bundled to map missing `sws_free_context` macros and provide a dummy layout for the opaque `SwsContext` structure. (Since `sendspin` is an audio-only client, video-scaling code is never called at runtime, making this workaround safe).
+2. The Docker build runs a two-step pip installation, applying the `CFLAGS="-include /app/ffmpeg_compat.h"` option strictly during PyAV compilation to prevent header clashes with other dependencies like `numpy`.
+
+### Local Single-Platform Build
+To build the image locally for your host system's architecture (e.g., `linux/amd64`):
+```bash
+docker build -t ghcr.io/shardshunt/sendspin-cli-for-sendspin-kodi:latest .
+```
+
+### Local Multi-Platform Build (Cross-Compiling for ARM & 32-bit x86)
+To support running the container on ARM-based devices like the Odroid N2 (ARMv8 / `linux/arm64`) or Raspberry Pi (ARMv7 / `linux/arm/v7`), and older 32-bit Intel/AMD PCs (`linux/386`), you can build a multi-platform image using Docker Buildx. Physical target hardware is not required to perform this build.
+
+1. **Register emulation support** in your host kernel (uses QEMU):
+   ```bash
+   sudo docker run --privileged --rm tonistiigi/binfmt --install all
+   ```
+
+2. **Create and select a new Buildx builder** (the default `docker` driver builder cannot push multi-architecture manifests):
+   ```bash
+   docker buildx create --name multiarch --use
+   ```
+
+3. **Build and push the multi-platform image**:
+   ```bash
+   docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7,linux/386 -t ghcr.io/shardshunt/sendspin-cli-for-sendspin-kodi:latest --push .
+   ```
+
+### Automated Builds via GitHub Actions
+Whenever a new release tag is published, the GitHub Actions workflow in [.github/workflows/release.yml](file:///var/home/shards/Shards-Sync/Work/Codes/kodi-sendspin/sendspin-cli-for-sendspin-kodi/.github/workflows/release.yml) automatically triggers a multi-platform build and pushes the built image to GitHub Container Registry (GHCR).
