@@ -329,9 +329,12 @@ Key options:
 - `--line-sense` — report input signal presence to the server via `client/state`; the server may use it to decide when to start/stop the source.
 
 The **server** decides when a source streams: a source stays idle until the server
-sends a `start` command, and stops on `stop` or disconnect. A device may run both the
-`source` and `player` roles; when it does, it never plays its captured input locally —
-it only plays back what the server distributes, staying in sync with the group.
+sends a `start` command, and stops on `stop` or disconnect. This is a policy the
+server application makes for itself — the `aiosendspin` library never starts a
+source on its own — so a source connected to a server that does not ask for audio
+stays idle by design. A device may run both the `source` and `player` roles; when
+it does, it never plays its captured input locally — it only plays back what the
+server distributes, staying in sync with the group.
 
 Source-mode preferences (client id, last server, input/codec defaults) are persisted
 to `~/.config/sendspin/settings-source.json`.
