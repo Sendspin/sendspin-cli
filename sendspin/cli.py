@@ -865,7 +865,6 @@ async def _run_source_mode(args: argparse.Namespace) -> int:
     from aiosendspin.models.source import (
         ClientHelloSourceSupport,
         SourceFeatures,
-        SourceSupportedFormat,
     )
     from aiosendspin.models.types import AudioCodec, Roles
 
@@ -909,14 +908,9 @@ async def _run_source_mode(args: argparse.Namespace) -> int:
         signal_threshold_db=args.source_signal_threshold_db,
         line_sense=args.line_sense,
     )
-    support = ClientHelloSourceSupport(
-        supported_formats=[
-            SourceSupportedFormat(
-                codec=codec, channels=channels, sample_rate=sample_rate, bit_depth=16
-            )
-        ],
-        features=SourceFeatures(line_sense=args.line_sense),
-    )
+    # The capture format is announced per stream in client_stream/start; there is
+    # no format negotiation in client/hello.
+    support = ClientHelloSourceSupport(features=SourceFeatures(line_sense=args.line_sense))
     client = _SendspinClient(
         client_id=client_id,
         client_name=client_name,
