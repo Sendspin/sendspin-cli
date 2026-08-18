@@ -9,14 +9,44 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, ClassVar, Literal
+
+from aiosendspin.noise.keys import Identity, b64url_decode
+from aiosendspin.noise.trust_store import FileClientPairingStore
 
 logger = logging.getLogger(__name__)
 
 # Debounce delay for saving settings
 SAVE_DEBOUNCE_SECONDS = 60.0
+
+
+async def get_client_security(
+    settings: BaseSettings,
+) -> tuple[Identity, FileClientPairingStore]:
+    """Load or create the identity and pairing store beside a settings file."""
+    assert settings._settings_file is not None
+    directory = settings._settings_file.parent
+    suffix = settings._settings_file.stem.removeprefix("settings-")
+    identity_file = directory / f"identity-{suffix}.key"
+
+    def load_identity() -> Identity:
+        try:
+            private_bytes = b64url_decode(identity_file.read_text())
+            return Identity.from_private_bytes(private_bytes)
+        except FileNotFoundError:
+            identity = Identity.generate()
+            directory.mkdir(parents=True, exist_ok=True)
+            fd = os.open(identity_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="ascii") as file:
+                file.write(identity.private_b64u)
+            return identity
+
+    identity = await asyncio.to_thread(load_identity)
+    pairing_store = await FileClientPairingStore.open(directory / f"pairing-{suffix}.json")
+    return identity, pairing_store
 
 
 @dataclass
@@ -293,6 +323,86 @@ class ServeSettings(BaseSettings):
         except (json.JSONDecodeError, OSError) as e:
             logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
         return False
+
+
+@dataclass
+class SourceSettings(BaseSettings):
+    """Settings for source mode (capturing a local input into Sendspin)."""
+
+    client_id: str | None = None
+    last_server_url: str | None = None
+    source_input: str = "linein"
+    source_device: str | None = None
+    source_codec: str = "pcm"
+    source_sample_rate: int = 48000
+    source_channels: int = 2
+
+    def update(
+        self,
+        *,
+        name: str | None = None,
+        log_level: str | None = None,
+        client_id: str | None = None,
+        last_server_url: str | None = None,
+        source_input: str | None = None,
+        source_device: str | None = None,
+        source_codec: str | None = None,
+        source_sample_rate: int | None = None,
+        source_channels: int | None = None,
+    ) -> None:
+        """Update settings fields. Only changed fields trigger a save."""
+        changed = self._update_fields(
+            {
+                "name": name,
+                "log_level": log_level,
+                "client_id": client_id,
+                "last_server_url": last_server_url,
+                "source_input": source_input,
+                "source_device": source_device,
+                "source_codec": source_codec,
+                "source_sample_rate": source_sample_rate,
+                "source_channels": source_channels,
+            }
+        )
+        if changed:
+            self._schedule_save()
+
+    def _load(self) -> bool:
+        """Load settings from the settings file (blocking I/O)."""
+        if self._settings_file is None or not self._settings_file.exists():
+            logger.debug("Settings file does not exist: %s", self._settings_file)
+            return False
+
+        try:
+            data = json.loads(self._settings_file.read_text())
+            self.name = data.get("name")
+            self.log_level = data.get("log_level")
+            self.client_id = data.get("client_id")
+            self.last_server_url = data.get("last_server_url")
+            self.source_input = data.get("source_input", "linein")
+            self.source_device = data.get("source_device")
+            self.source_codec = data.get("source_codec", "pcm")
+            self.source_sample_rate = data.get("source_sample_rate", 48000)
+            self.source_channels = data.get("source_channels", 2)
+            logger.info("Loaded settings from %s", self._settings_file)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning("Failed to load settings from %s: %s", self._settings_file, e)
+        return False
+
+
+async def get_source_settings(config_dir: str | None = None) -> SourceSettings:
+    """Create and load source-mode settings.
+
+    Args:
+        config_dir: Optional directory to store settings. Defaults to ~/.config/sendspin.
+
+    Returns:
+        SourceSettings instance with settings loaded from disk.
+    """
+    config_path = Path(config_dir) if config_dir else Path.home() / ".config" / "sendspin"
+    settings = SourceSettings(_settings_file=config_path / "settings-source.json")
+    await settings.load()
+    return settings
 
 
 async def get_client_settings(

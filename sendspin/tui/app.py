@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from aiosendspin.models.metadata import SessionUpdateMetadata
+    from aiosendspin.noise.keys import Identity
+    from aiosendspin.noise.trust_store import ClientPairingStore
 
     from sendspin.volume_controller import VolumeController
 
@@ -22,7 +24,6 @@ from aiosendspin.models.artwork import ArtworkChannel, ClientHelloArtworkSupport
 from aiosendspin.models.core import (
     GroupUpdateServerPayload,
     ServerCommandPayload,
-    ServerHelloPayload,
     ServerStatePayload,
     StreamStartMessage,
 )
@@ -237,6 +238,8 @@ class AppArgs:
     audio_device: AudioDevice
     client_id: str
     client_name: str
+    identity: Identity
+    pairing_store: ClientPairingStore
     settings: ClientSettings
     url: str | None = None
     url_from_settings: bool = False
@@ -334,9 +337,10 @@ class SendspinApp:
         assert self._audio_handler is not None
 
         return SendspinClient(
-            client_id=args.client_id,
+            identity=args.identity,
             client_name=args.client_name,
             roles=roles,
+            pairing_store=args.pairing_store,
             device_info=get_device_info(
                 manufacturer=args.manufacturer,
                 product_name=args.product_name,
@@ -365,7 +369,6 @@ class SendspinApp:
             self._client.add_controller_state_listener(self._handle_server_state),
             self._client.add_server_command_listener(self._handle_server_command),
             self._client.add_color_listener(self._handle_color_update),
-            self._client.add_server_hello_listener(self._handle_server_hello),
         ]
         self._audio_handler.attach_client(self._client)
 
@@ -793,7 +796,11 @@ class SendspinApp:
         assert self._ui is not None
         state = self._state
         ui = self._ui
-        if payload.metadata is None or not state.update_metadata(payload.metadata):
+        if (
+            payload.metadata is None
+            or isinstance(payload.metadata, UndefinedField)
+            or not state.update_metadata(payload.metadata)
+        ):
             return
 
         with ui.batch_update():
@@ -819,7 +826,8 @@ class SendspinApp:
     def _handle_color_update(self, payload: ServerStatePayload) -> None:
         """Forward a color@v1 palette payload to the UI."""
         assert self._ui is not None
-        self._ui.update_palette(payload.color)
+        if not isinstance(payload.color, UndefinedField):
+            self._ui.update_palette(payload.color)
 
     def _persist_color_mode(self, mode: ColorMode) -> None:
         """Persist the user's color theme choice."""
@@ -855,7 +863,7 @@ class SendspinApp:
         assert self._ui is not None
         state = self._state
         ui = self._ui
-        if not payload.controller:
+        if not payload.controller or isinstance(payload.controller, UndefinedField):
             return
 
         controller = payload.controller
@@ -951,20 +959,6 @@ class SendspinApp:
         """
         assert self._client is not None
         return self._client.compute_server_time(self._client.now_us())
-
-    def _handle_server_hello(self, payload: ServerHelloPayload) -> None:
-        """Hide the visualizer panel when the server didn't activate visualizer@v1."""
-        if not self._visualizer_enabled:
-            return
-        if Roles.VISUALIZER.value in payload.active_roles:
-            return
-        logger.warning(
-            "Server did not activate %s (active_roles=%s); hiding the visualizer panel.",
-            Roles.VISUALIZER.value,
-            payload.active_roles,
-        )
-        if self._ui is not None:
-            self._ui.set_visualizer_enabled(False)
 
     def _handle_stream_start(self, message: StreamStartMessage) -> None:
         """Record which visualizer types the server negotiated for this stream."""

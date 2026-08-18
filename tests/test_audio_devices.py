@@ -7,7 +7,7 @@ from unittest.mock import patch
 import sounddevice
 
 import sendspin.audio_devices as _mod
-from sendspin.audio_devices import _try_alsa_device
+from sendspin.audio_devices import _try_alsa_device, resolve_input_device
 
 
 def test_try_alsa_device_returns_device_when_portaudio_accepts():
@@ -118,3 +118,19 @@ def test_try_alsa_device_accepts_alsa_only_device():
 
     assert result is not None
     assert result.alsa_device_name == "bluealsa"
+
+
+def test_resolve_input_device_accepts_alsa_only_device():
+    """A capture PCM listed by ALSA can be selected by its raw name."""
+    with (
+        patch.object(_mod.sys, "platform", "linux"),
+        patch.object(_mod, "query_input_devices", return_value=[]),
+        patch.object(
+            _mod,
+            "list_alsa_input_devices",
+            return_value=[("hw:CARD=USB,DEV=0", "USB Audio")],
+        ),
+    ):
+        result = resolve_input_device("hw:CARD=USB,DEV=0")
+
+    assert result.device_id == "hw:CARD=USB,DEV=0"
