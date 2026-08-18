@@ -220,6 +220,8 @@ class SourceStreamer:
             str(cfg.sample_rate),
             "-c",
             str(cfg.channels),
+            "--period-size",
+            str(cfg.samples_per_frame),
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,
         )

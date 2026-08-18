@@ -164,4 +164,5 @@ async def test_alsa_capture_uses_arecord() -> None:
         await streamer._stream_alsa("hw:CARD=USB,DEV=0")  # noqa: SLF001
 
     assert spawn.await_args.args[:4] == ("arecord", "-q", "-D", "hw:CARD=USB,DEV=0")
+    assert spawn.await_args.args[-2:] == ("--period-size", "960")
     assert client.capture.frames == [b"\x01\x02" * 16]
