@@ -205,7 +205,11 @@ class SendspinDaemon:
 
         client = self._create_client()
         self._attach_client(client)
-        client.add_disconnect_listener(lambda: create_task(self._handle_disconnect()))
+
+        def handle_disconnect() -> None:
+            create_task(self._handle_disconnect())
+
+        client.add_disconnect_listener(handle_disconnect)
 
         self._listener = ClientListener(
             client_id=self._args.client_id,
