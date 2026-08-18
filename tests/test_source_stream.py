@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 from aiosendspin.models.core import ServerCommandPayload
 from aiosendspin.models.source import SourceCommandServerPayload
@@ -146,3 +147,21 @@ async def test_stop_waits_for_in_progress_start() -> None:
 
     assert not streamer.streaming
     assert client.capture.stops == 1
+
+
+async def test_alsa_capture_uses_arecord() -> None:
+    """Raw ALSA names bypass PortAudio and stream arecord's PCM output."""
+    streamer, client = _make()
+    process = AsyncMock()
+    process.stdout.readexactly = AsyncMock(
+        side_effect=[b"\x01\x02" * 16, asyncio.IncompleteReadError(b"", 16)]
+    )
+    process.wait = AsyncMock(return_value=0)
+    process.returncode = 0
+
+    await streamer._begin_stream()  # noqa: SLF001
+    with patch("asyncio.create_subprocess_exec", AsyncMock(return_value=process)) as spawn:
+        await streamer._stream_alsa("hw:CARD=USB,DEV=0")  # noqa: SLF001
+
+    assert spawn.await_args.args[:4] == ("arecord", "-q", "-D", "hw:CARD=USB,DEV=0")
+    assert client.capture.frames == [b"\x01\x02" * 16]

@@ -310,6 +310,9 @@ sendspin source
 # Pick a specific server, input device, and codec
 sendspin source --url ws://192.168.1.50:8927/sendspin --device 2 --codec flac
 
+# Capture directly from an ALSA PCM device
+sendspin source --device hw:CARD=USB,DEV=0
+
 # Stream a 440 Hz sine test tone (no capture hardware needed)
 sendspin source --input sine
 ```
@@ -323,7 +326,7 @@ sendspin audio-devices inputs
 Key options:
 
 - `--input {linein,sine}` — capture from a real input device, or generate a sine test tone. Defaults to `linein`; passing `--device` implies `linein`.
-- `--device` — input device index or name (see `audio-devices inputs`).
+- `--device` — input device index, name, or raw ALSA PCM name (see `audio-devices inputs`; raw ALSA capture requires `arecord`).
 - `--codec {pcm,opus,flac}` — codec used to encode captured audio before sending (default `pcm`). Capture is 16-bit.
 - `--sample-rate` / `--channels` — capture format (default 48000 Hz, 2 channels).
 - `--line-sense` — report input signal presence to the server via `client/state`; the server may use it to decide when to start/stop the source.

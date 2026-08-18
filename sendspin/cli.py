@@ -144,7 +144,7 @@ def list_audio_devices() -> None:
 def list_input_devices() -> None:
     """List all available audio input (capture) devices."""
     try:
-        from sendspin.audio_devices import query_input_devices
+        from sendspin.audio_devices import list_alsa_input_devices, query_input_devices
     except OSError as e:
         if "PortAudio library not found" in str(e):
             print(PORTAUDIO_NOT_FOUND_MESSAGE)
@@ -168,6 +168,13 @@ def list_input_devices() -> None:
             f"       Channels: {device.input_channels}, "
             f"Sample rate: {device.sample_rate} Hz"
         )
+    alsa_devices = list_alsa_input_devices()
+    if alsa_devices:
+        print("\nALSA capture devices:")
+        for name, description in alsa_devices:
+            print(f"  {name}")
+            if description:
+                print(f"       {description}")
     if devices:
         default = next((d for d in devices if d.is_default), devices[0])
         print(f"\nTo capture from an input device:\n  sendspin source --device {default.index}")
@@ -340,7 +347,10 @@ def _add_source_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
         "--device",
         dest="source_device",
         default=None,
-        help="Input device index or name (see 'sendspin audio-devices inputs')",
+        help=(
+            "Input device index, name, or raw ALSA device name "
+            "(see 'sendspin audio-devices inputs')"
+        ),
     )
     source_parser.add_argument(
         "--codec",
@@ -946,14 +956,17 @@ async def _run_source_mode(args: argparse.Namespace) -> int:
 
     LOGGER.info("Source client '%s' -> %s (%s, %s)", client_id, url, input_kind, codec.value)
     capture_task = asyncio.create_task(streamer.run())
+    connection_task = asyncio.create_task(_source_connection_loop(client, url, streamer))
     try:
-        await _source_connection_loop(client, url, streamer)
+        done, _ = await asyncio.wait(
+            {capture_task, connection_task}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in done:
+            task.result()
     finally:
-        capture_task.cancel()
-        try:
-            await capture_task
-        except asyncio.CancelledError:
-            pass
+        for task in (capture_task, connection_task):
+            task.cancel()
+        await asyncio.gather(capture_task, connection_task, return_exceptions=True)
         await client.disconnect()
         await settings.flush()
     return 0

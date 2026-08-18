@@ -84,11 +84,20 @@ def query_devices() -> list[AudioDevice]:
 class InputDevice:
     """Represents an audio input (capture) device."""
 
-    index: int
+    index: int | None
     name: str
     input_channels: int
     sample_rate: float
     is_default: bool
+    alsa_device_name: str | None = None
+
+    @property
+    def device_id(self) -> int | str:
+        """Return the identifier to pass to sounddevice APIs."""
+        if self.alsa_device_name is not None:
+            return self.alsa_device_name
+        assert self.index is not None
+        return self.index
 
 
 def query_input_devices() -> list[InputDevice]:
@@ -270,9 +279,18 @@ def list_alsa_devices() -> list[tuple[str, str]]:
     Returns a list of (device_name, description) tuples for output devices.
     Returns an empty list if aplay is not available.
     """
+    return _list_alsa_devices("aplay")
+
+
+def list_alsa_input_devices() -> list[tuple[str, str]]:
+    """List ALSA capture PCM devices from ``arecord -L``."""
+    return _list_alsa_devices("arecord")
+
+
+def _list_alsa_devices(command: str) -> list[tuple[str, str]]:
     try:
         result = subprocess.run(
-            ["aplay", "-L"],  # noqa: S607
+            [command, "-L"],  # noqa: S607
             capture_output=True,
             text=True,
             timeout=5,
@@ -298,6 +316,25 @@ def list_alsa_devices() -> list[tuple[str, str]]:
         i += 1
 
     return devices
+
+
+def resolve_input_device(device_arg: str | None) -> InputDevice:
+    """Resolve an input device by index, name prefix, or raw ALSA name."""
+    devices = query_input_devices()
+    if device_arg is None:
+        device = next((device for device in devices if device.is_default), None)
+    elif device_arg.isnumeric():
+        device = next((device for device in devices if device.index == int(device_arg)), None)
+    else:
+        device = next((device for device in devices if device.name.startswith(device_arg)), None)
+
+    if device is None and device_arg is not None and sys.platform.startswith("linux"):
+        if device_arg in {name for name, _ in list_alsa_input_devices()}:
+            return InputDevice(None, device_arg, 2, 48000.0, False, device_arg)
+
+    if device is None:
+        raise ValueError(f"Audio input device '{device_arg or 'default'}' not found.")
+    return device
 
 
 def resolve_audio_device(device_arg: str | None) -> AudioDevice:

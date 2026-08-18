@@ -13,6 +13,7 @@ import asyncio
 import logging
 import math
 import struct
+import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -162,6 +163,16 @@ class SourceStreamer:
         import sounddevice  # noqa: PLC0415
 
         cfg = self._config
+        if cfg.device is not None:
+            from sendspin.audio_devices import resolve_input_device  # noqa: PLC0415
+
+            device = resolve_input_device(cfg.device)
+            if device.alsa_device_name is not None:
+                await self._stream_alsa(device.alsa_device_name)
+                return
+            device_id: int | str | None = device.device_id
+        else:
+            device_id = None
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=32)
 
@@ -174,13 +185,12 @@ class SourceStreamer:
             except asyncio.QueueFull:
                 logger.debug("Source capture queue full; dropping frame")
 
-        device = cfg.device if cfg.device is None else _resolve_device(cfg.device)
         stream = sounddevice.RawInputStream(
             samplerate=cfg.sample_rate,
             channels=cfg.channels,
             dtype="int16",
             blocksize=cfg.samples_per_frame,
-            device=device,
+            device=device_id,
             callback=_callback,
         )
         with stream:
@@ -194,7 +204,39 @@ class SourceStreamer:
                 data = await queue.get()
                 await self._send_frame(data)
 
-
-def _resolve_device(device: str) -> int | str:
-    """Resolve an input device argument to a sounddevice identifier."""
-    return int(device) if device.isnumeric() else device
+    async def _stream_alsa(self, device: str) -> None:
+        """Capture a raw ALSA PCM directly with arecord."""
+        cfg = self._config
+        process = await asyncio.create_subprocess_exec(
+            "arecord",
+            "-q",
+            "-D",
+            device,
+            "-t",
+            "raw",
+            "-f",
+            "S16_LE",
+            "-r",
+            str(cfg.sample_rate),
+            "-c",
+            str(cfg.channels),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=sys.stderr,
+        )
+        assert process.stdout is not None
+        frame_bytes = cfg.samples_per_frame * cfg.channels * 2
+        try:
+            while True:
+                try:
+                    data = await process.stdout.readexactly(frame_bytes)
+                except asyncio.IncompleteReadError as exc:
+                    if exc.partial:
+                        logger.warning("Discarding %d trailing ALSA PCM bytes", len(exc.partial))
+                    break
+                await self._send_frame(data)
+            if await process.wait() != 0:
+                raise RuntimeError(f"arecord exited with status {process.returncode}")
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                await process.wait()
