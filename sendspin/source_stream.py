@@ -1,8 +1,8 @@
 """Audio capture and streaming for the Sendspin source role.
 
 ``SourceStreamer`` captures 16-bit PCM from a local input (a synthetic sine test
-tone or a real line-in/microphone via ``sounddevice``), encodes it with
-``SourceEncoder``, and streams timestamped frames to the server. The server is
+tone or a real line-in/microphone via ``sounddevice``) and feeds an SDK-managed
+``SourceCapture``. The server is
 the sole initiator of streaming: capture flows to the server only after a
 ``server/command`` ``start`` and stops on ``stop`` (or disconnect).
 """
@@ -16,15 +16,16 @@ import struct
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from aiosendspin.models.source import ClientStreamStartSource
-from aiosendspin.models.types import AudioCodec, SourceCommand, SourceSignal
+from aiosendspin.models.player import SupportedAudioFormat
+from aiosendspin.models.types import AudioCodec, SignalState
 
-from sendspin.source_utils import SourceEncoder, calc_level
+from sendspin.source_utils import calc_level
 from sendspin.utils import create_task
 
 if TYPE_CHECKING:
     from aiosendspin.client import SendspinClient
-    from aiosendspin.models.source import SourceCommandPayload
+    from aiosendspin.client.source import SourceCapture
+    from aiosendspin.models.core import ServerCommandPayload
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,9 @@ class SourceStreamer:
         self._client = client
         self._config = config
         self._streaming = asyncio.Event()
-        self._encoder: SourceEncoder | None = None
-        self._last_signal: SourceSignal | None = None
+        self._capture: SourceCapture | None = None
+        self._last_signal: SignalState | None = None
+        self._command_lock = asyncio.Lock()
 
     async def run(self) -> None:
         """Run the capture loop until cancelled.
@@ -78,72 +80,68 @@ class SourceStreamer:
         """Whether the source is currently streaming to the server."""
         return self._streaming.is_set()
 
-    def handle_source_command(self, payload: SourceCommandPayload) -> None:
+    def handle_source_command(self, payload: ServerCommandPayload) -> None:
         """React to a server start/stop command."""
-        if payload.command == SourceCommand.START:
+        if payload.source is None:
+            return
+        logger.info("Received source %s command", payload.source.command)
+        if payload.source.command == "start":
             create_task(self._begin_stream())
-        elif payload.command == SourceCommand.STOP:
+        elif payload.source.command == "stop":
             create_task(self._end_stream())
 
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Clear streaming state (e.g., on disconnect)."""
-        self._streaming.clear()
-        self._encoder = None
+        await self._end_stream()
         self._last_signal = None
 
     async def _begin_stream(self) -> None:
-        if self._streaming.is_set():
-            return
-        cfg = self._config
-        encoder = SourceEncoder(
-            codec=cfg.codec,
-            channels=cfg.channels,
-            sample_rate=cfg.sample_rate,
-            frame_samples=cfg.samples_per_frame,
-        )
-        self._encoder = encoder
-        await self._client.send_client_stream_start(
-            ClientStreamStartSource(
-                codec=cfg.codec,
-                channels=cfg.channels,
-                sample_rate=cfg.sample_rate,
-                bit_depth=16,
-                codec_header=encoder.codec_header,
+        async with self._command_lock:
+            if self._streaming.is_set():
+                return
+            cfg = self._config
+            capture = self._client.create_source_capture(
+                SupportedAudioFormat(
+                    codec=cfg.codec,
+                    sample_rate=cfg.sample_rate,
+                    bit_depth=16,
+                    channels=cfg.channels,
+                )
             )
-        )
-        self._streaming.set()
-        logger.info("Source streaming started (%s, %d Hz)", cfg.codec.value, cfg.sample_rate)
+            await capture.start()
+            self._capture = capture
+            self._streaming.set()
+            logger.info("Source streaming started (%s, %d Hz)", cfg.codec.value, cfg.sample_rate)
 
     async def _end_stream(self) -> None:
-        if not self._streaming.is_set():
-            return
-        self._streaming.clear()
-        if self._encoder is not None:
-            for tail in self._encoder.flush():
-                await self._client.send_source_audio_chunk(
-                    tail, capture_timestamp_us=self._client.now_us()
-                )
-        self._encoder = None
-        await self._client.send_client_stream_end()
-        logger.info("Source streaming stopped")
+        async with self._command_lock:
+            if not self._streaming.is_set():
+                return
+            self._streaming.clear()
+            capture = self._capture
+            self._capture = None
+            if capture is not None:
+                await capture.stop()
+            logger.info("Source streaming stopped")
 
     async def _send_frame(self, pcm: bytes) -> None:
         """Report signal (if line sensing) and stream the frame when active."""
         if self._config.line_sense:
             self._maybe_report_signal(pcm)
-        if not self._streaming.is_set() or self._encoder is None:
-            return
-        capture_us = self._client.now_us()
-        for encoded, frame_us in self._encoder.encode(pcm, capture_us):
-            await self._client.send_source_audio_chunk(encoded, capture_timestamp_us=frame_us)
+        async with self._command_lock:
+            if not self._streaming.is_set() or self._capture is None:
+                return
+            await self._capture.feed(pcm)
 
     def _maybe_report_signal(self, pcm: bytes) -> None:
         level = calc_level(pcm)
         threshold = 10 ** (self._config.signal_threshold_db / 20)
-        signal = SourceSignal.PRESENT if level >= threshold else SourceSignal.ABSENT
+        signal = SignalState.PRESENT if level >= threshold else SignalState.ABSENT
         if signal != self._last_signal:
             self._last_signal = signal
-            create_task(self._client.send_source_state(signal=signal))
+            connection = self._client._admitted_connection  # noqa: SLF001
+            if connection is not None:
+                create_task(connection.send_source_signal(signal))
 
     async def _stream_sine(self) -> None:
         cfg = self._config

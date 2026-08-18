@@ -5,6 +5,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from aiosendspin.models.types import PlayerCommand
+from aiosendspin.noise.keys import Identity
+from aiosendspin.noise.trust_store import InMemoryClientPairingStore
 
 from sendspin.settings import ClientSettings
 from sendspin.tui.app import AppArgs, AppState, SendspinApp
@@ -52,6 +54,8 @@ def _make_app(tmp_path: Path) -> SendspinApp:
         audio_device=SimpleNamespace(index=0, name="Fake Device"),
         client_id="test-client",
         client_name="Test Client",
+        identity=Identity.generate(),
+        pairing_store=InMemoryClientPairingStore(),
         settings=_make_settings(tmp_path),
         use_mpris=False,
     )

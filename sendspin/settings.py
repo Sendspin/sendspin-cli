@@ -9,14 +9,44 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, ClassVar, Literal
+
+from aiosendspin.noise.keys import Identity, b64url_decode
+from aiosendspin.noise.trust_store import FileClientPairingStore
 
 logger = logging.getLogger(__name__)
 
 # Debounce delay for saving settings
 SAVE_DEBOUNCE_SECONDS = 60.0
+
+
+async def get_client_security(
+    settings: BaseSettings,
+) -> tuple[Identity, FileClientPairingStore]:
+    """Load or create the identity and pairing store beside a settings file."""
+    assert settings._settings_file is not None
+    directory = settings._settings_file.parent
+    suffix = settings._settings_file.stem.removeprefix("settings-")
+    identity_file = directory / f"identity-{suffix}.key"
+
+    def load_identity() -> Identity:
+        try:
+            private_bytes = b64url_decode(identity_file.read_text())
+            return Identity.from_private_bytes(private_bytes)
+        except FileNotFoundError:
+            identity = Identity.generate()
+            directory.mkdir(parents=True, exist_ok=True)
+            fd = os.open(identity_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="ascii") as file:
+                file.write(identity.private_b64u)
+            return identity
+
+    identity = await asyncio.to_thread(load_identity)
+    pairing_store = await FileClientPairingStore.open(directory / f"pairing-{suffix}.json")
+    return identity, pairing_store
 
 
 @dataclass

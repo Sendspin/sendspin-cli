@@ -4,38 +4,49 @@ from __future__ import annotations
 
 import asyncio
 
-from aiosendspin.models.source import ClientStreamStartSource, SourceCommandPayload
-from aiosendspin.models.types import AudioCodec, SourceCommand, SourceSignal
+from aiosendspin.models.core import ServerCommandPayload
+from aiosendspin.models.source import SourceCommandServerPayload
+from aiosendspin.models.types import AudioCodec, SignalState
 
 from sendspin.source_stream import SourceStreamConfig, SourceStreamer
+
+
+class _FakeCapture:
+    def __init__(self) -> None:
+        self.starts = 0
+        self.stops = 0
+        self.frames: list[bytes] = []
+        self.start_gate: asyncio.Event | None = None
+
+    async def start(self) -> None:
+        self.starts += 1
+        if self.start_gate is not None:
+            await self.start_gate.wait()
+
+    async def stop(self) -> None:
+        self.stops += 1
+
+    async def feed(self, pcm: bytes) -> None:
+        self.frames.append(pcm)
+
+
+class _FakeConnection:
+    def __init__(self) -> None:
+        self.signals: list[SignalState] = []
+
+    async def send_source_signal(self, signal: SignalState) -> None:
+        self.signals.append(signal)
 
 
 class _FakeClient:
     """Records the source-related calls a SourceStreamer makes."""
 
     def __init__(self) -> None:
-        self.stream_starts: list[ClientStreamStartSource] = []
-        self.stream_ends = 0
-        self.chunks: list[tuple[bytes, int]] = []
-        self.signals: list[SourceSignal | None] = []
-        self._clock = 1_000_000
+        self.capture = _FakeCapture()
+        self._admitted_connection = _FakeConnection()
 
-    def now_us(self) -> int:
-        self._clock += 1000
-        return self._clock
-
-    async def send_client_stream_start(self, source: ClientStreamStartSource) -> None:
-        self.stream_starts.append(source)
-
-    async def send_client_stream_end(self) -> None:
-        self.stream_ends += 1
-
-    async def send_source_audio_chunk(self, data: bytes, *, capture_timestamp_us: int) -> bool:
-        self.chunks.append((data, capture_timestamp_us))
-        return True
-
-    async def send_source_state(self, *, signal: SourceSignal | None = None) -> None:
-        self.signals.append(signal)
+    def create_source_capture(self, _audio_format: object) -> _FakeCapture:
+        return self.capture
 
 
 def _config(*, codec: AudioCodec = AudioCodec.PCM, line_sense: bool = False) -> SourceStreamConfig:
@@ -61,8 +72,7 @@ async def test_begin_stream_announces_format_and_starts() -> None:
     """Beginning a stream sends client_stream/start and marks streaming active."""
     streamer, client = _make()
     await streamer._begin_stream()  # noqa: SLF001
-    assert len(client.stream_starts) == 1
-    assert client.stream_starts[0].codec == AudioCodec.PCM
+    assert client.capture.starts == 1
     assert streamer._streaming.is_set()  # noqa: SLF001
 
 
@@ -71,7 +81,7 @@ async def test_end_stream_sends_end_and_stops() -> None:
     streamer, client = _make()
     await streamer._begin_stream()  # noqa: SLF001
     await streamer._end_stream()  # noqa: SLF001
-    assert client.stream_ends == 1
+    assert client.capture.stops == 1
     assert not streamer._streaming.is_set()  # noqa: SLF001
 
 
@@ -81,12 +91,11 @@ async def test_send_frame_streams_only_when_active() -> None:
     pcm = b"\x01\x02\x03\x04" * 16
 
     await streamer._send_frame(pcm)  # noqa: SLF001  (not started yet)
-    assert client.chunks == []
+    assert client.capture.frames == []
 
     await streamer._begin_stream()  # noqa: SLF001
     await streamer._send_frame(pcm)  # noqa: SLF001
-    assert len(client.chunks) == 1
-    assert client.chunks[0][0] == pcm  # PCM passthrough
+    assert client.capture.frames == [pcm]
 
 
 async def test_line_sense_reports_signal_changes() -> None:
@@ -102,19 +111,38 @@ async def test_line_sense_reports_signal_changes() -> None:
     streamer._maybe_report_signal(silence)  # noqa: SLF001
     await asyncio.sleep(0.05)  # let the scheduled send_source_state tasks run
 
-    assert client.signals == [SourceSignal.PRESENT, SourceSignal.ABSENT]
+    assert client._admitted_connection.signals == [SignalState.PRESENT, SignalState.ABSENT]
 
 
 async def test_handle_source_command_dispatches_start_stop() -> None:
     """A server start command begins streaming; a stop command ends it."""
     streamer, client = _make()
 
-    streamer.handle_source_command(SourceCommandPayload(command=SourceCommand.START))
+    streamer.handle_source_command(
+        ServerCommandPayload(source=SourceCommandServerPayload(command="start"))
+    )
     await asyncio.sleep(0.05)
     assert streamer._streaming.is_set()  # noqa: SLF001
-    assert len(client.stream_starts) == 1
+    assert client.capture.starts == 1
 
-    streamer.handle_source_command(SourceCommandPayload(command=SourceCommand.STOP))
+    streamer.handle_source_command(
+        ServerCommandPayload(source=SourceCommandServerPayload(command="stop"))
+    )
     await asyncio.sleep(0.05)
     assert not streamer._streaming.is_set()  # noqa: SLF001
-    assert client.stream_ends == 1
+    assert client.capture.stops == 1
+
+
+async def test_stop_waits_for_in_progress_start() -> None:
+    """A quick stop cannot be overtaken by an unfinished start."""
+    streamer, client = _make()
+    client.capture.start_gate = asyncio.Event()
+
+    start = asyncio.create_task(streamer._begin_stream())  # noqa: SLF001
+    await asyncio.sleep(0)
+    stop = asyncio.create_task(streamer._end_stream())  # noqa: SLF001
+    client.capture.start_gate.set()
+    await asyncio.gather(start, stop)
+
+    assert not streamer.streaming
+    assert client.capture.stops == 1

@@ -849,7 +849,7 @@ async def _source_connection_loop(
             unsubscribe = client.add_disconnect_listener(disconnect_event.set)
             await disconnect_event.wait()
             unsubscribe()
-            streamer.reset()
+            await streamer.reset()
             LOGGER.info("Disconnected from server; reconnecting to %s", url)
         except (TimeoutError, OSError, ClientError) as e:
             LOGGER.warning(
@@ -862,13 +862,14 @@ async def _source_connection_loop(
 async def _run_source_mode(args: argparse.Namespace) -> int:
     """Run as a source client: capture a local input and stream it to a server."""
     from aiosendspin.client import SendspinClient as _SendspinClient
+    from aiosendspin.client import PairingSupport
     from aiosendspin.models.source import (
         ClientHelloSourceSupport,
-        SourceFeatures,
+        ClientHelloSourceFeatures,
     )
     from aiosendspin.models.types import AudioCodec, Roles
 
-    from sendspin.settings import get_source_settings
+    from sendspin.settings import get_client_security, get_source_settings
     from sendspin.source_stream import SourceStreamConfig, SourceStreamer
 
     settings = await get_source_settings(args.settings_dir)
@@ -894,7 +895,9 @@ async def _run_source_mode(args: argparse.Namespace) -> int:
             return 1
         print(f"Using discovered server: {url}")
 
-    client_id, client_name = _resolve_client_info(args.id or settings.client_id, args.name)
+    _, client_name = _resolve_client_info(args.id or settings.client_id, args.name)
+    identity, pairing_store = await get_client_security(settings)
+    client_id = identity.peer_id
     codec = AudioCodec(codec_str)
 
     config = SourceStreamConfig(
@@ -910,15 +913,25 @@ async def _run_source_mode(args: argparse.Namespace) -> int:
     )
     # The capture format is announced per stream in client_stream/start; there is
     # no format negotiation in client/hello.
-    support = ClientHelloSourceSupport(features=SourceFeatures(line_sense=args.line_sense))
+    support = ClientHelloSourceSupport(
+        features=ClientHelloSourceFeatures(line_sense=args.line_sense)
+    )
+
+    async def display_pin(pin: str | None) -> None:
+        if pin is not None:
+            print(f"Pairing PIN: {pin}")
+
     client = _SendspinClient(
-        client_id=client_id,
+        identity=identity,
         client_name=client_name,
         roles=[Roles.SOURCE],
+        pairing_store=pairing_store,
+        pairing_support=PairingSupport(pin_display=display_pin, offer_static_pin=False),
         source_support=support,
     )
+    client.open_pairing_window()
     streamer = SourceStreamer(client, config)
-    client.add_source_command_listener(streamer.handle_source_command)
+    client.add_server_command_listener(streamer.handle_source_command)
 
     settings.update(
         client_id=client_id,
@@ -954,14 +967,19 @@ async def _run_daemon_mode(
 ) -> int:
     """Run the client in daemon mode (no UI)."""
     from sendspin.daemon.daemon import DaemonArgs, SendspinDaemon
+    from sendspin.settings import get_client_security
 
-    client_id, client_name = _resolve_client_info(args.id, args.name)
+    _, client_name = _resolve_client_info(args.id, args.name)
+    identity, pairing_store = await get_client_security(settings)
+    client_id = identity.peer_id
 
     daemon_args = DaemonArgs(
         audio_device=audio_device,
         url=args.url,
         client_id=client_id,
         client_name=client_name,
+        identity=identity,
+        pairing_store=pairing_store,
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         listen_port=args.listen_port,
@@ -1170,9 +1188,12 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
     if args.command == "daemon":
         return await _run_daemon_mode(args, settings, audio_device, volume_controller)
 
+    from sendspin.settings import get_client_security
     from sendspin.tui.app import AppArgs, SendspinApp
 
-    client_id, client_name = _resolve_client_info(args.id, args.name)
+    _, client_name = _resolve_client_info(args.id, args.name)
+    identity, pairing_store = await get_client_security(settings)
+    client_id = identity.peer_id
 
     app_args = AppArgs(
         audio_device=audio_device,
@@ -1180,6 +1201,8 @@ async def _run_client_mode(args: argparse.Namespace) -> int:
         url_from_settings=url_from_settings,
         client_id=client_id,
         client_name=client_name,
+        identity=identity,
+        pairing_store=pairing_store,
         settings=settings,
         static_delay_ms=args.static_delay_ms,
         use_mpris=args.use_mpris,
