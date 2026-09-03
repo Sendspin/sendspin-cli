@@ -108,7 +108,6 @@ Settings are stored in `~/.config/sendspin/`:
   "static_delay_ms": 0,
   "last_server_url": "ws://192.168.1.100:8927/sendspin",
   "name": "Living Room",
-  "client_id": "sendspin-living-room",
   "audio_device": "2",
   "audio_format": "flac:48000:24:2",
   "log_level": "INFO",
@@ -142,7 +141,6 @@ Settings are stored in `~/.config/sendspin/`:
 | `static_delay_ms` | float | TUI/daemon | Extra playback delay in milliseconds |
 | `last_server_url` | string | TUI/daemon | Server URL (used as default for `--url`) |
 | `name` | string | All | Friendly name for client or server (`--name`) |
-| `client_id` | string | TUI/daemon | Unique client identifier (`--id`) |
 | `audio_device` | string | TUI/daemon | Audio device index, name prefix, or ALSA device name (`--audio-device`) |
 | `audio_format` | string | TUI/daemon | Preferred audio format (`--audio-format`, e.g., `flac:48000:24:2`) |
 | `log_level` | string | All | Logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL |
@@ -175,16 +173,31 @@ sendspin --url ws://192.168.1.100:8080/sendspin
 sendspin servers list
 ```
 
+### Pairing
+
+Sendspin connections are end-to-end encrypted. The first time a client connects to a
+server that requires pairing, the server picks a pairing method and the client displays
+a short PIN (in the TUI's "Pairing Required" panel, or logged in daemon mode) — enter it
+on the server to approve the client. Once paired, the client's credentials are persisted
+(see `--settings-dir` below), so subsequent connections to the same server don't require
+pairing again.
+
+If a pairing attempt fails (e.g. a mismatched PIN), the client logs the reason and you
+can retry by reconnecting.
+
 ### Client Identification
 
-If you want to run multiple players on the **same computer**, you can specify unique identifiers:
+Each client's cryptographic identity (used for encryption and pairing) and settings are
+stored per `--settings-dir` (default: `~/.config/sendspin`). If you want to run multiple
+players on the **same computer** as distinct clients — each with its own identity,
+pairing records, and settings — give each one a separate settings directory:
 
 ```bash
-sendspin --id my-client-1 --name "Kitchen"
-sendspin --id my-client-2 --name "Bedroom"
+sendspin --settings-dir ~/.config/sendspin-kitchen --name "Kitchen"
+sendspin --settings-dir ~/.config/sendspin-bedroom --name "Bedroom"
 ```
 
-- `--id`: A unique identifier for this client (optional; defaults to `sendspin-<hostname>`, useful for running multiple instances on one computer)
+- `--settings-dir`: Directory for this client's settings, identity, and pairing records (optional; defaults to `~/.config/sendspin`)
 - `--name`: A friendly name displayed on the server (optional; defaults to hostname)
 
 ### Audio Output Device Selection
