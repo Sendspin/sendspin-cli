@@ -177,10 +177,17 @@ sendspin servers list
 
 Sendspin connections are end-to-end encrypted. The first time a client connects to a
 server that requires pairing, the server picks a pairing method and the client displays
-a short PIN (in the TUI's "Pairing Required" panel, or logged in daemon mode) — enter it
-on the server to approve the client. Once paired, the client's credentials are persisted
-(see `--settings-dir` below), so subsequent connections to the same server don't require
-pairing again.
+a short PIN — enter it on the server to approve the client. Once paired, the client's
+credentials are persisted (see `--settings-dir` below), so subsequent connections to the
+same server don't require pairing again.
+
+- **TUI**: the PIN appears in a "Pairing Required" panel that takes over the screen until
+  pairing completes.
+- **Daemon**: the PIN is only logged (`Pairing required: enter PIN ...`) — there's no other
+  surface for it. You need to be watching the daemon's output at the moment it first
+  connects to a new server. Under systemd, that means `journalctl -u sendspin -f`. There's
+  no unattended-pairing option today (no PIN written to a file, no QR code); for a headless
+  install, plan to watch the log during first setup for each new server.
 
 If a pairing attempt fails (e.g. a mismatched PIN), the client logs the reason and you
 can retry by reconnecting.
